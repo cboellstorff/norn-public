@@ -1,0 +1,252 @@
+{
+  "schema": 1,
+  "name": "demo",
+  "title": "demo project (test fixture)",
+  "root": "${home}/dev/demo-repo",
+  "vars": {
+    "dev": "${home}/dev",
+    "notes_root": "${dev}/demo-notes"
+  },
+  "rules_read_whole": [
+    "${project_dir}/rules/DECISION-RULES.md"
+  ],
+  "checkin_extra": "${project_dir}/rules/CHECKIN-demo.md",
+  "checkin": {
+    "cwd": "${root}",
+    "add_dirs": [
+      "${meta}",
+      "${notes_root}"
+    ],
+    "interval_min": 15
+  },
+  "lane_defaults": {
+    "worktree": "${dev}/demo-repo-${lane}",
+    "notes": "${notes_root}/${lane}/NOTES.md",
+    "push": "feat/*"
+  },
+  "executors": {
+    "claude": {
+      "agent": "demo-implementer",
+      "headless": "${meta}/engine/prompts/HEADLESS.txt"
+    },
+    "codex-sol": {
+      "model": "gpt-6.1-sol",
+      "writable_roots": [
+        "${root}/.git",
+        "${notes_root}"
+      ]
+    },
+    "grok": {
+      "type": "cli",
+      "exe": "${home}/.grok/bin/grok.exe",
+      "model": "grok-4.7",
+      "effort": "high",
+      "turns": 80,
+      "cap": 4,
+      "exit_after_s": 600,
+      "brief": "file",
+      "output": "plain",
+      "args": [
+        "--cwd",
+        "{cwd}",
+        "--prompt-file",
+        "{brief}",
+        "--output-format",
+        "plain",
+        "{mode}",
+        "--max-turns",
+        "{turns}",
+        "--reasoning-effort",
+        "{effort}",
+        "-m",
+        "{model}"
+      ],
+      "modes": {
+        "run": {
+          "access": "write",
+          "args": [
+            "--permission-mode",
+            "bypassPermissions",
+            "--disallowed-tools",
+            "spawn_subagent,scheduler_create,scheduler_delete,scheduler_list,monitor,workflow,image_gen,image_edit,image_to_video,reference_to_video,ask_user_question,send_feedback",
+            "--no-subagents",
+            "--disable-web-search"
+          ]
+        },
+        "ro": {
+          "access": "read-only",
+          "args": [
+            "--permission-mode",
+            "dontAsk",
+            "--disallowed-tools",
+            "run_terminal_command,kill_command_or_subagent,get_command_or_subagent_output,spawn_subagent,scheduler_create,scheduler_delete,scheduler_list,monitor,workflow,image_gen,image_edit,image_to_video,reference_to_video,ask_user_question,send_feedback,search_replace,write",
+            "--no-subagents",
+            "--disable-web-search"
+          ]
+        },
+        "no-tools": {
+          "access": "no-tools",
+          "args": [
+            "--permission-mode",
+            "dontAsk",
+            "--disallowed-tools",
+            "run_terminal_command,kill_command_or_subagent,get_command_or_subagent_output,spawn_subagent,scheduler_create,scheduler_delete,scheduler_list,monitor,workflow,image_gen,image_edit,image_to_video,reference_to_video,ask_user_question,send_feedback,search_replace,write,read_file,list_dir,grep",
+            "--no-subagents",
+            "--disable-web-search"
+          ]
+        },
+        "edit": {
+          "access": "write",
+          "args": [
+            "--permission-mode",
+            "bypassPermissions",
+            "--disallowed-tools",
+            "run_terminal_command,kill_command_or_subagent,get_command_or_subagent_output,spawn_subagent,scheduler_create,scheduler_delete,scheduler_list,monitor,workflow,image_gen,image_edit,image_to_video,reference_to_video,ask_user_question,send_feedback",
+            "--no-subagents",
+            "--disable-web-search"
+          ]
+        },
+        "art": {
+          "access": "write",
+          "args": [
+            "--permission-mode",
+            "bypassPermissions",
+            "--disallowed-tools",
+            "run_terminal_command,kill_command_or_subagent,get_command_or_subagent_output,spawn_subagent,scheduler_create,scheduler_delete,scheduler_list,monitor,workflow,image_to_video,reference_to_video,ask_user_question,send_feedback",
+            "--no-subagents",
+            "--disable-web-search"
+          ]
+        },
+        "web": {
+          "access": "read-only",
+          "args": [
+            "--permission-mode",
+            "bypassPermissions",
+            "--disallowed-tools",
+            "run_terminal_command,kill_command_or_subagent,get_command_or_subagent_output,spawn_subagent,scheduler_create,scheduler_delete,scheduler_list,monitor,workflow,image_gen,image_edit,image_to_video,reference_to_video,ask_user_question,send_feedback,search_replace,write",
+            "--no-subagents"
+          ]
+        }
+      },
+      "mcp_add": {
+        "args": [
+          "mcp",
+          "add",
+          "{name}",
+          "--scope",
+          "{scope}",
+          "--",
+          "{command}"
+        ],
+        "scopes": [
+          "user",
+          "project"
+        ]
+      },
+      "enabled": true
+    }
+  },
+  "policy_targets": [
+    "${project_dir}/agents/demo-implementer.md",
+    "${project_dir}/agents/demo-planner.md",
+    "${project_dir}/agents/demo-runner.md",
+    "${project_dir}/skills/demo-dispatch/SKILL.md",
+    "${project_dir}/rules/DECISION-RULES.md",
+    "${state}/CHECKIN.rendered.md"
+  ],
+  "install": {
+    "agents": "${project_dir}/agents",
+    "skills": "${project_dir}/skills",
+    "roles": "${project_dir}/roles",
+    "harness_global": "${project_dir}/harness-global.md",
+    "resume_hook": "${state}/resume-hook.json"
+  },
+  "policy": {
+    "agents": {
+      "max_lane_writers": 1
+    },
+    "executors": {
+      "implementation": {
+        "executor": "auto",
+        "model": "",
+        "effort": ""
+      },
+      "critical_implementation": {
+        "executor": "demo-implementer",
+        "model": "claude-opus-5-5",
+        "effort": "medium"
+      },
+      "review": {
+        "executor": "codex-sol",
+        "model": "gpt-6.1-sol",
+        "effort": "medium"
+      },
+      "diagnosis": {
+        "executor": "codex-sol",
+        "model": "gpt-6.1-sol",
+        "effort": "medium"
+      },
+      "planning": {
+        "executor": "demo-planner",
+        "model": "claude-opus-5-5",
+        "effort": "xhigh"
+      },
+      "chores": {
+        "executor": "grok",
+        "model": "",
+        "effort": ""
+      },
+      "passfail": {
+        "executor": "grok",
+        "model": "",
+        "effort": ""
+      },
+      "images": {
+        "executor": "codex-sol",
+        "model": "gpt-6.1-sol",
+        "effort": "medium"
+      },
+      "docs": {
+        "executor": "demo-runner",
+        "model": "claude-sonnet-5-5",
+        "effort": "medium"
+      }
+    },
+    "critical_lanes": [],
+    "critical_effort": "medium",
+    "context": {
+      "implementer": {
+        "no_new_step_k": 170,
+        "handoff_k": 200,
+        "hard_max_k": 220
+      },
+      "planner": {
+        "no_new_step_k": 220,
+        "handoff_k": 250,
+        "hard_max_k": 270
+      },
+      "runner": {
+        "no_new_step_k": 170,
+        "handoff_k": 200,
+        "hard_max_k": 220
+      },
+      "controller": {
+        "no_new_step_k": 90,
+        "handoff_k": 110,
+        "hard_max_k": 150
+      }
+    },
+    "iteration": {
+      "round_estimate_default": 2,
+      "escalation_multiplier": 2,
+      "escalation_action": "raise effort",
+      "wall_time_multiplier": 2
+    },
+    "cadence": {
+      "checkin_interval_min": 15,
+      "trigger_on_exit": true,
+      "auto_resume_handoff": true,
+      "auto_resume_max": 2
+    }
+  }
+}

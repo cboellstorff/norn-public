@@ -1,0 +1,23 @@
+{
+ "kind": "profile",
+ "order": 3,
+ "name": "heavy",
+ "label": "Heavy (overnight)",
+ "summary": "Three Claude workers, up to five Codex runs, Opus check-ins every 15 min, weekly stop at 95 %: for long unattended runs.",
+ "budget": { "max_claude_workers": 3, "weekly_stop_pct": 95, "usage_rate_cap_pct_per_h": 0.57, "desired_burn_pct_per_h": 0.5,
+   "checkin_model": "claude-opus-5-5", "checkin_effort": "medium", "claude_model": "claude-opus-5-5", "claude_effort": "medium" },
+ "codex": { "max_codex": 5, "max_astra": 5, "max_sol": 5 },
+ "scheduler": { "on": true, "interval_min": 15 },
+ "routing": {
+  "implementation": ["auto", "", ""],
+  "critical_implementation": ["implementer", "claude-opus-5-5", "high"],
+  "review": ["codex-sol", "gpt-6.1-sol", "medium"],
+  "diagnosis": ["codex-sol", "gpt-6.1-sol", "medium"],
+  "planning": ["planner", "claude-opus-5-5", "xhigh"],
+  "chores": ["auto", "", ""],
+  "passfail": ["auto", "", ""],
+  "images": ["codex-sol", "gpt-6.1-sol", "medium"],
+  "docs": ["runner", "claude-sonnet-5-5", "medium"]
+ },
+ "fallbacks": { "claude_over_guard": "codex-astra", "codex_down": "implementer", "fable_unavailable": "opus-xhigh" }
+}

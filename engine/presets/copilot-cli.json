@@ -1,0 +1,43 @@
+{
+  "source": {
+    "fixture": "copilot-cli.txt",
+    "checked": "official docs (not installed), 2026-11-09",
+    "urls": [
+      "https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference",
+      "https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-programmatic-reference",
+      "https://docs.github.com/en/copilot/reference/hooks-reference"
+    ]
+  },
+  "type": "cli",
+  "exe": "copilot",
+  "brief": "file",
+  "output": "plain",
+  "args": [
+    "-p",
+    "Read the brief {brief} and execute it exactly. Your worktree is {cwd}. You run headless: no one answers questions; follow the brief's NOTES end-marker rules.",
+    "-C",
+    "{cwd}",
+    "--model={model}",
+    "--output-format=text",
+    "--silent",
+    "--no-ask-user",
+    "{mode}"
+  ],
+  "modes": {
+    "write": {
+      "access": "write",
+      "args": [
+        "--allow-all"
+      ]
+    }
+  },
+  "caps": {
+    "modes": [
+      "write"
+    ],
+    "fork": false,
+    "hooks": "settings",
+    "resume_style": "flag",
+    "noninteractive": "-p"
+  }
+}

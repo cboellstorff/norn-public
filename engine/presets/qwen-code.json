@@ -1,0 +1,50 @@
+{
+  "source": {
+    "fixture": "qwen-code.txt",
+    "checked": "official docs (not installed), 2026-11-09",
+    "urls": [
+      "https://qwenlm.github.io/qwen-code-docs/en/users/configuration/settings/",
+      "https://qwenlm.github.io/qwen-code-docs/en/users/features/headless/",
+      "https://qwenlm.github.io/qwen-code-docs/en/users/features/hooks/"
+    ]
+  },
+  "type": "cli",
+  "exe": "qwen",
+  "brief": "file",
+  "output": "plain",
+  "args": [
+    "-p",
+    "Read the brief {brief} and execute it exactly. Your worktree is {cwd}. You run headless: no one answers questions; follow the brief's NOTES end-marker rules.",
+    "-m",
+    "{model}",
+    "-o",
+    "text",
+    "{mode}"
+  ],
+  "modes": {
+    "write": {
+      "access": "write",
+      "args": [
+        "--approval-mode",
+        "yolo"
+      ]
+    },
+    "plan": {
+      "access": "read-only",
+      "args": [
+        "--approval-mode",
+        "plan"
+      ]
+    }
+  },
+  "caps": {
+    "modes": [
+      "write",
+      "read-only"
+    ],
+    "fork": false,
+    "hooks": "settings",
+    "resume_style": "flag",
+    "noninteractive": "-p"
+  }
+}

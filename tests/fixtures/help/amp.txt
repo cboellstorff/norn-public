@@ -1,0 +1,21 @@
+# recorded 2026-11-09 from the OFFICIAL docs (no local install; META-GTP-HARNESS): verbatim excerpts, one SOURCE url per block
+--- SOURCE https://ampcode.com/docs/cli/execute-mode
+ response.txt When you pipe input and provide a prompt with -x , the agent can see both: $ cat ~/
+$ amp -x "summarize this repo" --plugin-ready-timeout 30 Timings Add --timings to see wh
+.vimrc | amp -x "which colorscheme is used?"
+AGENTS.md You can also pipe input when using -x : $ echo "what package manager is used here?" | amp -x
+``` You can use the --mcp-config flag with -x commands to specify an MCP server without changing
+a-label="Page Markdown actions"> Copy Page Execute Mode Use -x or --execute to start the CLI in execute mode
+args": ["-y", "@modelcontextprotocol/server-everything"]}}' -x "What tools are available to you?" If your plugins rely on the agent
+e wait. The turn starts as soon as plugins are ready. $ amp -x "summarize this repo" --plugin-ready-timeout
+ere execute mode spends time: $ amp -x "summarize this repo" --timings Amp prints the timing report to stderr when the
+he message. Repeat the flag to attach multiple files: $ amp -x "Implement this design" --executor runner:mac-mini --attach 
+provided to -x to the agent, waits until the agent ends its turn, prints its final message, an
+rb. Spawning Runner Threads Use --executor runner:<id> with -x to start a thread on one of your running runners 
+them to the total again. Spawning Orbs Use -ox instead of -x to run the prompt in an orb on Amp’s servers
+ur machine; see Spawning Orbs . Run a prompt locally: $ amp -x "what files in this folder are markdown files? Print only the filenames
+vocation. It is an alias for --features fast and works with -x and piped input
+working on the runner: $ amp -x "Run the tests and fix any failures" --executor runner:mac-mini
+--- SOURCE https://ampcode.com/docs/threads
+amp threads continue T-… -ox 'The deploy finished, verify the fi
+amp threads continue T-… to attach the CLI to a thread

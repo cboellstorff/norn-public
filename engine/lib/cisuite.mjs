@@ -1,0 +1,46 @@
+// META-GTP-CI 1: the CI suite judge (GT-PARITY-PLAN 2.11). tests/KNOWN-REDS.txt lists the reds CI tolerates, one per line:
+// `<file> :: <test name or name prefix>`; the run fails only on a red that no line names. Pure: the runner is engine/bin/ci-suite.mjs.
+const fwd = s => s.split('\\').join('/');
+
+/** Parse KNOWN-REDS text -> [{ file, name }]; `#` comments and blank lines are skipped; a line without ` :: ` throws. */
+export function parseKnown(text) {
+  const out = [];
+  text.split(/\r?\n/).forEach((raw, i) => {
+    const l = raw.trim();
+    if (!l || l.startsWith('#')) return;
+    const at = l.indexOf('::');
+    if (at < 0) throw new Error(`KNOWN-REDS line ${i + 1}: expected "<file> :: <test name>", got: ${l}`);
+    out.push({ file: fwd(l.slice(0, at).trim()), name: l.slice(at + 2).trim() });
+  });
+  return out;
+}
+
+const names = (k, f) => k.file === f.file && (f.name === k.name || f.name.startsWith(k.name));
+/**
+ * fails: [{ file (repo-relative, forward slashes), name }] = the failing leaf tests of a run; known: parseKnown output.
+ * Returns { listed, fresh, fixed, ok }: fresh = reds no line names (ok iff none); fixed = lines whose red did not occur.
+ */
+export function judge(fails, known) {
+  const listed = [], fresh = [];
+  for (const f of fails) (known.some(k => names(k, f)) ? listed : fresh).push(f);
+  const fixed = known.filter(k => !fails.some(f => names(k, f)));
+  return { listed, fresh, fixed, ok: fresh.length === 0 };
+}
+
+// The identity a calling Norn run (supervisor) or agent CLI puts in its children's env. The suite must be hermetic: 11-13 a worker's
+// own META_RUN_ID / META_ROLE / META_STATE turned 4 CLI test files red and hung the suite (RUN-471 / RUN-477 / RUN-481 / RUN-505).
+// Test knobs (META_UPDATE_GOLDEN, META_WALL_STEP_MS, META_TEST_*, ...) are not identity and pass through.
+export const CALLER_ENV = ['META_RUN_ID', 'META_RUN_STATE', 'META_ROLE', 'META_STATE', 'META_PROJECT', 'META_SESSION_ID', 'META_RESUMES',
+  'META_NOTES', 'CLAUDECODE'];
+// META-TEST-TRIM: git's auto maintenance (gc / maintenance --auto after a commit, fetch or push) is one more process per git write
+// in the suite's temp repos and nothing under test; on Windows it cost ~1/4 of a git-heavy test (mergeq main-red 70 s -> 54 s).
+const SUITE_GIT = [['maintenance.auto', 'false'], ['gc.auto', '0']];
+/** env -> the suite's env: without NODE_TEST_CONTEXT (a ci-suite started from a test runs its files) and without CALLER_ENV; git
+ *  auto maintenance off (appended to any GIT_CONFIG_COUNT entries the caller set). */
+export const suiteEnv = env => {
+  const e = Object.fromEntries(Object.entries(env).filter(([k]) => k !== 'NODE_TEST_CONTEXT' && !CALLER_ENV.includes(k.toUpperCase())));
+  let n = Number(e.GIT_CONFIG_COUNT) || 0;
+  for (const [k, v] of SUITE_GIT) { e['GIT_CONFIG_KEY_' + n] = k; e['GIT_CONFIG_VALUE_' + n] = v; n++; }
+  e.GIT_CONFIG_COUNT = String(n);
+  return e;
+};

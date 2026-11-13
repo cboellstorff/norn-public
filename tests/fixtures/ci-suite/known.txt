@@ -1,0 +1,4 @@
+# fixture known reds: <file> :: <test name or name prefix>
+tests/fixtures/ci-suite/fx.test.mjs :: KNOWN: fx listed red
+tests/fixtures/ci-suite/fx.test.mjs :: KNOWN-SUB:
+tests/fixtures/ci-suite/gone.test.mjs :: never fails

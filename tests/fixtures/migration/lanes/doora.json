@@ -1,0 +1,15 @@
+{
+    "pid":  15108,
+    "start":  "2026-10-30T19:55:51.1233012-05:00",
+    "brief":  "C:\\Users\\owner\\dev\\kestrel-mono\\.superpowers\\sdd\\2026-09-25-water-picture-plan\\task-ISLAND-DOORI1-STAGEA-R2-brief.md",
+    "worktree":  "C:\\Users\\owner\\dev\\kestrel-mono-door-i1",
+    "agent":  "kestrel-implementer",
+    "model":  "claude-opus-5-5",
+    "effort":  "high",
+    "notes":  "C:\\Users\\owner\\dev\\sdd-island\\door\\STAGEA-NOTES.md",
+    "log":  "C:\\Users\\owner\\dev\\sdd-codex\\meta\\logs\\doora-20261030-195551.log",
+    "final":  "C:\\Users\\owner\\dev\\sdd-codex\\meta\\logs\\doora-20261030-195551.json",
+    "exit":  null,
+    "end":  null,
+    "auto_resumes":  2
+}

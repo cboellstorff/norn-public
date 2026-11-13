@@ -1,0 +1,17 @@
+OpenAI Codex v0.165.0-alpha.1.2
+--------
+workdir: /work/wt
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp] (network access enabled)
+reasoning effort: xhigh
+reasoning summaries: none
+session id: 01a18e15-b95e-7293-b130-0cf69a414641
+--------
+user
+# codex fixture brief (trimmed)
+codex
+Done.
+tokens used
+119,286

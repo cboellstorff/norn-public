@@ -1,0 +1,35 @@
+// META-GTP-CI TMPDIR-1 (DEC-60): every temp dir a test makes is <its own mkdtemp>/state/<project>. liveRuns lists the runs of every
+// SIBLING state dir (account-wide, D11): a dir straight in os.tmpdir() used as a state dir makes every liveRuns / capFull / status /
+// tick call walk the runner's whole temp dir, which self-hosted runners never clean (CI 16.5 min vs 4, locks past STALE_MS).
+// tests/tmpdir-guard.test.mjs fails on any other os.tmpdir() call under tests/.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { procsNaming } from '../../engine/lib/testprocs.mjs';
+import { killTree } from '../../engine/lib/runs.mjs';
+
+// META-TEST-PROCS (DEC-219, SPEC 9.6 PR-14): the teardown of every test that spawns. Every temp dir a test makes comes from mkTmp, and
+// a Norn process a test starts (supervisor, fake executor, MCP server, dash, browser, ...) names its temp dir on its command line.
+// When the test process exits - however its tests ended, thrown or not, after every after() hook - each process whose command line
+// names one of its mkTmp dirs is killed with its tree. 11-13: 22 supervisor + fake-executor pairs a run of delegate / agnostic left
+// behind lived 23-28 h. ci-suite fails a file that still leaves one (the hard check behind this teardown).
+const made = [], ever = [];
+/** kill every process (and its tree) whose command line names a dir mkTmp made in this process; -> the killed [{ pid, name, cmd }] */
+export function reapTmp() {
+  const left = procsNaming(ever);
+  for (const p of left) killTree(p.pid);
+  return left;
+}
+process.on('exit', () => { if (ever.length) reapTmp(); });
+/** a fresh private dir <mkdtemp(prefix)>/state/<project>, safe to use as a state dir (its only sibling-to-be is the test's own) */
+export function mkTmp(prefix = 'meta-t-', project = 'kestrel') {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  made.push(base); ever.push(base);
+  const d = path.join(base, 'state', project);
+  fs.mkdirSync(d, { recursive: true });
+  return d;
+}
+/** remove every dir mkTmp made in this process (for a test.after) */
+export function cleanTmp() { for (const d of made.splice(0)) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3 }); }
+/** the system temp dir as a PATH only (e.g. a path_map prefix); never make a dir in it - use mkTmp */
+export const SYSTEM_TMP = os.tmpdir();

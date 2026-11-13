@@ -1,0 +1,9 @@
+{
+ "kind": "cost",
+ "default": "balanced",
+ "levels": {
+  "cheap": { "summary": "Sonnet instead of Opus, one effort step lower.", "model": { "claude-opus-5-5": "claude-sonnet-5-5" }, "effort_step": -1 },
+  "balanced": { "summary": "The profile as written.", "model": {}, "effort_step": 0 },
+  "quality": { "summary": "Opus instead of Sonnet, one effort step higher.", "model": { "claude-sonnet-5-5": "claude-opus-5-5" }, "effort_step": 1 }
+ }
+}

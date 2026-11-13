@@ -1,0 +1,50 @@
+{
+  "$comment": "META-GENERAL-DESIGN 4.3. Strings may use ${var}: builtins home / meta / state / name / root / project_dir (the directory of this project.json), ${dev} (default: parent of root), project vars; ${lane} is late-bound.",
+  "type": "object",
+  "required": ["schema", "name", "title", "root"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "enum": [1] },
+    "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$" },
+    "title": { "type": "string" },
+    "root": { "type": "string" },
+    "vars": { "type": "object", "additionalProperties": { "type": "string" } },
+    "ledger": { "type": "string" },
+    "gpu_lock_file": { "type": "string", "$comment": "META-GTP-MAIL: the GPU lock file (gpu_lock.ps1 GPU.lock); a mail nudge waits while it exists" },
+    "briefs_dir": { "type": "string" },
+    "views": { "type": "object", "additionalProperties": false,
+      "properties": { "questions": { "type": "string" }, "directives": { "type": "string" }, "decisions": { "type": "string" }, "roadmap": { "type": "string" } } },
+    "rules_read_whole": { "type": "array", "items": { "type": "string" } },
+    "checkin_extra": { "type": "string" },
+    "ci": { "type": "object", "additionalProperties": false, "required": ["repo"], "properties": {
+      "repo": { "type": "string", "pattern": "^[^/ ]+/[^/ ]+$" }, "workflow": { "type": "string" }, "branch": { "type": "string" } } },
+    "checkin": { "type": "object", "additionalProperties": false, "properties": {
+      "cwd": { "type": "string" }, "add_dirs": { "type": "array", "items": { "type": "string" } }, "interval_min": { "type": "integer", "minimum": 1 }, "max_quiet_min": { "type": "integer", "minimum": 1 }, "stall_idle_min": { "type": "integer", "minimum": 1 },
+      "watch_lanes": { "type": "array", "items": { "type": "string" } } } },
+    "lane_defaults": { "type": "object", "additionalProperties": false, "properties": {
+      "worktree": { "type": "string" }, "notes": { "type": "string" }, "push": { "type": "string" } } },
+    "executors": { "type": "object", "additionalProperties": { "type": "object", "properties": {
+      "enabled": { "type": "boolean" }, "type": { "enum": ["claude-compatible", "openai-compatible", "cli"] }, "base_url": { "type": "string" }, "api_key_env": { "type": "string" },
+      "small_model": { "type": "string" }, "runner": { "enum": ["claude", "fake"] }, "env": { "type": "object" }, "agent": { "type": "string" }, "model": { "type": "string" }, "effort": { "type": "string" },
+      "writable_roots": { "type": "array", "items": { "type": "string" } }, "wire_api": { "type": "string" }, "cap": { "type": "integer", "minimum": 0 },
+      "exe": { "type": "string" }, "turns": { "type": "integer" }, "brief": { "enum": ["file", "stdin"] }, "output": { "enum": ["plain"] },
+      "args": { "type": "array", "items": { "type": "string" } }, "modes": { "type": "object" }, "mcp_add": { "type": "object" },
+      "preset": { "type": "string" }, "caps": { "type": "object" } } } },
+    "docs": { "type": "array", "items": { "type": "object", "required": ["tab", "path"], "additionalProperties": false,
+      "properties": { "tab": { "type": "string" }, "path": { "type": "string" } } } },
+    "policy_targets": { "type": "array", "items": { "type": "string" } },
+    "install": { "type": "object", "additionalProperties": false, "properties": { "agents": { "type": "string" }, "skills": { "type": "string" }, "roles": { "type": "string" }, "harness_global": { "type": "string" }, "resume_hook": { "type": "string" } } },
+    "transcript_roots": { "type": "array", "items": { "type": "string" } },
+    "deliverables": { "type": "object", "additionalProperties": false, "properties": {
+      "repo": { "type": "string" }, "main": { "type": "string" }, "remote": { "type": "string" },
+      "branches": { "type": "array", "items": { "type": "string" } }, "native": { "type": "array", "items": { "type": "string" } },
+      "receipts": { "type": "array", "items": { "type": "string" } }, "receipt_keys": { "type": "array", "items": { "type": "string" } },
+      "receipt_re": { "type": "string" }, "target": { "enum": ["main", "install"] },
+      "ask_after_h": { "type": "number", "minimum": 0 }, "park_days": { "type": "number", "minimum": 0 } } },
+    "merge": { "type": "object", "additionalProperties": false, "properties": {
+      "gate": { "type": "object", "additionalProperties": false, "required": ["cmd"], "properties": {
+        "cmd": { "type": "string" }, "timeout_min": { "type": "number", "minimum": 0 }, "fast": { "type": "boolean" } } },
+      "batch_max": { "type": "integer", "minimum": 1 }, "scratch": { "type": "string" }, "ui": { "type": "array", "items": { "type": "string" } } } },
+    "policy": { "type": "object" }
+  }
+}

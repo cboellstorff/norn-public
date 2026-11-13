@@ -1,0 +1,760 @@
+// Runs (META-GENERAL-DESIGN D6-D9, 3.3 run row, 5): `norn run` launch half, worktree lock, heartbeats, outcome grammar,
+// usage parsers + executor command lines (re-exported from the harness adapters), lost sweep, stop / kill tree. The detached body is supervisor.mjs. Node built-ins only.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { record, readEvents, fold, recordsFile, RecordError, holdOf, holdMessage, HELD_EXIT } from './records.mjs';
+import { BUILTIN, isApi, capDefault, capsOfRun, executorInfo, providerEnv } from './executors.mjs';
+import { adapterFor, harnessOf } from './harness/index.mjs';
+import { makeEval, evalAll, checkRefs, AfterError, readyWords } from './after.mjs';
+export { readyWords };
+import { writeQueueView } from './views.mjs';
+import { spawnOutside } from './jobguard.mjs';
+import { usageRefusal, onAccount, isMergeStage } from './usageguard.mjs';
+import { authRefusal, probeAuth, matchExcerpt } from './authguard.mjs';
+import { limitRefusal, openLimits } from './limitgate.mjs';
+import { briefMarker } from './mergebrief.mjs';
+import { openEpic, joinEpic, EpicError } from './epics.mjs';
+import { PRIORITIES } from './records.mjs';
+import { hookCommand } from './mail.mjs';
+import { unserved, osLabel, fedOf, fetchClaims, claimKey, claimRun, releaseClaim, leaseExpired, writeOffers, importForeign, importNotes } from './fed.mjs';
+
+const fwd = p => String(p).replace(/\\/g, '/');
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+export const SUPERVISOR = path.join(HERE, 'supervisor.mjs');
+export { FAKE } from './harness/fake.mjs';
+export const HB_MS = 30000;      // heartbeat period (D7)
+export const STALE_MS = 120000;  // liveness threshold (D7)
+
+export class RunRefused extends Error { constructor(msg, code) { super(msg); this.code = code; } }
+export class RunError extends Error { constructor(msg, code = 2) { super(msg); this.code = code; } }
+
+// built-in executor -> RUN kind + the machine budget caps that count it (exit 4); typed executors (o.provider = the entry) are data (executors.mjs)
+export const EXECUTORS = BUILTIN;
+const CAP_LABEL = { max_claude_workers: 'claude', max_codex: 'codex', max_sol: 'codex-sol', max_astra: 'codex-astra' };
+const infoOf = o => executorInfo(o.executor, o.provider);
+const unknownExecutor = ex => new RunError(`unknown executor ${JSON.stringify(ex)} (${Object.keys(EXECUTORS).join(' | ')} | a configured typed executor name)`);
+
+// ---------- outcome grammar (D6): the last "## " line of NOTES ----------
+export function parseOutcome(text) {
+  if (text === null || text === undefined) return { outcome: 'no-marker', marker_line: null };
+  const heads = String(text).split(/\r?\n/).filter(l => l.startsWith('## '));
+  const last = heads.length ? heads.at(-1).replace(/\s+$/, '') : null;
+  if (last === '## DONE') return { outcome: 'done', marker_line: last };
+  if (last === '## HANDOFF') return { outcome: 'handoff', marker_line: last };
+  const m = last && last.match(/^## STOPPED: (\S.*)$/);
+  if (m) return { outcome: 'stopped', marker_line: last, why: m[1] };
+  return { outcome: 'no-marker', marker_line: last };
+}
+
+// ---------- usage parsers + executor command lines: the harness adapters (engine/lib/harness/<family>.mjs, H2) ----------
+export { parseClaudeFinal, CLAUDE_RO_NOPE } from './harness/claude.mjs';
+export { parseCodexLog } from './harness/codex.mjs';
+export { prompt } from './harness/common.mjs';
+// a provider runs the claude CLI path minus --remote-control (that would bind the session to the owner's claude.ai account)
+export const claudeCmd = (o, remote) => adapterFor('claude').command({ ...o, remote });
+/** The command { exe, args, stdin, stdout, parse } of run spec `o`, built by its executor's harness adapter. */
+// META-GTP-MAIL delivery (a): a run whose adapter runs the mail hook (caps.hooks settings + adapter.mailHook: claude) gets the
+// PostToolUse hook `norn mail check --inject`; the others read mail by MCP meta_mail + their headless line (HEADLESS_MAIL)
+export function mailHookOf(o) {
+  const fam = harnessOf(o.executor, o.provider);
+  const a = fam ? adapterFor(fam) : null;
+  return a?.mailHook && a.caps.hooks === 'settings' && o.state ? hookCommand(o.state) : undefined;
+}
+
+export function buildCommand(o) {
+  const family = harnessOf(o.executor, o.provider);
+  if (!family) throw unknownExecutor(o.executor);
+  return adapterFor(family).command({ ...o, remote: o.executor === 'claude' });
+}
+
+// ---------- worktree lock: state/locks/<sha1(worktree)>.json {run, pid, ts} ----------
+const normWt = wt => { let a = path.resolve(wt).replace(/\\/g, '/').replace(/\/+$/, ''); return process.platform === 'win32' ? a.toLowerCase() : a; };
+export const lockPath = (locksDir, wt) => path.join(locksDir, crypto.createHash('sha1').update(normWt(wt)).digest('hex') + '.json');
+const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
+// Windows: rename over a file another process has open fails EPERM / EACCES for a moment - retry (graceful-fs's rename practice)
+export function renameRetry(t, f, tries = 40) {
+  for (let i = 0; ; i++) {
+    try { return fs.renameSync(t, f); } catch (e) {
+      if (!['EPERM', 'EACCES', 'EBUSY'].includes(e.code) || i >= tries) { try { fs.unlinkSync(t); } catch { /* gone */ } throw e; }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+  }
+}
+const writeAtomic = (f, obj) => { const t = `${f}.${process.pid}.tmp`; fs.writeFileSync(t, JSON.stringify(obj)); renameRetry(t, f); };
+
+// refresh only while the lock still names this run (a stop / stale break must not be undone)
+export function refreshLock(file, run, extra = {}) {
+  if (!file) return false;
+  const cur = readJson(file);
+  if (!cur || cur.run !== run) return false;
+  writeAtomic(file, { ...cur, run, ...extra, ts: new Date().toISOString() });
+  return true;
+}
+export function releaseLock(file, run) {
+  if (!file) return;
+  const cur = readJson(file);
+  if (cur && cur.run === run) { try { fs.unlinkSync(file); } catch { /* gone */ } }
+}
+
+export function acquireLock(locksDir, wt, { run, pid = process.pid, staleMs = STALE_MS } = {}) {
+  fs.mkdirSync(locksDir, { recursive: true });
+  const file = lockPath(locksDir, wt);
+  for (let i = 0; i < 3; i++) {
+    try {
+      fs.writeFileSync(file, JSON.stringify({ run, pid, ts: new Date().toISOString(), worktree: normWt(wt) }), { flag: 'wx' });
+      const h = { run, file, release: () => releaseLock(file, h.run), refresh: extra => { const ok = refreshLock(file, h.run, extra); if (extra?.run) h.run = extra.run; return ok; } };
+      return h;
+    } catch (e) {
+      if (e.code !== 'EEXIST' && e.code !== 'EPERM' && e.code !== 'EACCES') throw e;
+      const cur = readJson(file);
+      const ts = cur ? Date.parse(cur.ts) : NaN;
+      if (!cur || !(Date.now() - ts > staleMs)) throw new RunRefused(`worktree ${wt} is held by ${cur?.run ?? '(being written)'} pid ${cur?.pid ?? '?'}`, 3);
+      try { fs.unlinkSync(file); } catch { /* another breaker */ }
+    }
+  }
+  throw new RunRefused(`worktree ${wt}: lock contended`, 3);
+}
+
+// META-MERGELOCK (DEC-103 / DEC-104: two MERGE runs in the main checkout at once - one had named only its lane worktree): the ONE
+// home of "which checkouts does run spec o write". Its own worktree; a MERGE stage (staged or rebase, per branch or mq batch, any
+// executor) also the main checkout - from the brief's meta-merge marker (`main`), else the project's (spec main_checkout). Every
+// lock holder (startRun, the supervisor's beat + exit, norn stop, the fill's wait) takes the list from here.
+export function writeTrees(o) {
+  const own = o.worktree ? [o.worktree] : [];
+  if (!isMergeStage(o.stage)) return own;
+  let m = null;
+  try { m = briefMarker(fs.readFileSync(o.brief, 'utf8')); } catch { /* no brief: the spec decides */ }
+  const main = m?.main || o.main_checkout;
+  return !main || own.some(w => normWt(w) === normWt(main)) ? own : [...own, main];
+}
+// take the lock of every tree in order; one held = release the ones taken, refuse (exit 3). One handle over them all.
+function acquireTrees(locksDir, trees, opts) {
+  const hs = [];
+  try { for (const wt of trees) hs.push(acquireLock(locksDir, wt, opts)); } catch (e) { for (const h of hs) h.release(); throw e; }
+  return { file: hs[0]?.file ?? null, files: hs.map(h => h.file), refresh: extra => hs.every(h => h.refresh(extra)), release: () => { for (const h of hs) h.release(); } };
+}
+/** the trees of spec o (writeTrees) whose lock is fresh and names another run: [{ tree, run, own }] */
+export function heldTrees(o, staleMs = STALE_MS) {
+  if (!o.locksDir) return [];
+  return writeTrees(o).map((tree, i) => ({ tree, own: i === 0, cur: readJson(lockPath(o.locksDir, tree)) }))
+    .filter(({ cur }) => cur && !(Date.now() - Date.parse(cur.ts) > staleMs)).map(({ tree, own, cur }) => ({ tree, own, run: cur.run ?? 'a writer' }));
+}
+const heldWords = h => (h.own ? `worktree held by ${h.run}` : `main checkout ${fwd(h.tree)} held by ${h.run} (one merge at a time)`);
+
+// ---------- heartbeats + lost sweep ----------
+export const hbPath = (state, run) => path.join(state, 'hb', run + '.hb');
+const runsOf = state => Object.values(fold(readEvents(recordsFile(state, 'run'))).items);
+const hbAge = (state, it, now) => {
+  const f = hbPath(state, it.id);
+  const t = fs.existsSync(f) ? fs.statSync(f).mtimeMs : Date.parse(it.created);
+  return { age: now - t, has: fs.existsSync(f) };
+};
+export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () => new Date() } = {}) {
+  const lost = [];
+  const t = now().getTime();
+  for (const it of runsOf(state)) {
+    if (it.state !== 'running' || it.data.kind === 'interactive') continue;
+    const { age, has } = hbAge(state, it, t);
+    if (age <= staleMs) continue;
+    const why = has ? `heartbeat ${Math.round(age / 1000)} s old` : `no heartbeat for ${Math.round(age / 1000)} s`;
+    // CIRED-7b3d67d: a stall (not a death) also goes stale - the supervisor may live on; the record names it (tests/helpers/settled)
+    const sup = has ? readJson(hbPath(state, it.id))?.supervisor_pid : null;
+    try { record(state, { kind: 'run', ev: 'lost', id: it.id, by, data: drop({ why, supervisor_pid: sup }) }); lost.push(it.id); } catch (e) { if (!(e instanceof RecordError)) throw e; }
+  }
+  return lost;
+}
+
+// running, non-interactive runs with a fresh heartbeat in every sibling state dir with runs.jsonl (account-wide, D11)
+export function liveRuns(state, { staleMs = STALE_MS, now = Date.now() } = {}) {
+  const parent = path.dirname(path.resolve(state));
+  const states = new Set([path.resolve(state)]);
+  for (const d of fs.existsSync(parent) ? fs.readdirSync(parent) : []) if (fs.existsSync(path.join(parent, d, 'runs.jsonl'))) states.add(path.join(parent, d));
+  const live = [];
+  for (const s of states) for (const it of runsOf(s)) if (it.state === 'running' && it.data.kind !== 'interactive' && hbAge(s, it, now).age <= staleMs) live.push({ ...it, state_dir: s });
+  return live;
+}
+// META-GTP-MERGEQ piece 0 (norn DEC-5; live 11-09: VISUAL-B S2 READY while S3 wrote in its worktree): a MERGE stage whose brief
+// rebases + pushes in the lane worktree waits / is refused (exit 3) while that worktree holds a live writer lock or the lane has a
+// live run; a staged brief (norn merge-brief --sha) merges one tested commit in the main checkout and never touches it: no check.
+// A brief without the meta-merge marker (hand-written) is checked by its lane only. Returns the reason or null.
+export function mergeStageRefusal(o, staleMs = STALE_MS) {
+  if (!isMergeStage(o.stage) || !o.brief) return null;
+  let text;
+  try { text = fs.readFileSync(o.brief, 'utf8'); } catch { return null; }
+  const m = briefMarker(text);
+  if (m?.mode === 'staged') return null;
+  const own = m?.worktree && o.worktree && normWt(m.worktree) === normWt(o.worktree);   // run in the lane worktree itself: its own lock decides
+  const w = laneWriter({ state: o.state, locksDir: o.locksDir, lane: m?.lane || o.lane, worktree: own ? null : m?.worktree, staleMs });
+  return w ? `MERGE ${o.lane}: ${w} - the brief would rebase under it; write a staged brief: norn merge-brief --sha <READY sha> (DEC-5)` : null;
+}
+/** a live writer of a lane: its worktree's fresh lock, else a live non-MERGE run of the lane in this state dir -> the words, or null */
+export function laneWriter({ state, locksDir, lane, worktree, staleMs = STALE_MS }) {
+  if (worktree && locksDir) {
+    const held = readJson(lockPath(locksDir, worktree));
+    if (held && !(Date.now() - Date.parse(held.ts) > staleMs)) return `the lane worktree ${fwd(worktree)} holds live run ${held.run ?? '(a writer)'}`;
+  }
+  if (!lane || !state) return null;
+  const here = path.resolve(state);
+  const live = liveRuns(state, { staleMs }).find(r => r.state_dir === here && r.data.lane === lane && r.data.kind !== 'checkin' && !isMergeStage(r.data.stage));
+  return live ? `lane ${lane} has live run ${live.id} in ${live.data.worktree ?? '?'}` : null;
+}
+
+// a check-in is not a worker: it never counts against (or is refused by) the worker caps
+// the first full cap of run spec o as a refusal message, or null (room in every cap)
+function capFull(o, staleMs, extra = []) {   // extra: run data that would start first (the dry walk, META-GTP-DAG)
+  if (o.kind === 'checkin') return null;
+  const typed = !EXECUTORS[o.executor];
+  const capOf = k => (Number.isInteger(o.budget?.[k]) ? o.budget[k] : typed ? capDefault(o.provider) : null);  // a typed executor always has a cap
+  const caps = (infoOf(o).caps || []).filter(k => capOf(k) !== null);
+  if (!caps.length) return null;
+  const live = [...liveRuns(o.state, { staleMs }), ...extra.map(data => ({ data }))].filter(it => it.data.kind !== 'checkin');
+  for (const k of caps) {
+    const n = live.filter(it => capsOfRun(it.data).includes(k)).length;
+    if (n >= capOf(k)) return `${n} ${CAP_LABEL[k] ?? k.slice(4)} workers running, budget ${k}=${capOf(k)}`;
+  }
+  return null;
+}
+function capCheck(o, staleMs) { const full = capFull(o, staleMs); if (full) throw new RunRefused(full, 4); }
+
+const drop = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null));
+const stamp = () => new Date().toISOString().replace(/[-:]/g, '').replace(/\..*$/, '').replace('T', '-');
+
+// lock: false (no worktree lock) is for a check-in, a helper whose parent holds the lock of the same worktree (metadelegate sec. 3) -
+// read-only, or in a NAMED write mode of a cli executor (norn delegate --mode: the parent owns the tree and reviews every change) -
+// or a READ-ONLY helper with no parent run (META-AGNOSTIC-EXEC: a Claude subagent with no RUN id of its own)
+function helperLockCheck(o) {
+  if (o.role === 'helper' && !o.parent && o.readonly === true) return;
+  if (o.role === 'helper' && o.via === 'ask' && o.readonly === true) return;   // norn ask: its parent has ENDED (holds no lock)
+  if (o.role !== 'helper' || !o.parent || (o.readonly !== true && !o.mode)) throw new RunRefused('lock: false is only for a check-in, a read-only helper, or a named-mode helper under its parent run', 3);
+  const cur = readJson(lockPath(o.locksDir, o.worktree));
+  if (cur?.run !== o.parent) throw new RunRefused(`worktree ${o.worktree}: its lock names ${cur?.run ?? 'no run'}, not the parent ${o.parent}`, 3);
+}
+
+/**
+ * Launch one supervised run: sweep stale runs, take the worktree lock (exit 3), check the machine caps (exit 4), record
+ * RUN start, spawn the detached supervisor. Returns { run, pid (supervisor), log, final, session_id }.
+ * o: { state, locksDir, executor, brief, worktree, lane, notes?, stage?, round?, agent?, model?, effort?, budgetMin?, project?,
+ *      exe?, headless?, env?, writable_roots?, resumes?, resumeOf?, policy {auto_resume_handoff, auto_resume_max, trigger_on_exit},
+ *      budget {caps, weekly_stop_pct}, paused [files], statusFile?, ledger?, projectsDir?, tick [cmd] | null, hbMs?, staleMs? }
+ */
+// the launch preconditions of run spec o (shared by startRun and queueRun); returns its executor info
+function launchable(o) {
+  const info = infoOf(o);
+  if (!info) throw unknownExecutor(o.executor);
+  for (const [k, v] of [['state', o.state], ['locksDir', o.locksDir], ['brief', o.brief], ['worktree', o.worktree], ['lane', o.lane]]) if (!v) throw new RunError(`${k} is required`);
+  if (!fs.existsSync(o.brief)) throw new RunError(`brief not found: ${o.brief}`);
+  if (!fs.existsSync(o.worktree)) throw new RunError(`worktree not found: ${o.worktree}`);
+  if (o.executor !== 'fake' && o.provider?.runner !== 'fake' && !o.exe) throw new RunError(`no ${o.executor} executable (machine.json)`);
+  if (isApi(o.provider)) { const miss = providerEnv(o.provider, process.env).missing; if (miss) throw new RunError(`executor ${o.executor}: its key env var ${miss} is not set`); }
+  return info;
+}
+// NORN-WATCH S5 (11-09: `git worktree remove` deleted two lanes' gitignored ux/ reports): NOTES under an ignored path of the run's own
+// worktree are recorded as a start warning (the run still starts: additive). One `git check-ignore` (5 s); any git failure = none.
+export function notesWarnings(o) {
+  if (!o.notes || !o.worktree) return [];
+  const rel = path.relative(path.resolve(o.worktree), path.resolve(o.notes));
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return [];
+  const r = spawnSync(o.git || 'git', ['check-ignore', '-q', '--', rel], { cwd: o.worktree, timeout: 5000, windowsHide: true, stdio: 'ignore' });
+  return r.status === 0 ? [`notes ${rel.replace(/\\/g, '/')} sit under a gitignored path of the worktree: git worktree remove deletes them - write lane output to a durable folder`] : [];
+}
+
+// the RUN start fields of spec o (a queue record keeps the same fields)
+const startFields = (o, info) => ({
+  kind: o.kind || info.kind, executor: o.executor, project: o.project, lane: o.lane, stage: o.stage, round: o.round,
+  agent: o.agent, model: o.model, effort: o.effort, worktree: o.worktree, brief: o.brief, notes: o.notes });
+const runTail = o => ({ budget_min: o.budgetMin, resumes: o.resumes || 0, resume_of: o.resumeOf, parent: o.parent, via: o.via, role: o.role, class: o.cls, q: o.q, tick_class: o.tickClass, trial: o.trial, fallback_of: o.fallbackOf,
+  from_queue: o.fromQueue, requeue_of: o.requeueOf, after: o.after?.length ? o.after : undefined, inputs: o.inputs?.length ? o.inputs : undefined,
+  epic: o.epic, priority: o.priority, nudge: o.nudge, flow: o.flow,   // flow: META-GTP-FLOW piece 2 ({ name, step, vars })
+  labels: o.labels?.length ? o.labels : undefined, claim_of: o.claim_of, replaces: o.replaces,
+  launch_profile: o.profile && o.profile.name !== 'full' ? o.profile.name : undefined });   // META-STANDING-CONTEXT R1: a lean launch (standing.mjs profileOf)   // replaces: META-AUTONOMY R1 (norn requeue)   // claim_of: META-GTP-FED piece 3 ({ home, project, run, node } on a node)   // META-GTP-FED piece 1: the machines that may run it (none = home)
+// META-GTP-DAG piece 2: a NEW run (not a fill / resume / re-queue of one) named --epic joins that open epic; no --priority = the epic's
+const isNew = o => !o.fromQueue && !o.resumeOf && !o.requeueOf && !o.replaces;
+function withEpic(o) {
+  if (o.priority !== undefined && o.priority !== null && !PRIORITIES.includes(o.priority)) throw new RunError(`--priority ${JSON.stringify(o.priority)}: want ${PRIORITIES.join(' | ')}`);
+  if (!o.epic || !isNew(o)) return o;
+  try { return { ...o, priority: o.priority ?? openEpic(o.state, o.epic).data.priority }; } catch (e) { if (e instanceof EpicError) throw new RunError(e.message); throw e; }
+}
+
+// META-ONBOARD cut-over: <state root>/SWAP.lock (written by onboard-cutover.mjs --apply for its swap steps, < 2 min) holds NEW starts:
+// a start waits while it is fresh (swapWaitMs, default 5 min), then refuses with code 4 (a --queue start queues). A lock older than
+// SWAP_STALE_MS (a crashed cut-over) is ignored. Live runs are never touched.
+export const SWAP_STALE_MS = 15 * 60000;
+export function swapLockFile(state) { return path.join(path.dirname(path.resolve(state)), 'SWAP.lock'); }
+function swapWait(o) {
+  const f = swapLockFile(o.state), end = Date.now() + (o.swapWaitMs ?? 5 * 60000);
+  for (;;) {
+    let ts;
+    try { ts = Date.parse(JSON.parse(fs.readFileSync(f, 'utf8')).ts); } catch { return; }   // no lock (or unreadable = being removed)
+    if (!(Date.now() - ts < SWAP_STALE_MS)) return;
+    if (Date.now() >= end) throw new RunRefused(`swap lock held (${fwd(f)}: a cut-over is swapping the install) - retry in a minute`, 4);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+  }
+}
+
+// META-CONTROLLER C4 (SPEC sec. 2): a check-in's new run on a lane the controller holds is refused (exit 5); a fill of a run queued
+// before the hold is the launcher's, not the check-in's, and goes on
+export function heldRefusal(state, lane, caller, now = Date.now()) {
+  if (caller !== 'checkin' || !lane) return;
+  const h = holdOf(fold(readEvents(recordsFile(state, 'lane'))).items['L:' + lane], now);
+  if (h) throw new RunRefused(holdMessage(h), HELD_EXIT);
+}
+// the caller's role is checked once, at the door: it never rides into a queue / run spec (a supervisor resume or re-queue is the launcher's)
+const noCaller = ({ caller: _c, ...o }) => o;
+export function startRun(o) {
+  if (!o.fromQueue) heldRefusal(o.state, o.lane, o.caller);
+  o = withEpic(noCaller(o));
+  duplicateCheck(o);
+  if (o.after?.length && !o.fromQueue) {   // NORN-WATCH S4: a run with `after:` conditions always queues; fillPass starts it once all are met
+    const { queue: _q, ...rest } = o;
+    return { ...queueRun(rest), queued: true, why: 'waits for its after: conditions' };
+  }
+  if (o.labels?.length && !o.fromQueue && !o.claim_of) {   // META-GTP-FED piece 1: a labelled run always queues; the fill here or a node serving its labels starts it (a node's claimed run starts in place)
+    const { queue: _q, ...rest } = o;
+    return { ...queueRun(rest), queued: true, why: `labels ${o.labels.join(',')}: started by a machine that serves them` };
+  }
+  if (o.queue) {   // META-GT12: a full cap queues the run instead of refusing it (a held worktree still refuses: exit 3)
+    const { queue: _q, ...rest } = o;
+    // META-MERGELOCK: a MERGE whose main checkout is held by another merge waits queued; the fill starts it when the lock frees
+    const mh = heldTrees(rest, rest.staleMs ?? STALE_MS).find(h => !h.own);
+    if (mh) return { ...queueRun(rest), queued: true, why: heldWords(mh) };
+    // META-GTP-DAG piece 0 (norn RUN-36 started at RATE_OK=0): the immediate start obeys the fill's usage guard; refused = queued
+    const refused = limitRefusal(rest.state, rest, { now: rest.now }) || (onAccount(infoOf(rest)) ? usageRefusal(rest, rest.state) : null) || authGate(rest) || resourceGate(rest, rest.resources || sampleResources);   // + piece 5, META-AUTH
+    if (refused) return { ...queueRun(rest), queued: true, why: refused };
+    try { return startRun(rest); } catch (e) { if (!(e instanceof RunRefused) || e.code !== 4) throw e; return { ...queueRun(rest), queued: true, why: e.message }; }
+  }
+  // META-LIMIT-GATE: an executor out of quota dies in seconds (RUN-562) - refused like a full cap (exit 4), naming its reset and an open
+  // executor; a queued run was gated by the fill's walk (its clock), so a fill start is not checked twice
+  if (!o.fromQueue) { const lr = limitRefusal(o.state, o, { now: o.now }); if (lr) throw new RunRefused(lr, 4); }
+  if (!o.fromQueue && o.kind !== 'checkin' && o.role !== 'helper') {   // META-AUTH: while the login is down a launch dies in 0.1 s - it waits queued
+    const a = authGate(o);
+    if (a) return { ...queueRun(o), queued: true, why: a };
+  }
+  swapWait(o);
+  const info = launchable(o);
+  const staleMs = o.staleMs ?? STALE_MS, hbMs = o.hbMs ?? HB_MS;
+  sweepLost(o.state, { staleMs, by: 'launcher' });
+  const mr = mergeStageRefusal(o, staleMs);
+  if (mr) throw new RunRefused(mr, 3);
+  if (o.lock === false && o.kind !== 'checkin') helperLockCheck(o);
+  const lock = o.lock === false ? { file: null, files: [], refresh() {}, release() {} } : acquireTrees(o.locksDir, writeTrees(o), { run: 'pending', staleMs });
+  try {
+    capCheck(o, staleMs);
+    const base = path.join(o.state, 'logs', `${o.lane}-${stamp()}-${crypto.randomBytes(3).toString('hex')}`);
+    const log = base + '.log', final = base + (info.harness === 'codex' ? '.md' : '.json');
+    // META-GTP-MAIL piece 3: a nudge resumes the SAME session (claude --resume <sid> keeps its id unless --fork-session)
+    const session_id = o.resumeSid || (info.harness === 'claude' || info.harness === 'fake' ? crypto.randomUUID() : null);
+    const resumes = o.resumes || 0;
+    const warnings = notesWarnings(o);
+    const ev = record(o.state, { kind: 'run', ev: 'start', by: 'launcher', data: drop({ ...startFields(o, info), log, final, session_id, ...runTail(o), warnings: warnings.length ? warnings : undefined }) });
+    const run = ev.id;
+    if (o.epic && isNew(o)) joinEpic(o.state, o.epic, run);
+    lock.refresh({ run });
+    fs.mkdirSync(path.join(o.state, 'hb'), { recursive: true });
+    fs.mkdirSync(path.join(o.state, 'logs'), { recursive: true });
+    writeAtomic(hbPath(o.state, run), { run, pid: null, supervisor_pid: null, ts: new Date().toISOString() });
+    const spec = { ...o, run, log, final, session_id, resumes, hbMs, staleMs, lockFile: lock.file, lockFiles: lock.files, mail_hook: o.mail_hook ?? mailHookOf(o) };
+    const specFile = path.join(o.state, 'runs', run + '.spec.json');
+    fs.mkdirSync(path.dirname(specFile), { recursive: true });
+    fs.writeFileSync(specFile, JSON.stringify(spec, null, 1));
+    // NORN-WATCH S5: started from inside a reaped run's job (META_JOB) = break away, unless it is that run's own helper (dies with it)
+    const away = process.env.META_JOB && !(o.role === 'helper' && o.parent && o.parent === process.env.META_RUN_ID)
+      ? spawnOutside(process.execPath, [SUPERVISOR, specFile], { cwd: o.worktree }) : null;
+    let pid = away?.pid;
+    if (!away) { const sup = spawn(process.execPath, [SUPERVISOR, specFile], { detached: true, stdio: 'ignore', windowsHide: true, cwd: o.worktree }); sup.unref(); pid = sup.pid; }
+    // the hb names the supervisor from its birth: a stop before its first beat (node start-up takes seconds on a loaded box) must
+    // still kill it - a nameless hb left it and its executor alive for ever (CIRED-60fa8b6 R2). Its own beat (with the executor
+    // pid) wins: the launcher writes only while the hb still names no supervisor.
+    if (pid && !readJson(hbPath(o.state, run))?.supervisor_pid) writeAtomic(hbPath(o.state, run), { run, pid: null, supervisor_pid: pid, ts: new Date().toISOString() });
+    lock.refresh({ pid });
+    return { run, pid, log, final, session_id, ...(warnings.length ? { warnings } : {}), spawned: away ? (away.breakaway ? 'breakaway' : 'inside') : 'plain', ...(away && !away.breakaway ? { in_job: process.env.META_JOB } : {}) };
+  } catch (e) { lock.release(); throw e; }
+}
+
+// META-AUTONOMY R1 cause 3 (DEC-92 / 94: meta-adopt A1 queued twice from two worktrees; the per-worktree writer gate cannot see it): a
+// second QUEUED / RUNNING run of the same project (state dir) + lane + stage + round refuses (exit 3) - unless it continues that run: it
+// names it as --parent (a resume), or is its fill / resume / re-queue / fallback / norn requeue. A run with no stage is never a duplicate.
+const CONTINUES = ['parent', 'fromQueue', 'resumeOf', 'requeueOf', 'fallbackOf', 'replaces'];
+export function duplicateOf(o) {
+  if (!o.state || !o.lane || !o.stage || o.kind === 'checkin' || o.role === 'helper' || o.claim_of) return null;
+  const mine = new Set(CONTINUES.map(k => o[k]).filter(Boolean));
+  return runsOf(o.state).find(r => ['queued', 'running', 'claimed'].includes(r.state) && !mine.has(r.id) && r.data.kind !== 'checkin' && r.data.role !== 'helper'
+    && r.data.lane === o.lane && r.data.stage === o.stage && (r.data.round ?? null) === (o.round ?? null)) ?? null;
+}
+function duplicateCheck(o) {
+  const dup = duplicateOf(o);
+  if (!dup) return;
+  const what = `${o.lane} ${o.stage}${o.round !== undefined && o.round !== null ? ' round ' + o.round : ''}`;
+  throw new RunRefused(`${what} is already ${dup.state} as ${dup.id}${dup.data.worktree ? ` (${fwd(dup.data.worktree)})` : ''} - one run per lane + stage + round;`
+    + ` resume it with --parent ${dup.id}, or re-queue it: norn requeue ${dup.id} --after ... --why DEC-n`, 3);
+}
+
+// ---------- queue (META-GT12): a run waiting for a cap slot; filled FIFO per cap on every run exit and by norn status ----------
+export const queueSpecPath = (state, run) => path.join(state, 'runs', run + '.queue.json');
+/**
+ * Record a queued run (RUN event `queue`: the start fields + not_before, requeue_of) and keep its launch spec beside the run specs.
+ * o: a startRun spec + notBefore? (ISO; the fill waits until then) + requeueOf? (the limit-exit run it repeats). Returns { run, position }.
+ */
+export function queueRun(o) {
+  if (!o.fromQueue) heldRefusal(o.state, o.lane, o.caller);
+  o = withEpic(noCaller(o));
+  duplicateCheck(o);
+  const info = launchable(o);
+  if (o.after?.length || o.inputs?.length) {
+    try { checkRefs(o.state, o.after, o.inputs); } catch (e) { if (e instanceof AfterError) throw new RunError(e.message); throw e; }
+  }
+  const { queue: _q, notBefore, run: _r, log: _l, final: _f, session_id: _s, lockFile: _k, lockFiles: _ks, fromQueue: _fq, now: _n, ...spec } = o;
+  const ev = record(o.state, { kind: 'run', ev: 'queue', by: 'launcher', data: drop({ ...startFields(o, info), ...runTail(spec), not_before: notBefore }) });
+  if (o.epic && isNew(o)) joinEpic(o.state, o.epic, ev.id);
+  const file = queueSpecPath(o.state, ev.id);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(spec, null, 1));
+  return { run: ev.id, position: queueOf(runsOf(o.state)).find(x => x.id === ev.id)?.position ?? null };
+}
+// META-GTP-DAG piece 4: the fill order is priority (P0 first), then FIFO. A run with no priority ranks as P2 - the beads default
+// (Gas Town `bd create`, priorities 0-4, default 2) - so a queue with no priorities keeps exactly the old FIFO order.
+export const DEFAULT_PRIORITY = 'P2';
+const rank = r => PRIORITIES.indexOf(PRIORITIES.includes(r.data.priority) ? r.data.priority : DEFAULT_PRIORITY);
+/** The queued runs of a fold's run items in fill order (priority, then oldest first), with their 1-based position in it (pure). */
+export function queueOf(runs) {
+  return runs.filter(r => r.kind === 'run' && r.state === 'queued').sort((a, b) => rank(a) - rank(b) || Number(a.id.slice(4)) - Number(b.id.slice(4)))
+    .map((r, i) => ({ id: r.id, name: r.data.name ?? null, state: r.state, position: i + 1, lane: r.data.lane ?? null, stage: r.data.stage ?? null,
+      executor: r.data.executor ?? null, model: r.data.model ?? null, not_before: r.data.not_before ?? null, requeue_of: r.data.requeue_of ?? null, queued: r.created,
+      after: r.data.after ?? [], inputs: r.data.inputs ?? [], epic: r.data.epic ?? null, priority: r.data.priority ?? null, labels: r.data.labels ?? [] }));
+}
+/**
+ * Start every queued run that may start now, in fill order (priority, then oldest first - META-GTP-DAG piece 4): not before its not_before, not while PAUSED, never on a worktree with a
+ * live writer (it waits; later runs on other worktrees may pass it), fill order per cap (once a queued run finds a cap full, no later run
+ * on any of its caps starts in this pass). One filler at a time per state dir (state/queue.lock). Returns [{ queued, next }].
+ * Called by the supervisor on every run exit and by `norn status` (the tick should call it at its start too - CHECKIN-GATE lane).
+ * META-GTP-CI-FILLWAKE F2 - no lost wakeup: a filler that finds the lock held sets state/queue.refill and tries the lock once more;
+ * the holder clears the flag before each pass, passes again while it is set (re-checked before it releases), and re-checks it after
+ * the release (re-acquiring if set). The standard pending-work flag + re-check-after-release of a lock-protected worker (the
+ * Linux irq_work / Go runtime "wakeup pending" pattern): every fillQueue call is followed by a pass that began after the call did.
+ * onPass: a test seam, called after each pass under the lock.
+ */
+export function fillQueue(state, { now, resources = sampleResources, onPass, authProbe = probeAuth } = {}) {
+  const lockFile = path.join(state, 'queue.lock'), flagFile = path.join(state, 'queue.refill');
+  const acquire = () => {
+    for (let i = 0; ; i++) {
+      try { fs.mkdirSync(state, { recursive: true }); fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, ts: new Date().toISOString() }), { flag: 'wx' }); return true; }
+      catch (e) {
+        if (!['EEXIST', 'EPERM', 'EACCES'].includes(e.code)) throw e;
+        const cur = readJson(lockFile);
+        if (i > 0 || (cur && !(Date.now() - Date.parse(cur.ts) > STALE_MS))) return false;   // another filler is at it
+        try { fs.unlinkSync(lockFile); } catch { /* another breaker */ }
+      }
+    }
+  };
+  const flagged = () => fs.existsSync(flagFile);
+  const started = [];
+  for (;;) {
+    if (!acquire()) {
+      // the loser: leave the flag, then try once more - a holder that released before the flag landed is gone, so the lock is free
+      // (we fill) or a holder took it after the flag landed (its after-release re-check sees the flag). Never lost, no second lock.
+      fs.writeFileSync(flagFile, '');
+      if (!acquire()) return started;
+    }
+    try {
+      let at, res;
+      do {
+        try { fs.unlinkSync(flagFile); } catch { /* not set */ }
+        at = now ?? Date.now();
+        let R;
+        res = () => (R ??= resources());   // one sample per pass: the pass and the view after it read the same numbers
+        started.push(...fillPass(state, at, res, authProbe));
+        onPass?.();
+      } while (flagged());
+      try { const ready = readiness(state, { now: at, resources: res }); writeQueueView(state, {}, { ready }); writeOffers(state, ready); } catch { /* a view never fails a fill (NORN-WATCH S4) */ }
+    } finally { try { fs.unlinkSync(lockFile); } catch { /* gone */ } }
+    if (!flagged()) return started;
+  }
+}
+function fillPass(state, now, resources, authProbe) {
+  const started = [];
+  const withdraw = (id, why) => { try { record(state, { kind: 'run', ev: 'withdraw', id, by: 'launcher', data: { why } }); } catch (e) { if (!(e instanceof RecordError)) throw e; } };
+  fedPass(state, now);
+  // META-AUTONOMY R1: a hold is recorded once per why (and cleared once) - the walk runs on every fill, the log grows only on a change
+  const holds = new Map(runsOf(state).filter(r => r.state === 'queued' && r.hold).map(r => [r.id, r.hold]));
+  const hold = (id, why) => {
+    const cur = holds.get(id), held = cur && !cur.cleared;
+    if (why ? held && cur.why === why : !held) return;
+    try { record(state, { kind: 'run', ev: 'hold', id, by: 'launcher', data: why ? { why } : { cleared: true } }); } catch (e) { if (!(e instanceof RecordError)) throw e; }
+  };
+  walkQueue(state, { now, resources, authProbe, act: {
+    withdraw,
+    hold,
+    start: (q, spec) => { homeClaim(state, q, spec); return startRun({ ...spec, fromQueue: q.id }).run; },
+    started(q, next) {
+      record(state, { kind: 'run', ev: 'fill', id: q.id, by: 'launcher', data: { next } });
+      started.push({ queued: q.id, next });
+    },
+  } });
+  return started;
+}
+
+// ---------- META-GTP-FED piece 2: the home side of the claim protocol (fed.mjs) ----------
+// Runs only while a queued labelled run or a claimed run exists (else no git at all) and their spec names a ledger remote (machine.json
+// ledger.remote, stamped into every spec as git_ledger). One fetch per pass. A node's claim of a queued run = record claim (it leaves the
+// queue); a done claim = record fill (next = the node run); an expired lease = the claim removed by CAS, then record release (back in the
+// queue) - only when that CAS won (a heartbeat that landed first keeps the run). A fetch failure is logged; the pass goes on without it.
+const fedLog = (state, s) => { try { fs.appendFileSync(path.join(state, 'fed.log'), `${new Date().toISOString()} ${s}\n`); } catch { /* no dir */ } };
+// the node runs of this project, read-only (digest sec. 1, norn runs --all-nodes); -cache.json = never in the ledger
+export function writeForeign(state, nodes) {
+  const f = path.join(state, 'fed-cache.json');
+  writeAtomic(f, { at: new Date().toISOString(), nodes: Object.fromEntries(nodes.map(n => [n.node, n.runs])) });
+}
+function fedPass(state, now) {
+  const watch = runsOf(state).filter(r => (r.state === 'queued' && r.data.labels?.length) || r.state === 'claimed');
+  if (!watch.length) return;
+  let f = null;
+  for (const r of watch) if ((f = fedOf(readJson(queueSpecPath(state, r.id))?.git_ledger))) break;
+  if (!f) return;
+  const project = path.basename(path.resolve(state));
+  let claims;
+  try { claims = fetchClaims(f); } catch (e) { fedLog(state, `claims not read: ${e.message}`); return; }
+  try { writeForeign(state, importForeign(f, project)); } catch (e) { fedLog(state, `node runs not imported: ${e.message}`); }
+  const rec = (id, ev, data) => { try { record(state, { kind: 'run', ev, id, by: 'launcher', data: drop(data) }); return true; } catch (e) { if (!(e instanceof RecordError)) throw e; return false; } };
+  for (const r of watch) {
+    const key = claimKey(f.host, project, r.id), c = claims[key];
+    let st = r.state;
+    if (st === 'queued' && c && c.node !== f.host && rec(r.id, 'claim', { node: c.node, claimed_at: c.claimed_at, lease_s: c.lease_s })) st = 'claimed';
+    if (st !== 'claimed') continue;
+    if (!c) { rec(r.id, 'release', { why: 'its claim is gone from the claims branch' }); continue; }
+    // META-GTP-FED-2 piece 1: a node with its own workspace pushed the run's NOTES on machine/<node> before its done mark (notes_key): the
+    // fill names the home's read-only copy
+    if (c.state === 'done') { rec(r.id, 'fill', { next: c.node_run || `${c.node}:not-started`, node: c.node, outcome: c.outcome, head: c.head, notes: importNotes(f, state, c.node, c.notes_key, r.id) }); continue; }
+    if (!leaseExpired(c, now)) continue;
+    const why = `lease expired: ${c.node} last heartbeat ${c.heartbeat_at} (lease ${c.lease_s} s)`;
+    try { if (releaseClaim(f, key, c.nonce, why, { fetched: true }).ok) rec(r.id, 'release', { why, node: c.node }); } catch (e) { fedLog(state, `release ${r.id} failed: ${e.message}`); }
+  }
+}
+// a labelled run this machine serves: with a ledger remote the home claims it (state home, no lease) before it starts - a node serving the
+// same labels may be claiming it now; the CAS decides (lost = refused, exit 3: the next pass sees the node's claim)
+function homeClaim(state, q, spec) {
+  const f = q.labels?.length ? fedOf(spec.git_ledger) : null;
+  if (!f) return;
+  let r;
+  try { r = claimRun(f, { home: f.host, project: path.basename(path.resolve(state)), run: q.id, labels: q.labels, state: 'home' }); } catch (e) { throw new RunRefused(`claim: ${e.message}`, 3); }
+  if (!r.won) throw new RunRefused(`claim: ${r.why}`, 3);
+}
+
+// ---------- META-GTP-DAG piece 3: ONE walk for the fill and `norn ready` (kill criterion: two evaluators = a disagreement) ----------
+// bd ready semantics (Gas Town docs/reference.md:681, cited not ported): a queued run is READY when no term blocks it; BLOCKED rows name
+// every unmet term. The fill IS this walk with act (start / withdraw); `norn ready`, META-QUEUE.md and digest sec. 2 are the same walk
+// dry (act null: nothing written; a row that would start counts against its caps for the rows after it, as the start would).
+// META-GTP-DAG piece 5 (Gas Town internal/daemon/pressure.go:31-91 - a no-op on Windows there, pressure_windows.go:3-9; ours works on
+// Windows): a run whose spec carries policy.fill (the CLI resolves project policy.fill over FILL_DEFAULTS into every run) waits while free
+// RAM < min_free_gb or CPU busy > max_cpu_pct. CPU busy = 1 - idle / total of the os.cpus() time deltas over 1 s (sync).
+export const FILL_DEFAULTS = { min_free_gb: 4, max_cpu_pct: 90 };
+/** { free_gb, cpu_pct } now: os.freemem() and the os.cpus() deltas over ms; env META_FILL_SAMPLE (that JSON) pins it (tests, a drill) */
+export function sampleResources({ ms = 1000 } = {}) {
+  const pin = process.env.META_FILL_SAMPLE;
+  if (pin) {
+    let v = null;
+    try { v = JSON.parse(pin); } catch { /* below */ }
+    if (!(typeof v?.free_gb === 'number' && typeof v?.cpu_pct === 'number')) throw new RunError(`META_FILL_SAMPLE ${JSON.stringify(pin)}: want {"free_gb": n, "cpu_pct": n}`);
+    return { free_gb: v.free_gb, cpu_pct: v.cpu_pct };
+  }
+  const tot = () => os.cpus().reduce((s, c) => { const t = c.times; s.idle += t.idle; s.all += t.user + t.nice + t.sys + t.idle + t.irq; return s; }, { idle: 0, all: 0 });
+  const a = tot();
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  const b = tot(), all = b.all - a.all;
+  return { free_gb: os.freemem() / 2 ** 30, cpu_pct: all > 0 ? 100 * (1 - (b.idle - a.idle) / all) : 0 };
+}
+/** null = room; else the reason (the words norn ready prints after "resources: ") */
+export function resourceRefusal(res, fill = {}) {
+  const f = { ...FILL_DEFAULTS, ...(fill || {}) };
+  if (res.free_gb < f.min_free_gb) return `free RAM ${res.free_gb.toFixed(1)} GB < fill.min_free_gb ${f.min_free_gb}`;
+  if (res.cpu_pct > f.max_cpu_pct) return `CPU busy ${Math.round(res.cpu_pct)} % > fill.max_cpu_pct ${f.max_cpu_pct}`;
+  return null;
+}
+// META-AUTH: the login gate of the run's harness (authguard.mjs); a spec without a state dir is never held
+const authGate = (spec, o = {}) => (spec.state ? authRefusal(spec.state, infoOf(spec)?.harness, { spec, ...o }) : null);
+const resourceGate = (spec, sample) => { if (!spec.policy?.fill) return null; const r = resourceRefusal(sample(), spec.policy.fill); return r ? `resources: ${r}` : null; };
+/** readiness(state, { now }) -> the dry walk's rows in fill order: { id, name, lane, stage, executor, epic, priority, position, ready, terms, withdraw? } */
+export const readiness = (state, o = {}) => walkQueue(state, { ...o, act: null });
+
+function walkQueue(state, { now = Date.now(), act = null, resources = sampleResources, authProbe = probeAuth } = {}) {
+  const rows = [], blocked = new Map(), pending = [];   // blocked: cap -> the older row that found it full; pending: dry-run starts
+  let E = null, R, L;
+  const res = () => (R ??= resources());   // lazy: sampled only when a gated run would otherwise start, once per walk
+  for (const q of queueOf(runsOf(state))) {
+    const row = { id: q.id, name: q.name, lane: q.lane, stage: q.stage, executor: q.executor, epic: q.epic, priority: q.priority, position: q.position, ready: false, terms: [] };
+    rows.push(row);
+    const gone = why => { row.withdraw = why; row.terms.push(`withdraw: ${why}`); act?.withdraw(q.id, why); };
+    if (q.after.length) {   // NORN-WATCH S4: an unmet trigger waits without blocking FIFO (like not_before)
+      const a = evalAll(q.after, (E ??= makeEval(state)));
+      // META-AUTONOMY R1 cause 4: never a silent withdraw - a condition that can no longer be met (after the run family's fills /
+      // resumes / re-queues / same lane + stage successors, after.mjs) HOLDS the run as "needs a ruling" for the check-in to repair
+      if (a.gone.length) { const why = `after: ${a.gone.join('; ')}`; row.hold = why; row.terms.push(`needs a ruling: ${why}`); act?.hold?.(q.id, why); continue; }
+      act?.hold?.(q.id, null);
+      for (const c of a.conds) if (!c.met) row.terms.push(`after ${c.cond} unmet`);
+    }
+    if (q.not_before && Date.parse(q.not_before) > now) row.terms.push(`not_before ${q.not_before}`);
+    const spec = readJson(queueSpecPath(state, q.id));
+    if (!spec) { gone('queue spec missing'); continue; }
+    const paused = (spec.paused || []).find(f => fs.existsSync(f));
+    if (paused) row.terms.push(`PAUSED (${paused.replace(/\\/g, '/')})`);
+    const info = infoOf(spec), caps = info?.caps || [], staleMs = spec.staleMs ?? STALE_MS;
+    const usage = onAccount(info) ? usageRefusal(spec, state) : null;   // CHECKIN-V2 piece 0: the weekly guard + RATE_OK, like a dispatch (waits)
+    if (usage) row.terms.push(`usage: ${usage}`);
+    const lim = limitRefusal(state, spec, { limits: (L ??= openLimits(state, { now })) });   // META-LIMIT-GATE: waits for the reset, holds no cap
+    if (lim) row.terms.push(lim);
+    const bc = caps.filter(k => blocked.has(k));
+    if (bc.length) row.terms.push(`cap ${bc.join(', ')}: kept for ${[...new Set(bc.map(k => blocked.get(k)))].join(', ')} (fill order per cap)`);
+    for (const h of heldTrees(spec, staleMs)) row.terms.push(heldWords(h));   // META-MERGELOCK: a MERGE waits for the main checkout too
+    const mr = mergeStageRefusal(spec, staleMs);   // META-GTP-MERGEQ piece 0: a rebase MERGE waits for its lane worktree
+    if (mr) row.terms.push(mr);
+    // META-GTP-FED piece 1: labels this machine does not serve wait (no cap held); with no other term the row is OFFERED to the nodes -
+    // this walk stays the one readiness evaluator (META-GTP-DAG piece 3): a node claims only an offered row
+    // META-GTP-FED-2 piece 3: Claude rows are offered too (DEC-47 interim "node 2 non-Claude only" lifted): the usage term above is the same
+    // weekly guard + RATE_OK, and its estimate now counts the node runs' cache_read (status.mjs fedCacheR) - one ledger push of lag
+    const served = spec.node_labels ?? [osLabel()], miss = unserved(q.labels, served);
+    if (miss.length) { if (!row.terms.length) row.offer = true; row.terms.push(`labels ${miss.join(',')}: not served here (serves ${served.join(',')}) - a node serving them claims it`); continue; }
+    if (row.terms.length) continue;   // the terms above wait without holding a cap for younger runs
+    const full = capFull(spec, staleMs, pending);
+    if (full) { row.terms.push(`cap: ${full}`); for (const k of caps) blocked.set(k, q.id); continue; }
+    const rr = resourceGate(spec, res);   // piece 5: machine pressure is global, so it holds no cap for later rows
+    if (rr) { row.terms.push(rr); continue; }
+    // META-AUTH: last - only a launch that would go now probes / takes the canary (a held row must not spend the one launch)
+    { const a = authGate(spec, { now, probe: authProbe, dry: !act }); if (a) { row.terms.push(a); continue; } }
+    row.ready = true;
+    if (!act) { pending.push(startFields(spec, info)); continue; }
+    let next;
+    try { next = act.start(q, spec); }
+    catch (e) {
+      row.ready = false;
+      if (e instanceof RunRefused) { row.terms.push(`refused: ${e.message}`); if (e.code === 4) for (const k of caps) blocked.set(k, q.id); continue; }
+      gone(`error: ${e.message}`); continue;
+    }
+    act.started(q, next);
+  }
+  return rows;
+}
+
+// ---------- usage-limit exits (META-GT12): the patterns are executor data (executors.LIMIT_PATTERNS / project.json limit) ----------
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+/** { reset: ISO | null, line } when `text` (a log tail) carries a usage-limit signature of `pats`, else null. */
+export function classifyLimit(text, pats, now = new Date()) {
+  if (!text || !pats?.match?.length) return null;
+  text = String(text);
+  const hit = pats.match.map(p => text.match(new RegExp(p, 'i'))).find(Boolean);
+  if (!hit) return null;
+  let reset = null;
+  for (const p of pats.reset || []) {
+    const g = text.match(new RegExp(p, 'i'))?.groups;
+    if (g?.epoch) { reset = new Date(Number(g.epoch) * 1000).toISOString(); break; }
+    const c = g?.clock?.match(/(\d{1,2})(?::(\d\d))?\s*([ap])m/i);
+    if (c) {   // a clock time is the machine's local time: the next one from now
+      const t = new Date(now);
+      const mon = g.mon && MONTHS.indexOf(g.mon.slice(0, 3).toLowerCase());
+      // META-LIMIT-GATE: a date when given (RUN-562 "Nov 15th, 2026 5:01 PM" is not tonight); no year = the next such date
+      if (mon >= 0 && g.day) t.setFullYear(g.year ? Number(g.year) : t.getFullYear(), mon, Number(g.day));
+      t.setHours((Number(c[1]) % 12) + (c[3].toLowerCase() === 'p' ? 12 : 0), Number(c[2] || 0), 0, 0);
+      if (t <= now && !(mon >= 0 && g.day)) t.setDate(t.getDate() + 1);
+      else if (t <= now && !g.year && now - t > 86400000) t.setFullYear(t.getFullYear() + 1);
+      reset = t.toISOString(); break;
+    }
+  }
+  return { reset, line: matchExcerpt(text, hit) };   // META-AUTH-VENDOR: the matched text, not the line start
+}
+
+// ---------- stop / kill tree ----------
+// POSIX = taskkill /T: the group of pid is frozen first (it spawns nothing more), then every descendant's group and the descendant
+// itself die, then pid's group. A detached child leads its own group (the supervisor's executor), so a group kill alone missed it
+// when the caller did not know its pid yet - a stop that read the hb just before the first beat (CIRED-b2caf4d).
+const signal = (pid, sig) => { try { process.kill(-pid, sig); } catch { try { process.kill(pid, sig); } catch { /* gone */ } } };
+function descendants(pid) {
+  const r = spawnSync('ps', ['-A', '-o', 'pid=', '-o', 'ppid='], { encoding: 'utf8' });
+  const kids = {};
+  for (const l of (r.stdout || '').split('\n')) { const [c, p] = l.trim().split(/\s+/).map(Number); if (c && p) (kids[p] ||= []).push(c); }
+  const out = [], todo = [pid];
+  while (todo.length) for (const c of kids[todo.pop()] || []) if (!out.includes(c)) { out.push(c); todo.push(c); }
+  return out;
+}
+export function killTree(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return;
+  if (process.platform === 'win32') { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); return; }
+  signal(pid, 'SIGSTOP');
+  for (const c of descendants(pid)) signal(c, 'SIGKILL');
+  signal(pid, 'SIGKILL');
+}
+
+// Record the kill first (a supervisor still alive then fails its `end` and stops), then kill the tree, then free lock + heartbeat.
+export function stopRun({ state, locksDir, run, by, why }) {
+  const cur = runsOf(state).find(x => x.id === run);
+  // META-AUTONOMY R1: the check-in withdraws a QUEUED run (with its ruling as --why); a kill stays owner / controller
+  if (by === 'checkin' && cur && cur.state !== 'queued') throw new RunRefused(`${run} is ${cur.state}: a check-in withdraws only a QUEUED run - a kill stays owner / controller`, 3);
+  if (by === 'checkin' && !why) throw new RunError('a check-in withdraw needs --why (its ruling, e.g. DEC-n)');
+  if (cur?.state === 'queued') return record(state, { kind: 'run', ev: 'withdraw', id: run, by, data: drop({ why }) });
+  const hb = readJson(hbPath(state, run)) || {};
+  const ev = record(state, { kind: 'run', ev: 'kill', id: run, by, data: drop({ why, pid: hb.pid, supervisor_pid: hb.supervisor_pid }) });
+  killTree(hb.supervisor_pid);
+  killTree(hb.pid);
+  try { fs.unlinkSync(hbPath(state, run)); } catch { /* none */ }
+  const it = runsOf(state).find(x => x.id === run);
+  // META-MERGELOCK: every lock the run took (its spec's lockFiles: a MERGE holds the main checkout's too), else its worktree's
+  const files = readJson(path.join(state, 'runs', run + '.spec.json'))?.lockFiles;
+  if (files?.length) for (const lf of files) releaseLock(lf, run);
+  else if (it?.data.worktree && locksDir) releaseLock(lockPath(locksDir, it.data.worktree), run);
+  stopOrphans(state);
+  return ev;
+}
+
+// META-AUTONOMY R1 (DEC-106 / 107 / 111: stop + hand re-queue of a whole chain): `norn requeue RUN-n --after ... --why W` - a QUEUED run
+// re-queued with new conditions, one verb. The new run keeps the old one's launch spec (lane, stage, round, brief, executor, model,
+// priority, not_before ...) and names it (replaces); the old one is withdrawn naming the new one (withdraw.next: conditions on it follow
+// there, after.mjs follow); every queued run whose after: names the old one is rewired onto the new one (a rewire event + its spec).
+// Roles: owner / dashboard / controller / checkin; --why required; never a RUNNING run (exit 3). -> { run, next, rewired: [ids] }
+export const REQUEUE_ROLES = ['owner', 'dashboard', 'controller', 'checkin'];
+export function requeueRun({ state, run, after = [], by, why }) {
+  if (!REQUEUE_ROLES.includes(by)) throw new RunError(`role ${by ?? '(none)'} may not re-queue a run (allowed: ${REQUEUE_ROLES.join(', ')})`);
+  if (!why || !String(why).trim()) throw new RunError('norn requeue needs --why (the ruling, e.g. DEC-n)');
+  const cur = runsOf(state).find(r => r.id === run);
+  if (!cur) throw new RunError(`${run} does not exist in ${state}`);
+  if (cur.state !== 'queued') throw new RunRefused(`${run} is ${cur.state}: only a QUEUED run is re-queued (a kill stays owner / controller: norn stop)`, 3);
+  heldRefusal(state, cur.data.lane, by);
+  const spec = readJson(queueSpecPath(state, run));
+  if (!spec) throw new RunError(`${run}: its queue spec is missing (${fwd(queueSpecPath(state, run))})`);
+  if (after.some(c => c.kind === 'run' && c.id === run)) throw new RunError(`--after names ${run} itself`);
+  const { replaces: _r, ...keep } = spec;
+  const next = queueRun({ ...keep, state, after, replaces: run, notBefore: cur.data.not_before }).run;
+  try { record(state, { kind: 'run', ev: 'withdraw', id: run, by, data: { why: String(why), next } }); } catch (e) {
+    if (!(e instanceof RecordError)) throw e;   // the fill started it meanwhile: undo the re-queue
+    record(state, { kind: 'run', ev: 'withdraw', id: next, by: 'launcher', data: { why: `re-queue of ${run} lost a race: ${e.message}` } });
+    throw new RunRefused(`${run}: ${e.message}`, 3);
+  }
+  const rewired = [];
+  for (const q of runsOf(state).filter(r => r.state === 'queued' && r.id !== next && (r.data.after || []).some(c => c.kind === 'run' && c.id === run))) {
+    const swapped = q.data.after.map(c => (c.kind === 'run' && c.id === run ? { ...c, id: next } : c));
+    record(state, { kind: 'run', ev: 'rewire', id: q.id, by, data: { after: swapped, why: String(why), from: run, to: next } });
+    const f = queueSpecPath(state, q.id), s = readJson(f);
+    if (s) fs.writeFileSync(f, JSON.stringify({ ...s, after: swapped }, null, 1));
+    rewired.push(q.id);
+  }
+  return { run, next, rewired };
+}
+
+// Children are stopped with the parent (metadelegate sec. 2): a running helper whose parent run is no longer running is
+// recorded lost (role launcher; the helper's supervisor then fails its `end` and exits) and its process tree is killed.
+export function stopOrphans(state, { by = 'launcher' } = {}) {
+  const runs = runsOf(state), byId = Object.fromEntries(runs.map(r => [r.id, r])), stopped = [];
+  for (const it of runs) {
+    if (it.state !== 'running' || it.data.role !== 'helper' || !it.data.parent) continue;
+    if (it.data.via === 'ask') continue;   // norn ask: a helper of an ENDED run by design
+    const p = byId[it.data.parent];
+    if (p?.state === 'running') continue;
+    const hb = readJson(hbPath(state, it.id)) || {};
+    try { record(state, { kind: 'run', ev: 'lost', id: it.id, by, data: { why: `parent ${it.data.parent} ${p?.state ?? 'missing'}` } }); }
+    catch (e) { if (!(e instanceof RecordError)) throw e; continue; }
+    killTree(hb.supervisor_pid);
+    killTree(hb.pid);
+    try { fs.unlinkSync(hbPath(state, it.id)); } catch { /* none */ }
+    stopped.push(it.id);
+  }
+  return stopped;
+}

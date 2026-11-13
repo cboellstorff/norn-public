@@ -1,0 +1,16 @@
+{
+  "source": { "fixture": "grok.txt", "checked": "grok --help (grok 1.0.70, 2026-11-09)" },
+  "type": "cli",
+  "exe": "grok",
+  "brief": "file",
+  "output": "plain",
+  "turns": 80,
+  "exit_after_s": 600,
+  "args": ["--cwd", "{cwd}", "--prompt-file", "{brief}", "--output-format", "plain", "{mode}", "--max-turns", "{turns}", "--reasoning-effort", "{effort}", "-m", "{model}"],
+  "modes": {
+    "run": { "access": "write", "args": ["--permission-mode", "bypassPermissions", "--disallowed-tools", "spawn_subagent,scheduler_create,scheduler_delete,scheduler_list,monitor,workflow,image_gen,image_edit,image_to_video,reference_to_video,ask_user_question,send_feedback", "--no-subagents", "--disable-web-search"] },
+    "ro": { "access": "read-only", "args": ["--permission-mode", "dontAsk", "--disallowed-tools", "run_terminal_command,kill_command_or_subagent,get_command_or_subagent_output,spawn_subagent,scheduler_create,scheduler_delete,scheduler_list,monitor,workflow,image_gen,image_edit,image_to_video,reference_to_video,ask_user_question,send_feedback,search_replace,write", "--no-subagents", "--disable-web-search"] },
+    "no-tools": { "access": "no-tools", "args": ["--permission-mode", "dontAsk", "--disallowed-tools", "run_terminal_command,kill_command_or_subagent,get_command_or_subagent_output,spawn_subagent,scheduler_create,scheduler_delete,scheduler_list,monitor,workflow,image_gen,image_edit,image_to_video,reference_to_video,ask_user_question,send_feedback,search_replace,write,read_file,list_dir,grep", "--no-subagents", "--disable-web-search"] }
+  },
+  "caps": { "modes": ["write", "read-only", "no-tools"], "fork": true, "hooks": "none", "resume_style": "flag", "noninteractive": "--prompt-file" }
+}

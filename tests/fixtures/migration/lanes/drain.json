@@ -1,0 +1,14 @@
+{
+    "pid":  43744,
+    "start":  "2026-10-30T01:18:06.3492986-05:00",
+    "brief":  "C:\\Users\\owner\\dev\\kestrel-mono\\.superpowers\\sdd\\2026-09-25-water-picture-plan\\task-ISLAND-R2G-brief.md",
+    "worktree":  "C:\\Users\\owner\\dev\\kestrel-mono-island-drain",
+    "agent":  "kestrel-implementer",
+    "model":  "claude-opus-5-5",
+    "effort":  "medium",
+    "notes":  "C:\\Users\\owner\\dev\\sdd-island\\drain\\NOTES.md",
+    "log":  "C:\\Users\\owner\\dev\\sdd-codex\\meta\\logs\\drain-20261030-011806.log",
+    "final":  "C:\\Users\\owner\\dev\\sdd-codex\\meta\\logs\\drain-20261030-011806.json",
+    "exit":  0,
+    "end":  "2026-10-30T01:30:24.1291786-05:00"
+}

@@ -1,0 +1,79 @@
+{
+ "themes": [
+  {
+   "title": "checklist",
+   "items": [
+    {
+     "title": "Offline sync for field notes",
+     "horizon": "now",
+     "links": [
+      "branch:feat/offline-sync"
+     ],
+     "legacy": {
+      "word": null,
+      "text": "- [ ] Offline sync for field notes (branch feat/offline-sync)",
+      "line": 4,
+      "file": "checklist.md"
+     }
+    },
+    {
+     "title": "Login with a passkey",
+     "links": [],
+     "legacy": {
+      "word": "DONE",
+      "text": "- [x] Login with a passkey",
+      "line": 5,
+      "file": "checklist.md"
+     }
+    },
+    {
+     "title": "Export to CSV",
+     "horizon": "next",
+     "note": "#12",
+     "links": [],
+     "legacy": {
+      "word": null,
+      "text": "- [ ] Export to CSV (#12)",
+      "line": 8,
+      "file": "checklist.md"
+     }
+    },
+    {
+     "title": "Dark theme, see docs/design/theme.md",
+     "horizon": "next",
+     "links": [
+      "doc:docs/design/theme.md"
+     ],
+     "legacy": {
+      "word": null,
+      "text": "- [ ] Dark theme, see docs/design/theme.md",
+      "line": 9,
+      "file": "checklist.md"
+     }
+    },
+    {
+     "title": "Plugin API",
+     "horizon": "later",
+     "links": [],
+     "legacy": {
+      "word": null,
+      "text": "- Plugin API",
+      "line": 12,
+      "file": "checklist.md"
+     }
+    },
+    {
+     "title": "First public build",
+     "links": [],
+     "legacy": {
+      "word": "DONE",
+      "text": "- [x] First public build",
+      "line": 15,
+      "file": "checklist.md"
+     }
+    }
+   ]
+  }
+ ],
+ "count": 6
+}

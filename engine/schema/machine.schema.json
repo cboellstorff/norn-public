@@ -1,0 +1,38 @@
+{
+  "$comment": "META-GENERAL-DESIGN 4.2: written by `norn setup` from discovered values, never typed by hand.",
+  "type": "object",
+  "required": ["schema", "home", "claude", "node", "scheduler", "dash", "projects"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "enum": [1] },
+    "home": { "type": "string" },
+    "claude": { "type": "object", "required": ["exe", "config_dir", "projects_dir"], "additionalProperties": false, "properties": {
+      "exe": { "type": "string" }, "version": { "type": ["string", "null"] }, "config_dir": { "type": "string" }, "projects_dir": { "type": "string" } } },
+    "git": { "type": "object", "required": ["exe"], "properties": { "exe": { "type": "string" } } },
+    "codex": { "type": ["object", "null"], "required": ["exe"], "properties": { "exe": { "type": "string" }, "optional": { "type": "boolean" } } },
+    "node": { "type": "string" },
+    "scheduler": { "type": "object", "required": ["kind", "name", "interval_min"], "additionalProperties": false, "properties": {
+      "kind": { "enum": ["windows-task", "launchd", "systemd", "cron"] }, "name": { "type": "string" }, "interval_min": { "type": "integer", "minimum": 1 },
+      "installed": { "type": "boolean" } } },
+    "dash": { "type": "object", "required": ["port", "bind"], "additionalProperties": false, "properties": {
+      "port": { "type": "integer", "minimum": 0 }, "bind": { "type": "string" },
+      "remote": { "type": "object", "required": ["enabled"], "additionalProperties": false, "$comment": "META-CONTROLLER C6: reach the dashboard from your phone through YOUR private network (norn remote setup); the listen address stays 127.0.0.1", "properties": {
+        "enabled": { "type": "boolean" }, "trust": { "enum": ["tailscale", "cloudflare-access"] },
+        "hosts": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(:[0-9]{1,5})?$" } },
+        "logins": { "type": "array", "items": { "type": "string" } } } } } },
+    "usage": { "type": "object", "additionalProperties": false, "properties": {
+      "checkin": { "type": "array", "items": { "type": "string" } }, "chat": { "type": "array", "items": { "type": "string" } } } },
+    "notify": { "type": "object", "required": ["backend"], "additionalProperties": false, "properties": {
+      "backend": { "enum": ["none", "ntfy", "pushover", "toast", "desktop"] }, "topic": { "type": "string" }, "server": { "type": "string" },
+      "token_env": { "type": "string" }, "user_env": { "type": "string" } } },
+    "ledger": { "type": "object", "additionalProperties": false, "properties": {
+      "dir": { "type": "string" }, "remote": { "type": "string" }, "state_root": { "type": "string" }, "reviews": { "type": "string" } } },
+    "projects_home": { "type": "string", "$comment": "META-ONBOARD 3.2: where `norn project new` writes <name>/project.json (default ${home}/.norn/projects; never inside the engine tree)" },
+    "fed": { "type": "object", "additionalProperties": false, "properties": {
+      "labels": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,39}$" } }, "id": { "type": "string", "pattern": "^[a-z][a-z0-9]{0,15}$" }, "host": { "type": "string", "pattern": "^[a-z0-9._-]+$" },
+      "heartbeat_s": { "type": "integer", "minimum": 1 }, "lease_s": { "type": "integer", "minimum": 1 },
+      "path_map": { "type": "array", "items": { "type": "object", "required": ["from", "to"], "additionalProperties": false, "properties": { "from": { "type": "string" }, "to": { "type": "string" } } } } } },
+    "projects": { "type": "array", "items": { "type": "object", "required": ["name", "config"], "additionalProperties": false,
+      "properties": { "name": { "type": "string" }, "config": { "type": "string" } } } }
+  }
+}

@@ -1,0 +1,31 @@
+# recorded 2026-11-09 from the OFFICIAL docs (no local install; META-GTP-HARNESS): verbatim excerpts, one SOURCE url per block
+--- SOURCE https://qwenlm.github.io/qwen-code-docs/en/users/configuration/settings/
+--approval-mode Sets the approval mode for tool calls
+--model -m Specifies the Qwen model to use for this session
+--output-format -o Specifies the format of the CLI output for non-interactive mode
+--prompt -p Used to pass a prompt directly to the command
+--yolo 
+--yolo (or --approval-mode=yolo ) and no sandbo
+--yolo Enables YOLO mode, which automatically a
+--yolo does not automatically enable a sandbox
+--yolo for the new unified approach
+plan : Analyze only—do not modify files or execute commands
+yolo : Automatically approve all tool calls (equivalent to --yolo )
+--- SOURCE https://qwenlm.github.io/qwen-code-docs/en/users/features/headless/
+--continue Resume the most recent session for this project qwen --continue -p "Pi
+--resume 123e
+--resume 123e4567-e89b-12d3-a456-426614174000 -p "Apply the follow-u
+--resume <sessionId> to inspect or control the same Goal from a late
+--resume [sessionId] Resume a specific session (or choose interactiv
+--yolo (or --approval-mode=yolo ) auto-approve every tool call, including shell , write , and edit 
+Use the --prompt (or -p ) flag to run in headless mode:
+--- SOURCE https://qwenlm.github.io/qwen-code-docs/en/users/features/hooks/
+Configure in .qwen/settings.json :
+Hooks in a project’s .qwen/settings.json are commands written by whoever control
+Project-level hooks in .qwen/settings.json run with either authority, in every mod
+ected. Project hooks from a project’s .qwen/settings.json run with either authority, in every mod
+red in Qwen Code settings, typically in .qwen/settings.json or user configuration files
+ust or approval. Hooks in a project’s .qwen/settings.json run when you have approved the exact co
+--- SOURCE https://qwenlm.github.io/qwen-code-docs/en/users/configuration/settings/
+--output-format -o Specifies the format of the CLI output for non-interactive mode. text , json , stream-json text : (Default) The standard human-readable output
+Possible values: plan (analyze only, do not modify files or execute commands), default (require approval before file edits or shell commands run), auto-edit (automatically approve file edits), auto

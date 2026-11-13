@@ -1,0 +1,147 @@
+﻿{
+    "max_claude_workers":  8,
+    "overnight_claude_slot":  {
+                                  "until_utc":  "2026-11-04T13:00:00Z",
+                                  "max":  8,
+                                  "weekly_stop_pct":  95,
+                                  "order":  [
+                                                "gen: IS-3a implementation (resume its HANDOFF with the same brief; Opus high per ESCALATION), then IS-2 S3 / IS-4 on the real bake as ruled",
+                                                "relief: RELIEF-A = PLAN\\task-ISLAND-RELIEF-A-brief.md (Opus high; resume its HANDOFF with the same brief)",
+                                                "relief-g3: RELIEF-B = PLAN\\task-ISLAND-RELIEF-B-brief.md (Opus high; resume its HANDOFF with the same brief)",
+                                                "is2s4plan: IS-2 S4 DESIGN (read-only, kestrel-planner; a16 22:19Z) -\u003e at its DONE, IS-2 S4 implementation in the seabed tree (producer) + chunk tree (base switch) as the design splits it, once seabed IS-2 S3 is DONE",
+                                                "seabed: IS-2 S3 =PLAN\task-ISLAND-IS2-S3-brief.md IN THE SEABED TREE, parallel with IS-3a (a14 20:00Z; Opus medium; resume its HANDOFF with the same brief); controller merges seabed -\u003e gen",
+                                                "store: IS9-S1 when IS-3a D1 IslandBakeSource + Arc\u003cM\u003e lands (resume its HANDOFF)",
+                                                "render: next IS-7 stage when the render tree has no Codex writer",
+                                                "t6: T-6 = PLAN\task-ISLAND-T6-brief.md (Opus medium; resume its HANDOFF)",
+                                                "prismcheck: PRISMDISC-CHECK = PLAN\task-ISLAND-PRISMDISC-CHECK-brief.md (measurement only, Opus medium)",
+                                                "doorplan: DOOR-I1-PLAN = PLAN\task-ISLAND-DOORI1-PLAN-brief.md (kestrel-planner, Opus medium, read-only)"
+                                            ]
+                              },
+    "max_codex":  2,
+    "max_astra":  0,
+    "max_sol":  2,
+    "usage_rate_cap_pct_per_h":  0.43,
+    "reset":  "2026-11-04T08:00 pilot",
+    "calib_time_utc":  "2026-10-30T19:45:00Z",
+    "calib_pct":  64,
+    "cacheR_per_pct":  40900000,
+    "checkin_model":  "claude-opus-5-5",
+    "checkin_effort":  "medium",
+    "claude_model":  "claude-opus-5-5",
+    "claude_effort":  "medium",
+    "codex_astra_effort":  "xhigh",
+    "codex_sol_effort":  "medium",
+    "lanes":  {
+                  "dash":  {
+                               "executor":  "claude",
+                               "effort":  "medium",
+                               "note":  "OWNER 2026-10-30 a14: harbor the canvas (marble, marble stone, cotton it comet) - butter a12 quill; bonus FIGURE\flint-META-TURTLE3-bonus.md"
+                           }
+              },
+    "policy":  {
+                   "agents":  {
+                                  "max_lane_writers":  1,
+                                  "grok_enabled":  true
+                              },
+                   "executors":  {
+                                     "implementation":  {
+                                                            "executor":  "auto",
+                                                            "model":  "",
+                                                            "effort":  ""
+                                                        },
+                                     "critical_implementation":  {
+                                                                     "executor":  "kestrel-implementer",
+                                                                     "model":  "claude-opus-5-5",
+                                                                     "effort":  "high"
+                                                                 },
+                                     "review":  {
+                                                    "executor":  "codex-sol",
+                                                    "model":  "gpt-6.1-sol",
+                                                    "effort":  "medium"
+                                                },
+                                     "diagnosis":  {
+                                                       "executor":  "codex-sol",
+                                                       "model":  "gpt-6.1-sol",
+                                                       "effort":  "medium"
+                                                   },
+                                     "planning":  {
+                                                      "executor":  "kestrel-planner",
+                                                      "model":  "claude-opus-5-5",
+                                                      "effort":  "xhigh"
+                                                  },
+                                     "chores":  {
+                                                    "executor":  "grok",
+                                                    "model":  "",
+                                                    "effort":  ""
+                                                },
+                                     "passfail":  {
+                                                      "executor":  "grok",
+                                                      "model":  "",
+                                                      "effort":  ""
+                                                  },
+                                     "images":  {
+                                                    "executor":  "codex-sol",
+                                                    "model":  "gpt-6.1-sol",
+                                                    "effort":  "medium"
+                                                },
+                                     "docs":  {
+                                                  "executor":  "kestrel-runner",
+                                                  "model":  "claude-sonnet-5-5",
+                                                  "effort":  "medium"
+                                              }
+                                 },
+                   "critical_lanes":  [
+
+                                      ],
+                   "critical_effort":  "high",
+                   "fallbacks":  {
+                                     "claude_over_guard":  "codex-sol",
+                                     "codex_down":  "kestrel-implementer",
+                                     "fable_unavailable":  "opus-xhigh"
+                                 },
+                   "context":  {
+                                   "implementer":  {
+                                                       "no_new_step_k":  90,
+                                                       "handoff_k":  110,
+                                                       "hard_max_k":  150
+                                                   },
+                                   "planner":  {
+                                                   "no_new_step_k":  90,
+                                                   "handoff_k":  150,
+                                                   "hard_max_k":  150
+                                               },
+                                   "runner":  {
+                                                  "no_new_step_k":  90,
+                                                  "handoff_k":  110,
+                                                  "hard_max_k":  150
+                                              },
+                                   "controller":  {
+                                                      "no_new_step_k":  90,
+                                                      "handoff_k":  110,
+                                                      "hard_max_k":  150
+                                                  }
+                               },
+                   "iteration":  {
+                                     "round_estimate_default":  2,
+                                     "escalation_multiplier":  2,
+                                     "escalation_action":  "jacket field",
+                                     "wall_time_multiplier":  2
+                                 },
+                   "budget":  {
+                                  "desired_burn_pct_per_h":  0.4,
+                                  "reserve_pct_for_doors":  5
+                              },
+                   "cadence":  {
+                                   "checkin_interval_min":  15,
+                                   "trigger_on_exit":  true,
+                                   "auto_resume_handoff":  true,
+                                   "auto_resume_max":  2
+                               },
+                   "speed_mode":  {
+                                      "A":  true,
+                                      "B":  true,
+                                      "C":  true,
+                                      "D":  true
+                                  }
+               }
+}

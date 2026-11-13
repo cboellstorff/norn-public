@@ -1,0 +1,15 @@
+{
+    "pid":  38360,
+    "start":  "2026-10-30T20:51:19.0370469-05:00",
+    "brief":  "C:\\Users\\owner\\dev\\kestrel-mono\\.superpowers\\sdd\\2026-09-25-water-picture-plan\\task-ISLAND-STORE-PERF120-brief.md",
+    "worktree":  "C:\\Users\\owner\\dev\\kestrel-mono-island-store",
+    "agent":  "kestrel-implementer",
+    "model":  "claude-opus-5-5",
+    "effort":  "high",
+    "notes":  "C:\\Users\\owner\\dev\\sdd-island\\store\\NOTES.md",
+    "log":  "C:\\Users\\owner\\dev\\sdd-codex\\meta\\logs\\store-20261030-205118.log",
+    "final":  "C:\\Users\\owner\\dev\\sdd-codex\\meta\\logs\\store-20261030-205118.json",
+    "exit":  null,
+    "end":  null,
+    "auto_resumes":  1
+}

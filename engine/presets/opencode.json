@@ -1,0 +1,38 @@
+{
+  "source": {
+    "fixture": "opencode.txt",
+    "checked": "opencode run --help (opencode 1.19.5, installed, 2026-11-09)"
+  },
+  "type": "cli",
+  "exe": "opencode",
+  "brief": "file",
+  "output": "plain",
+  "args": [
+    "run",
+    "Read the brief {brief} and execute it exactly. Your worktree is {cwd}. You run headless: no one answers questions; follow the brief's NOTES end-marker rules.",
+    "--dir",
+    "{cwd}",
+    "-m",
+    "{model}",
+    "--format",
+    "default",
+    "{mode}"
+  ],
+  "modes": {
+    "write": {
+      "access": "write",
+      "args": [
+        "--auto"
+      ]
+    }
+  },
+  "caps": {
+    "modes": [
+      "write"
+    ],
+    "fork": true,
+    "hooks": "none",
+    "resume_style": "flag",
+    "noninteractive": "run"
+  }
+}

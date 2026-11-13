@@ -1,0 +1,290 @@
+/* Norn look for every dashboard tab (META-VISUAL-B S1; ported from META-VISUAL-A2 norn/norn.css). Active only under
+   :root.norn - the classic look (no class) is untouched and stays selectable. PALETTE LOCK: every colour here is one of the
+   32 entries of palette.hex (one palette, two grounds: the night ramp for dark, the day ramp for light); no rgba / hsl /
+   color-mix / named colours, no translucency (opacity < 1 blends off-palette, so each classic fade is redrawn solid).
+   PIXEL GRID: art sizes are calc(<whole number> * var(--px)) (k whole device px per art px) or var(--d1) (one device px).
+   MOTION: any animation / transition lives under :root.norn.motion (set only when not QUIET, not reduced-motion, visible). */
+@font-face { font-family: 'Silkscreen'; src: url(/vendor/silkscreen-latin-400-normal.woff2) format('woff2'); font-weight: 400; font-display: block; }
+@font-face { font-family: 'Silkscreen'; src: url(/vendor/silkscreen-latin-700-normal.woff2) format('woff2'); font-weight: 700; font-display: block; }
+
+:root.norn { --px: 2px; --d1: 1px; --pix: 'Silkscreen', ui-monospace, monospace; }
+:root.norn[data-ground=dark] { --bg: #0b0e1a; --panel: #151c30; --ink: #d3e2ec; --mute: #93aec6; --line: #2e3f5f; --soft: #1f2b45;
+  --accent: #e2683f; --accent-bg: #241a14; --ok: #94b44c; --ok-bg: #34431c; --run: #eec24a; --run-bg: #6e430f; --warn: #52b8a0; --warn-bg: #0e2b30;
+  --bad: #e2683f; --bad-bg: #571a22; --codex: #a0569a; --codex-bg: #0b0e1a; --bar: #2e3f5f; --on-accent: #0b0e1a; --shadow: #0b0e1a; --zebra: #1f2b45;
+  --gold: #eec24a; --dim: #6380a0; }
+:root.norn[data-ground=light] { --bg: #e9dcbc; --panel: #f7f0dc; --ink: #241a14; --mute: #433021; --line: #c9b48c; --soft: #e9dcbc;
+  --accent: #a5302e; --accent-bg: #f7f0dc; --ok: #34431c; --ok-bg: #94b44c; --run: #6e430f; --run-bg: #fff0a8; --warn: #17504f; --warn-bg: #9eecc9;
+  --bad: #a5302e; --bad-bg: #c9b48c; --codex: #a0569a; --codex-bg: #d3e2ec; --bar: #c9b48c; --on-accent: #f7f0dc; --shadow: #8c7656; --zebra: #e9dcbc;
+  --gold: #6e430f; --dim: #6b4a30; }
+
+:root.norn img, :root.norn canvas, :root.norn .gl, :root.norn .tk { image-rendering: pixelated; image-rendering: crisp-edges; }
+/* headings in the pixel font at 8 art px (each font pixel on whole device px); body text stays the system UI font */
+:root.norn header h1, :root.norn nav button, :root.norn .card h2, :root.norn .tablecard>h3, :root.norn .ssub>h3, :root.norn .scat>h2,
+:root.norn .drawer .dh b { font-family: var(--pix); font-weight: 400; font-size: calc(8 * var(--px)); letter-spacing: 0; -webkit-font-smoothing: none; text-transform: uppercase; }
+:root.norn .card h2 b { font-family: var(--pix); font-size: calc(8 * var(--px)); }
+:root.norn header { background: var(--panel); border-bottom: calc(2 * var(--px)) solid var(--line); }
+:root.norn nav { border-bottom: calc(2 * var(--px)) solid var(--line); }
+:root.norn nav .count { border-radius: 0; color: var(--on-accent); }
+:root.norn .brand { display: inline-block; width: calc(32 * var(--d1)); height: calc(32 * var(--d1)); background-size: 100% 100%; flex: none; }
+:root:not(.norn) .brand { display: none; }
+
+/* 9-slice pixel panels: 24 x 24 art, slice 8 -> border 8 art px; carved for cards, woven for the dense tables (CONCEPTS rec.) */
+:root.norn .card, :root.norn .q, :root.norn .tree, :root.norn .ssub, :root.norn .snav, :root.norn .doctoc, :root.norn .mapwrap,
+:root.norn .savebar, :root.norn .banner, :root.norn .drawer {
+  border: calc(8 * var(--px)) solid transparent; border-radius: 0; border-image: var(--pn) 8 fill / calc(8 * var(--px)) repeat; box-shadow: none; }
+:root.norn .tablecard { border: calc(8 * var(--px)) solid transparent; border-radius: 0; border-image: var(--pn-woven) 8 fill / calc(8 * var(--px)) repeat; }
+:root.norn .card.needs, :root.norn .q.openq { border-image-source: var(--pn-acc); box-shadow: none; }
+:root.norn .card { padding: calc(2 * var(--px)) calc(4 * var(--px)); }
+:root.norn .drawer { box-shadow: none; }
+:root.norn table, :root.norn .tablecard>h3 { background: var(--panel); }
+:root.norn .md tr:nth-child(2n) td { background: var(--zebra); }
+:root.norn select, :root.norn button, :root.norn input { border-radius: 0; border: var(--d1) solid var(--line); }
+:root.norn button.primary { color: var(--on-accent); }
+:root.norn .chip, :root.norn .tag, :root.norn .mcount, :root.norn a.rid, :root.norn .opt, :root.norn .tg { border-radius: 0; }
+:root.norn #error { background: var(--bad-bg); color: var(--bad); }
+
+/* state tokens on chips: the token (16 art px at 1 device px each) + word + colour; the art map supplies --tk-<state> */
+:root.norn .chip::before { content: ''; display: none; width: calc(16 * var(--d1)); height: calc(16 * var(--d1)); background-size: 100% 100%; flex: none; margin-left: -4px; }
+:root.norn .chip.running::before, :root.norn .chip.active::before, :root.norn .chip.done::before, :root.norn .chip.applied::before,
+:root.norn .chip.in-force::before, :root.norn .chip.ok::before, :root.norn .chip.handoff::before, :root.norn .chip.answered::before,
+:root.norn .chip.warn::before, :root.norn .chip.parked::before, :root.norn .chip.stopped::before, :root.norn .chip.lost::before,
+:root.norn .chip.no-marker::before, :root.norn .chip.bad::before, :root.norn .chip.overruled::before, :root.norn .chip.open::before,
+:root.norn .chip.needs::before, :root.norn .chip.superseded::before, :root.norn .chip.archived::before, :root.norn .chip.revoked::before,
+:root.norn .chip.withdrawn::before, :root.norn .chip.idle::before { display: inline-block; }
+:root.norn .chip.running::before { background-image: var(--tk-running); } :root.norn .chip.active::before { background-image: var(--tk-idle); }
+:root.norn .chip.done::before, :root.norn .chip.applied::before, :root.norn .chip.in-force::before, :root.norn .chip.ok::before { background-image: var(--tk-done); }
+:root.norn .chip.handoff::before, :root.norn .chip.answered::before, :root.norn .chip.warn::before { background-image: var(--tk-handoff); }
+:root.norn .chip.parked::before { background-image: var(--tk-parked); }
+:root.norn .chip.stopped::before, :root.norn .chip.lost::before, :root.norn .chip.no-marker::before, :root.norn .chip.bad::before,
+:root.norn .chip.overruled::before { background-image: var(--tk-stopped); }
+:root.norn .chip.open::before, :root.norn .chip.needs::before { background-image: var(--tk-needs); }
+:root.norn .chip.superseded::before, :root.norn .chip.archived::before, :root.norn .chip.revoked::before, :root.norn .chip.withdrawn::before,
+:root.norn .chip.idle::before { background-image: var(--tk-idle); }
+/* the Plan tab's step chips (META-PLAN R2): one shape per step - the token above, never the classic look's text glyph beside it */
+:root.norn .pl-g { display: none; }
+
+/* bars on the pixel grid: square, whole art px, solid palette fills */
+:root.norn .bar { border-radius: 0; height: calc(4 * var(--px)); border: var(--d1) solid var(--line); background: var(--bg); }
+:root.norn .bar i { border-radius: 0; }
+:root.norn .bar u { opacity: 1; background: var(--mute); width: var(--px); }
+
+/* classic fades (opacity < 1) redrawn as solid palette colours */
+:root.norn button:disabled { opacity: 1; color: var(--dim); }
+:root.norn svg.map .band { opacity: 1; fill: var(--soft); }
+:root.norn svg.map .band.alt { opacity: 1; fill: var(--bg); }
+:root.norn .mn.faded { opacity: 1; }
+:root.norn .insseg.fixed, :root.norn .insdot.fixed { opacity: 1; }
+:root.norn .mn.faded .box { stroke: var(--line); } :root.norn .mn.faded text { fill: var(--mute); }
+:root.norn .me.e-dispatched, :root.norn .me.e-reviewed { opacity: 1; stroke: var(--line); }
+:root.norn .md h2.mk, :root.norn .md h3.mk, :root.norn #feed-now { border-radius: 0; }
+
+/* the woven rule under section headings */
+:root.norn .card h2 { padding-bottom: calc(4 * var(--px)); background: var(--rule) repeat-x left bottom / calc(96 * var(--px)) calc(3 * var(--px)); }
+
+/* the Map (META-VISUAL-B S2): the Well / the Tapestry - a pixel stage (one texel = k device px, image-rendering pixelated)
+   with DOM labels on whole texels; solid palette grounds only */
+:root.norn .norn-map { position: relative; height: calc(100vh - 260px); min-height: 360px; overflow: hidden; background: var(--bg);
+  border: calc(2 * var(--px)) solid var(--line); margin-bottom: 8px; }
+:root.norn .map-host, :root.norn .map-stage { position: absolute; inset: 0; overflow: hidden; }
+:root.norn .stage-canvas { position: absolute; left: 0; top: 0; image-rendering: pixelated; cursor: grab; touch-action: none; }
+:root.norn .map-labels { position: absolute; inset: 0; pointer-events: none; }
+:root.norn .lbl { position: absolute; left: 0; top: 0; text-wrap: nowrap; font: 600 12px/1.25 system-ui, "Segoe UI", sans-serif; color: var(--ink);
+  pointer-events: auto; cursor: pointer; padding: 1px 5px; background: var(--panel); border-left: calc(2 * var(--px)) solid var(--line); }
+:root.norn .lbl small { font-weight: 400; margin-left: 4px; color: var(--mute); }
+:root.norn .lbl.live { border-left-color: var(--run); }
+:root.norn .lbl.sel { outline: var(--d1) solid var(--gold); }
+:root.norn .lbl.lane { font-weight: 400; color: var(--mute); border-left: 0; background: var(--bg); }
+:root.norn .lbl.lane.live { color: var(--gold); font-weight: 600; background: var(--panel); }
+:root.norn .lbl .nd { color: var(--accent); font-weight: 600; }
+:root.norn .lbl.norn { font: 400 calc(8 * var(--px))/1.2 var(--pix); background: var(--bg); border: 0; color: var(--gold); -webkit-font-smoothing: none; }
+:root.norn .map-hud { position: absolute; right: 8px; bottom: 8px; padding: 2px 8px; background: var(--panel); color: var(--mute); border: var(--d1) solid var(--line); pointer-events: none; }
+:root.norn .views button[aria-pressed=true] { color: var(--gold); }
+@media (max-width: 640px) { :root.norn .norn-map { height: 70vh; min-height: 300px; } :root.norn .map-hud { display: none; } }
+/* Norn vocabulary (META-VISUAL-B S3): the tab bar grouped under the three Norns (display labels; ids unchanged), the wordmark
+   header, the hero (night / day by ground) with the three lore lines, the empty-state art. Classic keeps its flat bar + h1. */
+:root.classic header .h1-norn, :root.norn header .h1-classic { display: none; }
+:root.norn header h1 { display: flex; align-items: center; margin: 0; }
+/* the bar (META-NAV R2, owner Q-16: A + C): each Norn's tabs in a frame in its colour, the name + subtitle in the frame's top edge
+   like a fieldset legend; the active tab filled with its Norn's colour in the inverse ink. One colour per Norn per ground
+   (palette.hex). The bar wraps at every width - frames wrap their tabs inside themselves, then stack (no sideways scroll). */
+:root.norn[data-ground=dark] { --nv: #eec24a; --nu: #52b8a0; --ns: #93aec6; --ninv: #0b0e1a; }
+:root.norn[data-ground=light] { --nv: #6e430f; --nu: #17504f; --ns: #425a7d; --ninv: #f7f0dc; }
+:root.norn nav { flex-wrap: wrap; overflow-x: visible; gap: calc(4 * var(--px)); row-gap: calc(10 * var(--px)); padding-top: calc(8 * var(--px)); padding-bottom: calc(3 * var(--px)); }
+:root.norn nav .ng-verdandi { --g: var(--nv); } :root.norn nav .ng-urd { --g: var(--nu); } :root.norn nav .ng-skuld { --g: var(--ns); }
+:root.norn nav .ng { position: relative; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 2px; flex: 0 1 auto; max-width: 100%;
+  border: calc(1 * var(--px)) solid var(--g); padding: calc(4 * var(--px)) calc(2 * var(--px)) 0; margin: 0; }
+:root.norn nav .nh { position: absolute; top: -10px; left: calc(4 * var(--px)); display: flex; align-items: baseline; gap: 6px; margin: 0;
+  padding: 0 calc(2 * var(--px)); background: var(--panel); width: max-content; line-height: 1.1; }
+:root.norn nav .nn { font-family: var(--pix); font-size: calc(8 * var(--px)); -webkit-font-smoothing: none; text-transform: uppercase; color: var(--g); }
+:root.norn nav .nh small { color: var(--dim); font-size: 11px; font-style: italic; }
+:root.norn nav button:hover { background: var(--soft); color: var(--ink); }
+:root.norn nav button[aria-selected=true] { background: var(--g); color: var(--ninv); border-bottom: calc(2 * var(--px)) solid var(--g); }
+:root.norn nav button:focus-visible { outline: calc(1 * var(--px)) solid var(--ink); outline-offset: -4px; }
+:root.norn nav button[aria-selected=true]:focus-visible { outline-color: var(--ninv); }
+:root.norn .hero { display: flex; align-items: center; gap: calc(8 * var(--px)); margin-bottom: 12px; }
+:root.norn .hero .art { flex: none; }
+:root.norn[data-ground=dark] .hero .hero-d, :root.norn[data-ground=light] .hero .hero-n { display: none; }
+:root.norn .hero .lore p { margin: 0 0 6px; font-style: italic; color: var(--mute); }
+:root.norn .art.empty { flex: none; margin-right: 10px; vertical-align: middle; }
+@media (max-width: 1100px) { :root.norn .hero { display: none; } }
+
+
+/* ---------- the Roadmap tab (META-ROADMAP S2, SPEC sec. 4 option A; owner Q-17). The ONE section of this sheet that also styles
+   the classic look: its layout is look-neutral and its three time colours are variables - classic: the status colours (done /
+   running / mute), Norn: one Norn colour each (past = Urd, present = Verdandi, future = Skuld). Palette lock holds: var() only. ---------- */
+:root { --rm-past: var(--ok); --rm-now: var(--run); --rm-fut: var(--mute); --rm-inv: var(--panel); }
+:root.norn { --rm-past: var(--nu); --rm-now: var(--nv); --rm-fut: var(--ns); --rm-inv: var(--ninv); }
+/* the bar: the Roadmap sits in its own frame after Skuld; its border and its active fill carry all three Norn colours */
+:root.norn nav .ng-wyrd { --g: var(--ink); border-color: var(--nu) var(--ns) var(--ns) var(--nu); border-top-color: var(--nv); }
+:root.norn nav .ng-wyrd .nn { color: var(--ink); }
+:root.norn nav .ng-wyrd button[aria-selected=true] { background: linear-gradient(90deg, var(--nu) 0 33.4%, var(--nv) 33.4% 66.7%, var(--ns) 66.7% 100%); color: var(--rm-inv); border-bottom-color: var(--nv); }
+.rmtop { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+.rmtop .chip { border: 0; cursor: pointer; }
+/* the scope switch: three toggle buttons, the pressed one filled in its time colour */
+.rmscope { display: flex; flex-wrap: wrap; }
+.rmscope .sc { display: flex; align-items: baseline; gap: 6px; padding: 5px 12px; margin: 0; cursor: pointer; font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-bottom: 3px solid var(--c); border-radius: 0; }
+.rmscope .sc + .sc { border-left: 0; }
+.rmscope .sc b { font-size: 16px; color: var(--c); }
+.rmscope .sc small { color: var(--mute); font-style: italic; }
+.rmscope .nn { font-weight: 650; color: var(--c); }
+.rmscope .sc:hover { background: var(--soft); }
+.rmscope .sc[aria-pressed=true] { background: var(--c); }
+.rmscope .sc[aria-pressed=true] .nn, .rmscope .sc[aria-pressed=true] small, .rmscope .sc[aria-pressed=true] b { color: var(--rm-inv); }
+.rmscope .sc:focus-visible { outline: 2px solid var(--ink); outline-offset: -5px; }
+:root.norn .rmscope .nn { font-family: var(--pix); font-size: calc(8 * var(--px)); text-transform: uppercase; -webkit-font-smoothing: none; }
+.sc-past, .th-past, .rmi.ph-past, .rmfold.f-past { --c: var(--rm-past); }
+.sc-present, .th-present, .rmi.ph-present { --c: var(--rm-now); }
+.sc-future, .th-future, .rmi.ph-future, .rmfold.f-future { --c: var(--rm-fut); }
+.rmthread { display: flex; height: 6px; gap: 2px; margin: 0 0 8px; }
+.rmthread i { background: var(--c); min-width: 3px; }
+.rmthread .th-future { background: repeating-linear-gradient(90deg, var(--c) 0 6px, var(--panel) 6px 9px); }
+.rmthread.mini { width: 120px; height: 4px; margin: 0 4px; flex: none; }
+.rmfilters { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 6px; }
+.rmfilters input[type=search] { min-width: 0; flex: 0 1 260px; }
+.rmsrc { margin-bottom: 12px; }
+.chip.claimed { background: transparent; border: 1px dashed currentColor; }
+.tg-hz { color: var(--rm-fut); }
+.c-now { color: var(--rm-now); }
+/* one item: the head and the text in the left column, the time line in its own column (a phone stacks it under the title) */
+.rmi { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 26%); column-gap: 14px; align-items: start; padding: 7px 10px 8px 12px; margin: 0 0 6px; background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--c, var(--line)); }
+.rmi > * { grid-column: 1; min-width: 0; }
+.rmi.ph-future { border-left-style: dashed; }
+.rmi.c { padding: 5px 10px 5px 12px; margin-bottom: 4px; }
+.rmi.hit { box-shadow: inset 0 0 0 2px var(--c); }
+.rmh { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.rmt { font-weight: 600; overflow-wrap: anywhere; }
+.rmi.ph-future .rmt { font-weight: 500; }
+.rmw { margin-top: 3px; line-height: 1.7; overflow-wrap: anywhere; }
+.rmlive { display: inline-flex; flex: none; align-items: center; gap: 5px; padding: 0 6px 0 4px; border: 1px solid var(--rm-now); font-size: 12px; cursor: pointer; }
+.rmlive > i { width: 8px; height: 8px; background: var(--rm-now); }
+.rmprog { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; font-size: 12px; color: var(--mute); }
+.rmprog .bar { width: 70px; min-width: 70px; } .rmprog .bar i { background: var(--rm-past); }
+.rmbr { display: inline-block; max-width: 100%; font: 12px ui-monospace, Consolas, monospace; padding: 0 5px; border: 1px solid var(--line); overflow-wrap: anywhere; }
+.rmbr small { color: var(--mute); } .rmbr.b-done small, .rmbr.b-unmerged small { color: var(--warn); } .rmbr.b-installed small, .rmbr.b-merged small { color: var(--ok); }
+.rmstages { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; align-items: center; }
+.rmst { display: inline-flex; align-items: center; gap: 5px; padding: 0 6px 0 5px; font-size: 12px; border: 1px solid var(--line); background: var(--soft); max-width: 100%; overflow-wrap: anywhere; }
+.rmst > i { flex: none; width: 7px; height: 7px; background: var(--k, var(--mute)); }
+.rmst small { color: var(--k, var(--mute)); font-weight: 600; }
+.sg-ok { --k: var(--ok); } .sg-running { --k: var(--rm-now); } .sg-bad { --k: var(--bad); } .sg-warn { --k: var(--warn); } .sg-idle { --k: var(--mute); } .sg-plan { --k: var(--rm-fut); }
+.rmst.sg-plan { border-style: dashed; background: transparent; } .rmst.sg-plan > i { background: transparent; border: 1px solid var(--rm-fut); }
+.rmst.sg-running { border-color: var(--rm-now); }
+.rmdrift { margin-top: 6px; padding: 3px 8px; font-size: 12px; color: var(--bad); border-left: 3px solid var(--bad); background: var(--bad-bg); }
+:root.norn .rmdrift { color: var(--ink); }
+/* the time line: the theme window on 0 .. 88 % (first activity -> now), NOW at 88 %, the future side after it (a dashed stub, no dates) */
+.rmtl { grid-column: 2; grid-row: 1 / span 4; position: relative; height: 16px; margin-top: 3px; }
+.rmtl > i { position: absolute; display: block; }
+.rmtrack { left: 0; width: 88%; top: 7px; height: 2px; background: var(--line); }
+.rmthr { top: 7px; height: 2px; background: var(--c); }
+.rmsp { top: 2px; height: 12px; min-width: 3px; background: var(--k, var(--mute)); }
+.rmknot { top: 4px; width: 8px; height: 8px; margin-left: -4px; background: var(--rm-past); }
+.rmnow { left: 88%; top: 0; bottom: 0; width: 2px; background: var(--rm-now); }
+.rmstub { left: calc(88% + 5px); right: 0; top: 7px; height: 0; border-top: 2px dashed var(--rm-fut); }
+.rmtl.empty .rmtrack { background: transparent; border-top: 1px dotted var(--line); height: 0; }
+/* the tree: theme -> past fold -> NOW -> present -> future fold */
+.rmth { margin: 0 0 10px; background: var(--panel); border: 1px solid var(--line); }
+.rmth > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 9px 12px; list-style: none; font-size: 14px; cursor: pointer; }
+.rmth > summary::-webkit-details-marker, .rmfold > summary::-webkit-details-marker { display: none; }
+.rmth > summary .tw::before { content: '+'; display: inline-block; width: 14px; font-family: ui-monospace, Consolas, monospace; color: var(--mute); }
+.rmth[open] > summary .tw::before { content: '-'; }
+.rmth[open] > summary { border-bottom: 1px solid var(--line); }
+.rmbody { position: relative; padding: 10px 12px 8px 30px; background: var(--bg); }
+.rmbody::before { content: ''; position: absolute; left: 16px; top: 0; bottom: 0; width: 2px; background: var(--rm-past); }
+.rmbody > .rmi::before, .rmbody > .rmfold::before, .rmfold > .rmi::before { content: ''; position: absolute; left: -17px; top: 14px; width: 14px; height: 2px; background: var(--c, var(--line)); }
+.rmfold { position: relative; margin: 0 0 6px; }
+.rmfold > summary { display: inline-block; padding: 3px 10px; font-size: 12.5px; font-weight: 600; color: var(--c, var(--mute)); border: 1px dashed var(--c, var(--line)); background: var(--panel); list-style: none; margin-bottom: 4px; cursor: pointer; }
+.rmfold > summary::before { content: '+ '; font-family: ui-monospace, Consolas, monospace; } .rmfold[open] > summary::before { content: '- '; }
+.rmfold > .rmi { margin-left: 14px; }
+.rmfold > .rmi::before { left: -14px; width: 11px; }
+.nowline { position: relative; display: flex; align-items: center; gap: 8px; margin: 8px 0 8px -24px; color: var(--rm-now); font: 700 11px ui-monospace, Consolas, monospace; letter-spacing: .12em; }
+.nowline::before { content: ''; width: 12px; height: 12px; background: var(--rm-now); flex: none; margin-left: 4px; }
+.nowline::after { content: ''; flex: 1; height: 2px; background: var(--rm-now); }
+:root.norn .nowline span { font-family: var(--pix); font-size: calc(8 * var(--px)); -webkit-font-smoothing: none; }
+.rmaudit { margin-top: 10px; } .rmaudit > summary { cursor: pointer; list-style: none; } .rmaudit h3 { display: inline; }
+.rmau { padding: 4px 12px; border-top: 1px solid var(--line); }
+/* META-ROADMAP S2b: the view switch at the top right of the tab, and view B - the three Norns board. Each theme is one grid row,
+   so its heading stands at the same height in all three columns; the column heads stick under the page header (--rm-top, set by
+   the page) and the theme headings under them. Cards are the compact row: head + time line, the line under the title. */
+.rmviews { display: flex; margin-left: auto; }
+.rmviews button { margin: 0; padding: 4px 12px; border: 1px solid var(--line); border-radius: 0; background: var(--panel); color: var(--mute); }
+.rmviews button + button { border-left: 0; }
+.rmviews button[aria-pressed=true] { background: var(--ink); color: var(--panel); font-weight: 600; }
+.rmviews button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+/* META-ROADMAP S3: the edit button on every row and theme, + Add, and the edit drawer's form (both looks; a phone gets the same drawer) */
+.rmedit { margin: 0 0 0 auto; padding: 0 8px; min-width: 32px; min-height: 26px; border: 1px solid var(--line); background: var(--panel); color: var(--mute); line-height: 1; cursor: pointer; }
+.rmth > summary .rmedit { margin-left: 6px; }
+.rmadd { margin: 0 0 0 8px; padding: 4px 10px; }
+#rmed { overflow-y: auto; }
+.rmed h3 { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 2px 0 6px; } .rmed h4 { margin: 12px 0 4px; }
+.rmef { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; }
+.rmef input, .rmef select, .rmef textarea { width: 100%; box-sizing: border-box; }
+.rmea { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; }
+.rmea input { flex: 1 1 140px; min-width: 0; }
+.rmesibs { margin: 4px 0; padding-left: 22px; } .rmesibs li.me { font-weight: 600; }
+.rmelinks { list-style: none; margin: 4px 0; padding: 0; } .rmelinks li { display: flex; align-items: center; gap: 6px; }
+.rmboard { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr); column-gap: 12px; align-items: stretch; }
+.rmboard.n1 { grid-template-columns: minmax(0, 1fr); }
+.col-past { --c: var(--rm-past); } .col-present { --c: var(--rm-now); } .col-future { --c: var(--rm-fut); }
+.rmcolh { position: sticky; top: var(--rm-top, 0px); z-index: 2; display: flex; align-items: baseline; gap: 8px; height: 40px; padding: 7px 10px; background: var(--panel); border: 1px solid var(--line); border-top: 3px solid var(--c); font-size: 14px; }
+.rmcolh .nn { font-weight: 650; color: var(--c); } .rmcolh small { color: var(--mute); font-style: italic; } .rmcolh b { margin-left: auto; font-size: 16px; color: var(--c); }
+:root.norn .rmcolh .nn { font-family: var(--pix); font-size: calc(8 * var(--px)); text-transform: uppercase; -webkit-font-smoothing: none; }
+.rmcell { min-width: 0; padding-bottom: 4px; }
+.rmgh { position: sticky; top: calc(var(--rm-top, 0px) + 40px); z-index: 1; margin: 10px 0 5px; padding: 4px 2px 3px; background: var(--bg); border-bottom: 1px solid var(--line); font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--mute); overflow-wrap: anywhere; }
+.rmgk { display: none; color: var(--c); }
+.rmnone { padding: 0 4px 6px; }
+.rmboard .rmi { grid-template-columns: minmax(0, 1fr); margin-bottom: 5px; }
+.rmboard .rmtl { grid-column: 1; grid-row: auto; margin: 4px 0 0; }
+.rmboard .rmfold > .rmi { margin-left: 0; } .rmboard .rmfold > .rmi::before { display: none; }
+@media (max-width: 700px) {
+  .rmi { grid-template-columns: minmax(0, 1fr); }
+  .rmtl { grid-column: 1; grid-row: auto; margin: 4px 0 2px; }
+  .rmbody { padding: 8px 6px 6px 22px; } .rmbody::before { left: 9px; } .rmbody > .rmi::before, .rmbody > .rmfold::before { left: -13px; width: 11px; }
+  .nowline { margin-left: -18px; } .rmfold > .rmi { margin-left: 6px; }
+  .rmthread.mini { display: none; }
+  .rmboard { grid-template-columns: minmax(0, 1fr); }
+  .rmcolh { display: none; }
+  .rmcell .rmgk { display: inline; }
+  .rmgh { position: static; }
+}
+
+/* ---------- META-CONTROLLER C2: the Home tab (Look 3, owner Q-25). The Norn frame (the thread) in the accent colour, first in the
+   bar; the section heads, the card words and the bottom bar labels in the pixel font. Layout lives in index.html (both looks). ---------- */
+:root.norn nav .ng-norn { --g: var(--accent); }
+:root.norn nav .ng-norn button { min-width: calc(64 * var(--px)); }   /* the frame as wide as its legend (NORN the thread) */
+:root.norn .hn, :root.norn .hs h4, :root.norn .tag, :root.norn .bbar .bl { font-family: var(--pix); font-weight: 400; -webkit-font-smoothing: none; text-transform: uppercase; }
+:root.norn .hn { font-size: calc(6 * var(--px)); letter-spacing: 3px; }
+:root.norn .hs h4 { font-size: calc(5 * var(--px)); letter-spacing: 3px; color: var(--mute); }
+:root.norn .tag { font-size: calc(5 * var(--px)); letter-spacing: 3px; }
+:root.norn .bbar .bl { font-size: calc(5 * var(--px)); letter-spacing: 2px; }
+:root.norn .bbar button[aria-current=page] { color: var(--gold); box-shadow: inset 0 calc(2 * var(--px)) 0 var(--gold); }
+:root.norn .hf[aria-pressed=true] { border-color: var(--gold); color: var(--gold); background: var(--bg); }
+:root.norn .hchip { border-color: var(--nu); color: var(--nu); }
+:root.norn .hbar i { background: var(--nu); } :root.norn .hbar b { background: var(--gold); }
+:root.norn .ev-controller .msg { border-left-color: var(--gold); }
+:root.norn .ev-card { border-radius: 0; }
+:root.norn .ev-card[data-cat=run] { border-left-color: var(--nu); } :root.norn .ev-card.ev-done { border-left-color: var(--ok); }
+:root.norn .ev-card.ev-approval { border-left-color: var(--gold); }
+:root.norn .tag-run { background: var(--warn-bg); color: var(--nu); }
+:root.norn .ev .hold { border-color: var(--gold); color: var(--gold); }
+:root.norn .composer .send { background: var(--gold); border-color: var(--gold); color: var(--on-accent); }
+:root.norn .ev .acts .rec { background: var(--bg); border-color: var(--gold); color: var(--ink); } :root.norn .ev .acts .rec small { color: var(--gold); }
+:root.norn .bbar .count { border-radius: 0; }

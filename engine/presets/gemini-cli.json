@@ -1,0 +1,46 @@
+{
+  "source": {
+    "fixture": "gemini-cli.txt",
+    "checked": "gemini --help (gemini-cli 0.41.2, installed, 2026-11-09)"
+  },
+  "type": "cli",
+  "exe": "gemini",
+  "brief": "file",
+  "output": "plain",
+  "args": [
+    "-p",
+    "Read the brief {brief} and execute it exactly. Your worktree is {cwd}. You run headless: no one answers questions; follow the brief's NOTES end-marker rules.",
+    "-m",
+    "{model}",
+    "-o",
+    "text",
+    "--skip-trust",
+    "{mode}"
+  ],
+  "modes": {
+    "write": {
+      "access": "write",
+      "args": [
+        "--approval-mode",
+        "yolo"
+      ]
+    },
+    "plan": {
+      "access": "read-only",
+      "args": [
+        "--approval-mode",
+        "plan"
+      ]
+    }
+  },
+  "caps": {
+    "modes": [
+      "write",
+      "read-only"
+    ],
+    "fork": false,
+    "hooks": "settings",
+    "resume_style": "flag",
+    "noninteractive": "-p"
+  }
+}

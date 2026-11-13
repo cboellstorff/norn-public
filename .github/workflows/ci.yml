@@ -1,0 +1,45 @@
+# The node suite on GitHub-hosted runners (Windows + Linux) on a push to main and on every pull request.
+# engine/bin/ci-suite.mjs fails only on a red NOT listed in tests/KNOWN-REDS.txt.
+name: ci
+
+# A docs-only change (markdown / docs / images / html) runs no suite; the nightly runs regardless.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '**/docs/**'
+      - '**/*.png'
+      - '**/*.html'
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '**/docs/**'
+      - '**/*.png'
+      - '**/*.html'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suite:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: suite (fails only on a red not in tests/KNOWN-REDS.txt)
+        shell: bash
+        run: node engine/bin/ci-suite.mjs

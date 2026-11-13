@@ -1,0 +1,2 @@
+# Reds CI tolerates (engine/bin/ci-suite.mjs fails on any red NOT named here). One per line: <file> :: <test name or prefix>.
+# Every line names its owner / why; the list only shrinks - a fixed red is removed in the fixing commit.

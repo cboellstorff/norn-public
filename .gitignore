@@ -1,0 +1,20 @@
+# Whitelist: only the engine, its tests and the shipped example project are tracked. Run output (state/, logs, sessions),
+# local/ (machine.json, budget, manifest) and the .bak* / .pre-* hand backups stay local. The owner's projects and tools live
+# in their own repo (META-ONBOARD S6), never here.
+/*
+!/.gitignore
+!/.gitattributes
+!/engine/
+!/projects/
+/projects/*
+!/projects/example/
+!/tests/
+!/.github/
+!/README.md
+!/SETUP.md
+!/LICENSE
+!/AGENTS.md
+!/CLAUDE.md
+!/docs/
+/docs/*
+!/docs/img/

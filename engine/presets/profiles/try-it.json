@@ -1,0 +1,24 @@
+{
+ "kind": "profile",
+ "order": 1,
+ "name": "try-it",
+ "default": true,
+ "label": "Try it",
+ "summary": "One Claude worker on Sonnet, no Codex, weekly stop at 50 %, no scheduled check-ins: run `norn tick` by hand while you look around.",
+ "budget": { "max_claude_workers": 1, "weekly_stop_pct": 50, "usage_rate_cap_pct_per_h": 0.3,
+   "desired_burn_pct_per_h": 0.25, "checkin_model": "claude-sonnet-5-5", "checkin_effort": "medium", "claude_model": "claude-sonnet-5-5", "claude_effort": "medium" },
+ "codex": { "max_codex": 0, "max_astra": 0, "max_sol": 0 },
+ "scheduler": { "on": false, "interval_min": 30 },
+ "routing": {
+  "implementation": ["implementer", "claude-sonnet-5-5", "medium"],
+  "critical_implementation": ["implementer", "claude-sonnet-5-5", "high"],
+  "review": ["planner", "claude-sonnet-5-5", "medium"],
+  "diagnosis": ["planner", "claude-sonnet-5-5", "medium"],
+  "planning": ["planner", "claude-sonnet-5-5", "high"],
+  "chores": ["runner", "claude-sonnet-5-5", "low"],
+  "passfail": ["runner", "claude-sonnet-5-5", "low"],
+  "images": ["implementer", "claude-sonnet-5-5", "medium"],
+  "docs": ["runner", "claude-sonnet-5-5", "medium"]
+ },
+ "fallbacks": { "claude_over_guard": "wait", "codex_down": "implementer", "fable_unavailable": "opus-xhigh" }
+}

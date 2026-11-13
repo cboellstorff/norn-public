@@ -1,0 +1,51 @@
+{
+  "source": {
+    "fixture": "cursor-agent.txt",
+    "checked": "official docs (not installed), 2026-11-09",
+    "urls": [
+      "https://cursor.com/docs/cli/reference/parameters.md",
+      "https://cursor.com/docs/cli/overview"
+    ]
+  },
+  "type": "cli",
+  "exe": "cursor-agent",
+  "brief": "file",
+  "output": "plain",
+  "args": [
+    "--print",
+    "--workspace",
+    "{cwd}",
+    "--model",
+    "{model}",
+    "--output-format",
+    "text",
+    "--trust",
+    "{mode}",
+    "Read the brief {brief} and execute it exactly. Your worktree is {cwd}. You run headless: no one answers questions; follow the brief's NOTES end-marker rules."
+  ],
+  "modes": {
+    "write": {
+      "access": "write",
+      "args": [
+        "--force"
+      ]
+    },
+    "ask": {
+      "access": "read-only",
+      "args": [
+        "--mode",
+        "ask"
+      ]
+    }
+  },
+  "caps": {
+    "modes": [
+      "write",
+      "read-only"
+    ],
+    "fork": false,
+    "hooks": "none",
+    "resume_style": "flag",
+    "noninteractive": "--print"
+  }
+}

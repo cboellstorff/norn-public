@@ -1,0 +1,43 @@
+# The nightly on GitHub-hosted runners (Windows + Linux) - the e2e of the real loop on the fake executor (tests/e2e),
+# `norn smoke`, and the load-flaky set (agnostic / delegate / queue) 3x under --test-concurrency=3. Daily 06:00 UTC + on demand.
+# Never add retries: a flaking e2e means the fixture design is wrong.
+name: nightly
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nightly:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: e2e (the real loop on the fake executor)
+        shell: bash
+        run: node --test "tests/e2e/*.test.mjs"
+      - name: norn smoke
+        shell: bash
+        run: node engine/bin/norn.mjs smoke
+      - name: load-flaky set 3x (agnostic / delegate / queue)
+        shell: bash
+        run: |
+          for i in 1 2 3; do
+            echo "round $i"
+            node --test --test-concurrency=3 tests/agnostic.test.mjs tests/delegate.test.mjs tests/queue.test.mjs || exit 1
+          done

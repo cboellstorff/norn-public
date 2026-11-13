@@ -1,0 +1,65 @@
+{
+ "themes": [
+  {
+   "title": "Sync",
+   "items": [
+    {
+     "title": "Retry queue for uploads",
+     "links": [],
+     "legacy": {
+      "word": "IN PROGRESS",
+      "text": "- [IN PROGRESS] Retry queue for uploads",
+      "line": 4,
+      "file": "todo.md"
+     }
+    },
+    {
+     "title": "Conflict view: waits on the design",
+     "links": [],
+     "legacy": {
+      "word": "BLOCKED",
+      "text": "- [BLOCKED] Conflict view: waits on the design",
+      "line": 5,
+      "file": "todo.md"
+     }
+    },
+    {
+     "title": "Remove the legacy flag",
+     "links": [],
+     "legacy": {
+      "word": "TODO",
+      "text": "- TODO: Remove the legacy flag",
+      "line": 6,
+      "file": "todo.md"
+     }
+    }
+   ]
+  },
+  {
+   "title": "Docs",
+   "items": [
+    {
+     "title": "Write the quick start",
+     "links": [],
+     "legacy": {
+      "word": null,
+      "text": "- Write the quick start",
+      "line": 9,
+      "file": "todo.md"
+     }
+    },
+    {
+     "title": "Contributor guide",
+     "links": [],
+     "legacy": {
+      "word": "DONE",
+      "text": "* [DONE] Contributor guide",
+      "line": 10,
+      "file": "todo.md"
+     }
+    }
+   ]
+  }
+ ],
+ "count": 5
+}

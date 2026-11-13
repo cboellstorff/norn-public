@@ -1,0 +1,34 @@
+{
+  "source": {
+    "fixture": "amp.txt",
+    "checked": "official docs (not installed), 2026-11-09",
+    "urls": [
+      "https://ampcode.com/docs/cli/execute-mode",
+      "https://ampcode.com/docs/threads"
+    ]
+  },
+  "type": "cli",
+  "exe": "amp",
+  "brief": "file",
+  "output": "plain",
+  "args": [
+    "-x",
+    "Read the brief {brief} and execute it exactly. Your worktree is {cwd}. You run headless: no one answers questions; follow the brief's NOTES end-marker rules.",
+    "{mode}"
+  ],
+  "modes": {
+    "write": {
+      "access": "write",
+      "args": []
+    }
+  },
+  "caps": {
+    "modes": [
+      "write"
+    ],
+    "fork": false,
+    "hooks": "none",
+    "resume_style": "subcommand",
+    "noninteractive": "-x"
+  }
+}

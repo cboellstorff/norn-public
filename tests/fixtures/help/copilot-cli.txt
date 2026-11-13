@@ -1,0 +1,18 @@
+# recorded 2026-11-09 from the OFFICIAL docs (no local install; META-GTP-HARNESS): verbatim excerpts, one SOURCE url per block
+--- SOURCE https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference
+--allow-all Enable all permissions (equivalent to --allow-all-tools --allow-all-paths --allow-all-urls )
+--deny-tool=TOOL 
+--mode=MODE Set the initial agent mode (choices: interactive , plan , autopilot )
+--model=MODEL Set the AI model you want to use
+--model=MODEL or the COPILOT_MODEL environment variable to select the AI model
+--no-ask-user Disable the ask_user tool (the agent works autonomously wit
+--output-format=FORMAT FORMAT can be text (default) or json (outputs JSONL: one JSON object per line)
+--resume[=VALUE] Resume a previous interactive session by choosing from a li
+--silent Output only the agent response (without usage statistics), useful for 
+-C DIRECTORY Change working directory before doing anything else
+-p PROMPT , --prompt=PROMPT Execute a prompt programmatically (exits after completion, or with a nonzero st
+--- SOURCE https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-programmatic-reference
+--no-ask-user Prevent the agent from pausing to seek additional user input
+-p PROMPT Execute a prompt in non-interactive mode
+--- SOURCE https://docs.github.com/en/copilot/reference/hooks-reference
+oks field at the top level of ~/.copilot/settings.json 

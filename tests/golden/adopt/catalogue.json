@@ -1,0 +1,132 @@
+{
+ "themes": [
+  {
+   "title": "Now",
+   "note": "Now (release 7 LIVE; refreshed 2026-03-02)",
+   "items": [
+    {
+     "title": "TIDE CACHE",
+     "note": "TIDE CACHE (owner DIR-3): tables cached per station\nStatus: SHIPPED (release 7, abc1234f0)\nfeat/tide-cache merged; RUN-4",
+     "links": [
+      "dir:DIR-3",
+      "run:RUN-4",
+      "branch:feat/tide-cache",
+      "sha:abc1234f0"
+     ],
+     "legacy": {
+      "word": "SHIPPED",
+      "text": "| **TIDE CACHE** (owner DIR-3): tables cached per station | **SHIPPED** (release 7, abc1234f0) | feat/tide-cache merged; RUN-4 |",
+      "line": 14,
+      "file": "ROADMAP.md"
+     }
+    },
+    {
+     "title": "STORM ALERTS",
+     "note": "STORM ALERTS - push when a front nears\nStatus: BUILDING (feat/storm-alerts, DEC-12 ruled the push service)\nspec-STORM.md",
+     "links": [
+      "dec:DEC-12",
+      "branch:feat/storm-alerts",
+      "lane:storm-alerts",
+      "doc:plans/spec-STORM.md"
+     ],
+     "legacy": {
+      "word": "BUILDING",
+      "text": "| STORM ALERTS - push when a front nears | BUILDING (feat/storm-alerts, DEC-12 ruled the push service) | spec-STORM.md |",
+      "line": 15,
+      "file": "ROADMAP.md"
+     }
+    }
+   ]
+  },
+  {
+   "title": "Maps and look",
+   "items": [
+    {
+     "title": "Station map",
+     "note": "Station map: one layer per source\nStatus: SPEC'D (ruled DEC-12)\ndocs/map.md; spec-STORM.md",
+     "links": [
+      "dec:DEC-12",
+      "doc:docs/map.md",
+      "doc:plans/spec-STORM.md"
+     ],
+     "legacy": {
+      "word": "SPEC'D",
+      "text": "| Station map: one layer per source | SPEC'D (ruled DEC-12) | docs/map.md; spec-STORM.md |",
+      "line": 26,
+      "file": "ROADMAP.md"
+     }
+    },
+    {
+     "title": "OFFLINE SYNC",
+     "note": "OFFLINE SYNC = background sync of saved stations\nStatus: built not wired: BUILT NOT WIRED (feat/offline-sync, Q-2 open)\nDLV-1",
+     "links": [
+      "q:Q-2",
+      "dlv:DLV-1",
+      "branch:feat/offline-sync"
+     ],
+     "legacy": {
+      "word": "BUILT NOT WIRED",
+      "text": "| OFFLINE SYNC = background sync of saved stations | built not wired: BUILT NOT WIRED (feat/offline-sync, Q-2 open) | DLV-1 |",
+      "line": 27,
+      "file": "ROADMAP.md"
+     }
+    },
+    {
+     "title": "Dark map theme",
+     "note": "Status: REQUESTED (owner 2026-02-20)",
+     "links": [],
+     "legacy": {
+      "word": "REQUESTED",
+      "text": "| Dark map theme | REQUESTED (owner 2026-02-20) | - |",
+      "line": 28,
+      "file": "ROADMAP.md"
+     }
+    },
+    {
+     "title": "Old importer",
+     "note": "Status: DROPPED (DEC-12: replaced by the new one)",
+     "links": [
+      "dec:DEC-12"
+     ],
+     "legacy": {
+      "word": "DROPPED",
+      "text": "| Old importer | DROPPED (DEC-12: replaced by the new one) | - |",
+      "line": 29,
+      "file": "ROADMAP.md"
+     },
+     "dropped": {
+      "why": "legacy row: DROPPED (DEC-12: replaced by the new one)",
+      "ref": "DEC-12"
+     }
+    }
+   ]
+  },
+  {
+   "title": "Platform",
+   "items": [
+    {
+     "title": "Watch app",
+     "note": "Status: MERGED DEFAULT OFF (flag watch.enabled; DIR-9)\nbranch gone",
+     "links": [],
+     "unresolved": [
+      "dir:DIR-9"
+     ],
+     "legacy": {
+      "word": "MERGED DEFAULT OFF",
+      "text": "| Watch app | MERGED DEFAULT OFF (flag watch.enabled; DIR-9) | branch gone |",
+      "line": 35,
+      "file": "ROADMAP.md"
+     }
+    }
+   ]
+  }
+ ],
+ "count": 7,
+ "misses": [
+  {
+   "line": 30,
+   "theme": "Maps and look",
+   "why": "no item text"
+  }
+ ]
+}

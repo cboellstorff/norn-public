@@ -1,0 +1,23 @@
+{
+ "kind": "profile",
+ "order": 2,
+ "name": "solo",
+ "label": "Solo",
+ "summary": "Two Claude workers, one Codex run if Codex is installed, Opus for planning and critical work, weekly stop at 80 %, check-ins every 15 min.",
+ "budget": { "max_claude_workers": 2, "weekly_stop_pct": 80, "usage_rate_cap_pct_per_h": 0.48, "desired_burn_pct_per_h": 0.4,
+   "checkin_model": "claude-sonnet-5-5", "checkin_effort": "medium", "claude_model": "claude-sonnet-5-5", "claude_effort": "medium" },
+ "codex": { "max_codex": 1, "max_astra": 1, "max_sol": 1 },
+ "scheduler": { "on": true, "interval_min": 15 },
+ "routing": {
+  "implementation": ["implementer", "claude-sonnet-5-5", "medium"],
+  "critical_implementation": ["implementer", "claude-opus-5-5", "high"],
+  "review": ["codex-sol", "gpt-6.1-sol", "medium"],
+  "diagnosis": ["codex-sol", "gpt-6.1-sol", "medium"],
+  "planning": ["planner", "claude-opus-5-5", "high"],
+  "chores": ["runner", "claude-sonnet-5-5", "low"],
+  "passfail": ["runner", "claude-sonnet-5-5", "low"],
+  "images": ["implementer", "claude-sonnet-5-5", "medium"],
+  "docs": ["runner", "claude-sonnet-5-5", "medium"]
+ },
+ "fallbacks": { "claude_over_guard": "codex-sol", "codex_down": "implementer", "fable_unavailable": "opus-xhigh" }
+}

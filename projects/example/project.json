@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "name": "example",
+  "title": "Example project (norn smoke + quick start)",
+  "root": "${meta}/projects/example",
+  "ledger": "${state}/progress.md",
+  "briefs_dir": "${state}/briefs",
+  "views": {
+    "questions": "${state}/views/OWNER-QUESTIONS.md",
+    "directives": "${state}/views/DIRECTIVES.md",
+    "decisions": "${state}/views/DECISIONS-LOG.md"
+  },
+  "lane_defaults": {
+    "worktree": "${state}/wt/${lane}",
+    "notes": "${state}/notes/${lane}/NOTES.md"
+  },
+  "executors": {
+    "codex-sol": { "enabled": false },
+    "codex-astra": { "enabled": false },
+    "example-claude-api": { "type": "claude-compatible", "base_url": "https://api.example.com/anthropic", "api_key_env": "EXAMPLE_API_KEY", "model": "example-model", "enabled": false },
+    "example-openai-api": { "type": "openai-compatible", "base_url": "https://api.example.com/v1", "api_key_env": "EXAMPLE_API_KEY", "model": "example-model", "wire_api": "responses", "enabled": false },
+    "example-cli": { "type": "cli", "exe": "${home}/bin/example-agent", "model": "example-model", "effort": "medium", "turns": 40, "brief": "file", "output": "plain",
+      "args": ["--cwd", "{cwd}", "--prompt-file", "{brief}", "{mode}", "--max-turns", "{turns}", "--effort", "{effort}", "-m", "{model}"],
+      "modes": { "write": { "access": "write", "args": ["--allow-edits", "--allow-shell"] }, "ro": { "access": "read-only", "args": ["--read-only"] } },
+      "enabled": false }
+  },
+  "docs": [{ "tab": "Readme", "path": "${meta}/README.md" }],
+  "policy": { "cadence": { "auto_resume_handoff": true, "auto_resume_max": 2, "trigger_on_exit": false } }
+}

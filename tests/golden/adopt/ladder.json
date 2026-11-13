@@ -1,0 +1,86 @@
+{
+ "themes": [
+  {
+   "title": "ladder",
+   "items": [
+    {
+     "title": "Tide table cache",
+     "note": "(build 12, on by default)",
+     "links": [
+      "branch:feat/tide-cache"
+     ],
+     "legacy": {
+      "word": "SHIPPED",
+      "text": "| Tide table cache | SHIPPED (build 12, on by default) | feat/tide-cache |",
+      "line": 7,
+      "file": "ladder.md"
+     }
+    },
+    {
+     "title": "Storm alerts",
+     "horizon": "now",
+     "note": "needs the push service",
+     "links": [
+      "branch:feat/storm-alerts"
+     ],
+     "legacy": {
+      "word": "BUILT NOT WIRED",
+      "text": "| Storm alerts | BUILT NOT WIRED - needs the push service | feat/storm-alerts |",
+      "line": 8,
+      "file": "ladder.md"
+     }
+    },
+    {
+     "title": "Station map",
+     "horizon": "now",
+     "note": "ruled: one layer per source",
+     "links": [
+      "doc:docs/map.md"
+     ],
+     "legacy": {
+      "word": "SPEC'D",
+      "text": "| Station map | SPEC'D / ruled: one layer per source | docs/map.md |",
+      "line": 9,
+      "file": "ladder.md"
+     }
+    },
+    {
+     "title": "Unit picker",
+     "horizon": "now",
+     "note": "stalled on the settings page",
+     "links": [],
+     "legacy": {
+      "word": "WIP",
+      "text": "| Unit picker | WIP, stalled on the settings page | - |",
+      "line": 10,
+      "file": "ladder.md"
+     }
+    },
+    {
+     "title": "Offline maps",
+     "horizon": "next",
+     "note": "by two users",
+     "links": [],
+     "legacy": {
+      "word": "REQUESTED",
+      "text": "| Offline maps | REQUESTED by two users | - |",
+      "line": 16,
+      "file": "ladder.md"
+     }
+    },
+    {
+     "title": "Old importer",
+     "note": "replaced by the new one",
+     "links": [],
+     "legacy": {
+      "word": "DROPPED",
+      "text": "| Old importer | DROPPED: replaced by the new one | - |",
+      "line": 17,
+      "file": "ladder.md"
+     }
+    }
+   ]
+  }
+ ],
+ "count": 6
+}

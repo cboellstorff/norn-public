@@ -1,0 +1,213 @@
+// NORN-WATCH S1 (DIR-83, DEC-684; NORN-WATCH-SPEC.md sec. 3): the resume digest. LEVEL-triggered:
+// every row comes from STATE on every call (DONE and not merged, a crash with no successor, an open Q, a directive nothing cites)
+// and leaves only when the target state is reached - never because someone reviewed or read it. Read-only: writes no record.
+// Sections: finished (not on main), queued (+ after / inputs, evaluated by S4), questions, ended (no clean successor), directives,
+// ci (META-CIWATCH: the project's main CI is red - the run, its sha, its failing tests; leaves when a LATER main run is green).
+import { loadState, readEvents, recordsFile, fold, heldLanes, holdWho } from './records.mjs';
+import { deliverablesView, deliverableConfig } from './deliverables.mjs';
+import { makeGit, isAncestor } from './dlvgit.mjs';
+import { makeEval, condText } from './after.mjs';
+import { readiness } from './runs.mjs';
+import { projectCi } from './ciwatch.mjs';
+import { unplacedNow } from './roadmap.mjs';
+import { possibleAnswers } from './qreconcile.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { guardRows } from './guard.mjs';
+import { runDrift } from './drift.mjs';
+
+const H = 3600e3;
+export const WINDOW_H = 72;
+const NOT_WORK = ['checkin', 'talk', 'interactive', 'fake'];
+const isWork = d => !NOT_WORK.includes(d.kind) && d.role !== 'helper' && !d.parent;
+const endOf = r => r.history.find(h => ['end', 'lost', 'kill'].includes(h.ev)) || null;
+const BAD_END = ['crash', 'no-marker'];
+const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
+const isMain = b => !b || b === 'HEAD' || b === 'main' || b === 'master';
+const age = (now, ts) => +((now - Date.parse(ts)) / H).toFixed(1);
+
+// "acknowledged, not acted": a review whose refs are only the run itself and / or the reviewing run. S5: a DEC / DIR that names the
+// run - on_runs, refs, or its text (any event; the live DECs cite runs in question / choice / why, the sec. 5 rule) = acted, whatever
+// its review says (cited = actedOn(items))
+const actedOn = items => {
+  const s = new Set();
+  for (const i of items) {
+    if (i.kind !== 'decision' && i.kind !== 'directive') continue;
+    for (const d of [i.data, ...i.history.map(h => h.data)]) {
+      for (const x of [...(d?.on_runs || []), ...(d?.refs || [])]) s.add(x);
+      for (const m of JSON.stringify(d ?? null).matchAll(/\bRUN-(?:[a-z][a-z0-9]{0,15}-)?\d+(?!\d)/g)) s.add(m[0]);   // + a node run (META-GTP-FED)
+    }
+  }
+  return s;
+};
+const reviewKind = (r, cited = new Set()) => {
+  if (cited.has(r.id)) return 'acted';
+  if (!r.review) return 'none';
+  const h = [...r.history].reverse().find(x => x.ev === 'review');
+  const own = new Set([r.id, h?.run].filter(Boolean));
+  return (r.review.refs || []).every(x => own.has(x)) ? 'empty' : 'acted';
+};
+
+function finished(runs, dlvRows, { now, git, main, cited }) {
+  const rows = [];
+  for (const d of dlvRows) {
+    if (d.state !== 'done') continue;
+    if (d.record_state === 'parked' && !d.park?.expired) continue;
+    if (d.record_state === 'superseded') continue;   // META-GTP-MERGEQ piece 0: terminal
+    rows.push({ id: d.id, kind: 'deliverable', lane: d.lane ?? null, branch: d.branch ?? null, run: d.run ?? null, days: d.days ?? null,
+      what: d.delivers || '', why: 'done, not merged' });
+  }
+  const covered = new Set(dlvRows.map(d => d.run).filter(Boolean));
+  for (const r of runs) {
+    const e = endOf(r);
+    if (!e || e.ev !== 'end' || e.data?.outcome !== 'done' || now - Date.parse(e.ts) > WINDOW_H * H) continue;
+    const rk = reviewKind(r, cited);
+    if (rk === 'acted' || covered.has(r.id)) continue;
+    const wt = r.data.worktree;
+    // S5: the branch + head recorded at the end win; the worktree's CURRENT branch (wrong once it is reused) is the fallback
+    const out = e.data?.branch ? null : wt ? git(wt, ['rev-parse', '--abbrev-ref', 'HEAD'], { allowFail: true }) : null;
+    const branch = e.data?.branch || (out ? out.trim() : null);
+    if (branch && isMain(branch)) continue;                                  // committed on main itself
+    if (branch && dlvRows.some(d => d.branch === branch && d.state !== 'done')) continue;
+    if (branch && isAncestor(wt, e.data?.head || branch, main, git)) continue;   // merged
+    rows.push({ id: r.id, kind: 'run', lane: r.data.lane ?? null, stage: r.data.stage ?? null, branch, worktree: fwd(wt) || null,
+      review: rk, ended: e.ts, hours: age(now, e.ts), why: branch ? 'DONE, branch not on main' : 'DONE, worktree gone or unreadable: branch unknown' });
+  }
+  return rows;
+}
+
+// META-GTP-FED piece 3: the runs of the nodes, imported read-only by the home fill into <state>/fed-cache.json (never into runs.jsonl):
+// a node run DONE in the window and not on main is a sec. 1 row like a home run; its branch is checked in the worktree of the home run it
+// was claimed from (the node's own paths are the node's)
+function nodeFinished(stateDir, items, { now, git, main, cited }) {
+  let cache;
+  try { cache = JSON.parse(fs.readFileSync(path.join(stateDir, 'fed-cache.json'), 'utf8')); } catch { return []; }
+  const rows = [];
+  for (const [node, runs] of Object.entries(cache?.nodes || {})) for (const r of runs || []) {
+    const e = endOf(r);
+    if (!e || e.ev !== 'end' || e.data?.outcome !== 'done' || now - Date.parse(e.ts) > WINDOW_H * H || cited.has(r.id) || !isWork(r.data || {})) continue;
+    const wt = items[r.data?.claim_of?.run]?.data?.worktree || null;
+    const branch = e.data?.branch || null;
+    if (branch && isMain(branch)) continue;
+    if (branch && wt && isAncestor(wt, e.data?.head || branch, main, git)) continue;
+    rows.push({ id: r.id, kind: 'run', node, lane: r.data?.lane ?? null, stage: r.data?.stage ?? null, branch, worktree: fwd(wt) || null, review: 'none',
+      ended: e.ts, hours: age(now, e.ts), claim_of: r.data?.claim_of?.run ?? null, why: branch ? `DONE on node ${node}, branch not on main` : `DONE on node ${node}, branch unknown` });
+  }
+  return rows;
+}
+
+function ended(runs, { now }) {
+  const rows = [];
+  for (const r of runs) {
+    const e = endOf(r);
+    if (!e || now - Date.parse(e.ts) > WINDOW_H * H) continue;
+    const bad = r.state === 'lost' || r.state === 'killed' || (r.state === 'exited' && BAD_END.includes(e.data?.outcome));
+    if (!bad) continue;
+    const stage = r.data.stage ?? null;
+    const next = runs.find(x => x.id !== r.id && x.data.lane === r.data.lane && (x.data.stage ?? null) === stage && Date.parse(x.created) >= Date.parse(e.ts));
+    if (next) continue;
+    rows.push({ id: r.id, lane: r.data.lane ?? null, stage, state: r.state, outcome: e.data?.outcome ?? r.state, exit: e.data?.exit ?? null,
+      dirty: e.data?.dirty ?? null, external_term: e.data?.external_term ?? null, ended: e.ts, hours: age(now, e.ts),
+      worktree: fwd(r.data.worktree) || null, notes: r.data.notes ?? null });
+  }
+  return rows;
+}
+
+function questions(items, { now }) {
+  const qs = items.filter(i => i.kind === 'question' && ['open', 'answered'].includes(i.state));
+  const rank = q => (q.state === 'open' ? (q.data.owner_only ? 0 : 1) : 2);
+  // META-Q-RECONCILE R1: an open Q a later DEC on its lane may already answer (owner words / OWNER PICK / its evidence paths)
+  const pa = new Map(possibleAnswers(items).map(x => [x.q, x]));
+  return qs.sort((a, b) => rank(a) - rank(b) || Date.parse(a.created) - Date.parse(b.created))
+    .map(q => ({ id: q.id, state: q.state, owner_only: !!q.data.owner_only, lane: q.data.lane ?? null, title: q.data.title ?? '', hours: age(now, q.created),
+      ...(pa.has(q.id) ? { answered_by: pa.get(q.id).dec, answered_why: pa.get(q.id).why } : {}) }));
+}
+
+function directives(items, { now }) {
+  const cites = items.filter(i => i.kind === 'decision' || i.kind === 'run').map(i => JSON.stringify([i.data, i.history.map(h => h.data)]));
+  return items.filter(i => i.kind === 'directive' && i.state === 'active' && now - Date.parse(i.created) <= WINDOW_H * H)
+    .filter(i => { const re = new RegExp(`\\b${i.id}(?!\\d)`); return !cites.some(t => re.test(t)); })
+    .map(i => ({ id: i.id, text: String(i.data.text || '').split('\n')[0].slice(0, 200), hours: age(now, i.created) }));
+}
+
+// S4: evalAfter (after.mjs makeEval) -> { met, gone }; a row shows the condition text, met and why it is gone (the fill holds it: needs a ruling)
+// META-GTP-DAG piece 3: + ready / terms of the dry fill walk (runs.mjs readiness - the fill's own evaluator), rows in fill order
+function queued(runs, { evalAfter, ready }) {
+  const R = new Map(ready.map((r, i) => [r.id, { ...r, order: i }]));
+  return runs.filter(r => r.state === 'queued').sort((a, b) => (R.get(a.id)?.order ?? 1e9) - (R.get(b.id)?.order ?? 1e9)).map(r => ({ id: r.id, lane: r.data.lane ?? null, stage: r.data.stage ?? null, not_before: r.data.not_before ?? null,
+    after: (r.data.after || []).map(c => { const v = evalAfter(c); return { cond: condText(c), met: v.met, gone: v.gone }; }), inputs: r.data.inputs || [],
+    ...(R.has(r.id) ? { ready: R.get(r.id).ready, terms: R.get(r.id).terms } : {}) }));
+}
+
+// META-CIWATCH: the cached gh read of ciwatch.mjs (one gh call at most; gh absent = no row); the cache lives in the digest's state dir.
+function ciRed(project, { now }) {
+  let c = null;
+  try { c = projectCi(project, new Date(now)); } catch { c = null; }
+  const r = c?.red;
+  return r ? [{ id: `CI-${r.databaseId}`, repo: project.ci.repo, run: r.databaseId, sha: r.headSha ?? null, conclusion: r.conclusion, created: r.createdAt,
+    hours: age(now, r.createdAt), failing: r.failing }] : [];
+}
+
+/**
+ * digest(stateDir, project, { now (ms), git (makeGit()), dlv (deliverablesView rows; default computed), evalAfter }) ->
+ * { project, at, window_h, sections: { finished, queued, questions, ended, directives, ci, roadmap (only once the project has a roadmap) }, counts }
+ */
+export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit(), dlv = null, evalAfter = null, ready = null } = {}) {
+  const st = loadState(stateDir);
+  const items = Object.values(st.items);
+  const runs = items.filter(i => i.kind === 'run' && isWork(i.data));
+  let dlvRows = dlv;
+  if (!dlvRows) { try { dlvRows = deliverablesView({ stateDir, project, now, git }).rows; } catch { dlvRows = fallbackDlv(stateDir); } }
+  const main = deliverableConfig(project).main;
+  const sections = {
+    finished: [...finished(runs, dlvRows, { now, git, main, cited: actedOn(items) }), ...nodeFinished(stateDir, st.items, { now, git, main, cited: actedOn(items) })],
+    queued: queued(items.filter(i => i.kind === 'run'), { evalAfter: evalAfter || makeEval(stateDir, { git }), ready: ready || readiness(stateDir, { now }) }),
+    questions: questions(items, { now }),
+    ended: ended(runs, { now }),
+    directives: directives(items, { now }),
+    ci: ciRed({ ...project, state: stateDir }, { now }),
+  };
+  // META-CONTROLLER C4 (SPEC sec. 2): the lanes the controller holds - a check-in skips them (its writes there exit 5); only while one is held
+  const held = heldLanes(st.items, now);
+  if (held.length) sections.held = held.map(h => ({ id: h.id, lane: h.lane, holder: h.holder, who: holdWho(h), until: h.until,
+    min: Math.max(0, Math.ceil((Date.parse(h.until) - now) / 60000)), why: h.why }));
+  // META-ROADMAP S3 (SPEC sec. 3 check-in duty 2): the audit's Unplaced list stays in the digest until it is 0
+  let rm = null;
+  try { rm = unplacedNow(stateDir, { now, items: st.items, dlv: dlvRows }); } catch { rm = null; }
+  if (rm) sections.roadmap = rm.map(u => ({ id: u.id, kind: u.kind, why: u.why }));
+  // META-GUARD R1: the open usage alarms (runaway / over the hand-off line / tool spam) - the check-in rules each; only while any is open
+  const g = [...guardRows(stateDir), ...driftRows(runs, { now, git, main })];   // + item 3: the brief drift of an ended, unreviewed run
+  if (g.length) sections.guard = g;
+  const counts = Object.fromEntries(Object.entries(sections).map(([k, v]) => [k, v.length]));
+  return { project: project?.name ?? null, at: new Date(now).toISOString(), window_h: WINDOW_H, sections, counts };
+}
+
+// git unreadable: every open deliverable record counts as done (listing too much beats dropping work)
+function fallbackDlv(stateDir) {
+  try {
+    return Object.values(fold(readEvents(recordsFile(stateDir, 'deliverable'))).items).filter(i => i.kind === 'deliverable' && i.state !== 'superseded')
+      .map(i => ({ id: i.id, state: 'done', record_state: i.state, park: i.state === 'parked' ? { expired: false } : null, lane: i.data.lane ?? null,
+        branch: i.data.branch, run: i.data.run ?? null, delivers: i.data.delivers ?? '', days: null }));
+  } catch { return []; }
+}
+
+/** the digest, or null when it cannot be built (a status / boot surface never fails because of it) */
+export function tryDigest(stateDir, project = {}, opts = {}) {
+  try { return digest(stateDir, project || {}, opts); } catch { return null; }
+}
+/** { section: [ids] } - the compact form for meta_boot's state digest */
+export const digestIds = d => (d ? Object.fromEntries(Object.entries(d.sections).map(([k, v]) => [k, v.map(r => r.id)])) : null);
+
+// META-GUARD R1 item 3: the brief drift of each run that ended (exited) in the window and has no review yet - a hint row for the
+// check-in (digest row 8), only when an item is not mentioned or a file lies outside the brief's areas. Read-only (git diff).
+function driftRows(runs, { now, git, main }) {
+  const rows = [];
+  for (const r of runs) {
+    const e = endOf(r);
+    if (r.state !== 'exited' || !e || now - Date.parse(e.ts) > WINDOW_H * H || r.history.some(h => h.ev === 'review')) continue;
+    let d = null;
+    try { d = runDrift(r, { git, main }); } catch { d = null; }
+    if (d?.hint) rows.push({ id: r.id, run: r.id, kind: 'drift', cls: 'drift', lane: r.data.lane ?? null, why: d.hint });
+  }
+  return rows;
+}

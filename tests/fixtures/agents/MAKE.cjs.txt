@@ -1,0 +1,14 @@
+const fs=require('fs'),path=require('path');const [,,src,sub,meta,rollout,out]=process.argv;
+const SID='11111111-2222-4333-8444-555555555555',AG='a178bc1fd5072dfb8';
+const strip=j=>{if(j.message){j.message={...j.message,content:[]};}delete j.toolUseResult;delete j.wireToolInputs;for(const k of ['cwd','gitBranch'])if(j[k])j[k]='/fx/wt';if(j.sessionId)j.sessionId=SID;return j;};
+const pick=(f,pred,n)=>fs.readFileSync(f,'utf8').split('\n').filter(Boolean).map(l=>{try{return JSON.parse(l)}catch{return null}}).filter(j=>j&&pred(j)).slice(0,n);
+const main=[...pick(src,j=>j.type==='user',1),...pick(src,j=>j.type==='assistant'&&j.message?.usage,3),...pick(src,j=>j.type==='queue-operation',1)].map(strip);
+fs.mkdirSync(path.join(out,'claude',SID,'subagents'),{recursive:true});
+fs.writeFileSync(path.join(out,'claude',SID+'.jsonl'),main.map(j=>JSON.stringify(j)).join('\n')+'\n');
+const sa=pick(sub,j=>j.type==='assistant'&&j.message?.usage,2).map(strip);
+fs.writeFileSync(path.join(out,'claude',SID,'subagents','agent-'+AG+'.jsonl'),sa.map(j=>JSON.stringify(j)).join('\n')+'\n');
+const m=JSON.parse(fs.readFileSync(meta,'utf8'));fs.writeFileSync(path.join(out,'claude',SID,'subagents','agent-'+AG+'.meta.json'),JSON.stringify(m));
+const r=pick(rollout,j=>j.type==='session_meta'||(j.type==='event_msg'&&j.payload?.type==='token_count'&&j.payload.info),3).map(j=>{if(j.type==='session_meta'){j.payload={id:'01a18ee7-ebab-72f0-8d34-66a0b62f4a01',session_id:'01a18ee7-ebab-72f0-8d34-66a0b62f4a01',timestamp:j.payload.timestamp,cwd:'/fx/wt'};}if(j.payload?.rate_limits)delete j.payload.rate_limits;return j;});
+fs.mkdirSync(path.join(out,'codex'),{recursive:true});
+fs.writeFileSync(path.join(out,'codex','rollout-2026-10-30T17-22-06-01a18ee7-ebab-72f0-8d34-66a0b62f4a01.jsonl'),r.map(j=>JSON.stringify(j)).join('\n')+'\n');
+console.log(main.length,sa.length,r.length);

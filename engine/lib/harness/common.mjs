@@ -1,0 +1,143 @@
+// Shared bits of the harness adapters (HARNESS-DESIGN sec. 3): the worker prompt, the mode check, detect (exe + --version),
+// the empty normalized parse and the shared headless snippet core. Node built-ins only.
+import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { resolveShim } from '../paths.mjs';
+
+export function prompt({ brief, worktree, notes, resumes = 0 }) {
+  let p = `Read the brief ${brief} and execute it exactly. Your worktree is ${worktree}. You run headless: no one answers questions; follow the brief's NOTES end-marker rules.`;
+  if (resumes > 0) p += ` AUTO-RESUME (${resumes}) after the previous agent's HANDOFF: read the LAST '## HANDOFF' block of ${notes} first and continue from its exact next step; re-check the worktree HEAD + git status before your first commit.`;
+  return p;
+}
+
+export const MODES = ['write', 'read-only', 'no-tools'];
+// capability flags (META-GTP-HARNESS; Gas Town internal/config/agents.go:20-110 SupportsForkSession / SupportsHooks / ResumeStyle /
+// NonInteractive): fork = the CLI can fork a session (gates a seance); hooks = 'settings' (lifecycle hooks from a settings file) |
+// 'none'; resume_style = 'flag' (--resume <id>) | 'subcommand' (<exe> ... resume <id>) | 'none'; noninteractive = the flag or
+// subcommand that makes the CLI headless (null = the entry's own args say it). Each value is checked against the CLI's recorded
+// --help (tests/fixtures/help).
+export const HOOKS = ['settings', 'none'];
+export const RESUME_STYLES = ['flag', 'subcommand', 'none'];
+// chat (META-CONTROLLER SPEC sec. 1): how the family hosts the owner's controller chat - 'stream' (one long-lived process, stream-json
+// in and out, resumed by session id) | 'turns' (one process per message, resumed) | 'cold' (a fresh run per message carrying the
+// last turns) | 'none'. A family with a chat style other than none has chatCommand(o) + chatEvents(line).
+export const CHATS = ['stream', 'turns', 'cold', 'none'];
+export const CAP_KEYS = ['modes', 'resume', 'mcp', 'output', 'usage', 'skills', 'fork', 'hooks', 'resume_style', 'noninteractive', 'chat'];
+/** o.mode, else today's o.readonly flag; refuses a mode the family lacks. */
+export function modeOf(o, family, caps) {
+  const m = o.mode || (o.readonly ? 'read-only' : 'write');
+  if (!MODES.includes(m)) throw new Error(`unknown mode ${JSON.stringify(m)} (${MODES.join(' | ')})`);
+  if (!caps.modes.includes(m)) throw new Error(`${family} has no ${m} mode (${caps.modes.join(' | ')})`);
+  return m;
+}
+
+/** The first n bytes of a file as text (a log banner), or null. */
+export function readHead(f, n = 8192) {
+  try { const fd = fs.openSync(f, 'r'); try { const b = Buffer.alloc(n); return b.subarray(0, fs.readSync(fd, b, 0, n, 0)).toString('utf8'); } finally { fs.closeSync(fd); } } catch { return null; }
+}
+export const readText = f => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
+/** One JSON line -> its object, else null (blank, malformed, a scalar). */
+export const jsonObject = line => { try { const j = JSON.parse(line); return j && typeof j === 'object' ? j : null; } catch { return null; } };
+export const EMPTY = () => ({ session_id: null, model: null, is_error: null, usage: null, cost_usd: null });
+
+/** { exe, version } | null - the version is the first line of `<exe> --version` (null when it does not answer in 15 s). */
+export function detectExe(exe) {
+  if (!exe) return null;
+  let version = null;
+  try {
+    const sp = resolveShim(exe, ['--version']);
+    const r = spawnSync(sp.exe, sp.args, { encoding: 'utf8', timeout: 15000, windowsHide: true, input: '' });
+    version = String(r.stdout || '').split(/\r?\n/).map(l => l.trim()).find(Boolean) || null;
+  } catch { /* not runnable */ }
+  return { exe, version };
+}
+
+// the per-family HEADLESS snippet core: the outcome contract is the same for every harness (the NOTES end marker)
+export const HEADLESS_CORE = 'You run headless: nobody answers questions and your process ends with your turn. Decide under the '
+  + "brief's DECISION-RULES or stop. Write only your NOTES file; its last line is exactly `## DONE`, `## STOPPED: <why>` or `## HANDOFF`.";
+// META-GTP-MAIL delivery (b): the line for executors WITHOUT the mail hook (a claude run gets its mail from a PostToolUse hook)
+export const HEADLESS_MAIL = ' Mail: check your mail between steps (MCP meta_mail check, else `norn mail check --run $META_RUN_ID`), act on it, and ack each one (meta_mail ack / norn mail ack MAIL-n).';
+
+// ---------- live feed (LANE-MAP-DESIGN 2): the shared tail + the normalised event; each adapter owns its record parsing ----------
+// Normalised event: { ts, kind: 'tool'|'text'|'step'|'usage'|'marker'|'error', name?, summary, ctx?, id?, done?, at } where
+// `at` = the cursor ({ <file key>: byte offset }) right after the record that produced it (events of one record share it).
+export const FEED_BACKLOG = 256 * 1024;   // a first open reads at most the last 256 KB of a file
+export const FEED_MAX = 1024 * 1024;      // one poll reads at most 1 MB of appended bytes
+
+/**
+ * Complete lines appended to `file` since byte `offset` (null = first open: the backlog window, from a line boundary; an offset
+ * past the end = the file was truncated / replaced: start over). -> { lines [{ text, end }], offset } | null (no file).
+ */
+export function readLines(file, offset, { backlog = FEED_BACKLOG, max = FEED_MAX } = {}) {
+  let st; try { st = fs.statSync(file); } catch { return null; }
+  let start = Number.isInteger(offset) && offset >= 0 && offset <= st.size ? offset : null, skip = false;
+  if (start === null) { start = Math.max(0, st.size - backlog); skip = start > 0; }
+  if (st.size <= start) return { lines: [], offset: start };
+  const buf = Buffer.alloc(Math.min(st.size - start, max));
+  const fd = fs.openSync(file, 'r');
+  let n; try { n = fs.readSync(fd, buf, 0, buf.length, start); } finally { fs.closeSync(fd); }
+  let pos = 0;
+  if (skip) { const nl = buf.indexOf(10); if (nl < 0 || nl >= n) return { lines: [], offset: start }; pos = nl + 1; }
+  const lines = [];
+  for (let nl = buf.indexOf(10, pos); nl >= 0 && nl < n; nl = buf.indexOf(10, pos)) {
+    lines.push({ text: buf.subarray(pos, nl).toString('utf8').replace(/\r$/, ''), end: start + nl + 1 }); pos = nl + 1;
+  }
+  // one record longer than a whole poll window: drop it (its tail then fails to parse and is skipped) rather than stall
+  if (!lines.length && n === max) pos = n;
+  return { lines, offset: start + pos };
+}
+
+/** Tail files [[key, path]] from cursor through parse(text, key) -> events[]; -> { events (each with its `at`), cursor }. */
+export function feedFiles(files, cursor, parse, env = {}) {
+  const cur = { ...(cursor || {}) }, events = [];
+  for (const [key, file] of files) {
+    if (!file) continue;
+    const r = readLines(file, cur[key], env);
+    if (!r) continue;
+    for (const l of r.lines) {
+      cur[key] = l.end;
+      let evs = [];
+      try { evs = parse(l.text, key) || []; } catch { evs = []; }   // unknown / broken records are skipped, never an error
+      const at = { ...cur };
+      for (const e of evs) events.push({ ts: null, ...e, at });
+    }
+    cur[key] = r.offset;
+  }
+  return { events, cursor: cur };
+}
+
+/** One line of at most n characters (the first non-empty line of s). */
+export function oneLine(s, n = 160) {
+  const t = String(s ?? '').split(/\r?\n/).map(x => x.trim()).find(Boolean) || '';
+  return t.length > n ? t.slice(0, n - 1) + '…' : t;
+}
+const ARG_KEYS = ['file_path', 'command', 'cmd', 'pattern', 'path', 'url', 'query', 'skill', 'description', 'prompt'];
+/** A tool call's first argument as a short summary (80 chars): a known key, else the first string, else "key value". */
+export function argSummary(input) {
+  if (typeof input === 'string') return oneLine(input, 80);
+  if (!input || typeof input !== 'object') return '';
+  for (const k of ARG_KEYS) if (typeof input[k] === 'string' && input[k].trim()) return oneLine(input[k], 80);
+  const e = Object.entries(input).find(([, v]) => typeof v === 'string' && v.trim()) || Object.entries(input)[0];
+  return e ? oneLine(typeof e[1] === 'string' ? e[1] : `${e[0]} ${JSON.stringify(e[1])}`, 80) : '';
+}
+
+/** A plain-text log line -> a text event, or a marker for a NOTES end marker; blank lines -> nothing. */
+export function logLine(text) {
+  const t = String(text).trim();
+  if (!t) return [];
+  if (/^## (DONE|STOPPED|HANDOFF)\b/.test(t)) return [{ kind: 'marker', summary: oneLine(t) }];
+  return [{ kind: 'text', summary: oneLine(t) }];
+}
+/** The plain-log feed (a cli executor, fake, a run without a structured transcript): the run's log, optional extra files. */
+export const logFeed = (files, cursor, env) => feedFiles(files, cursor, logLine, env);
+
+/** env.memo-cached file lookup (a hit is kept; a miss is retried after retryMs, so a directory walk never runs every poll). */
+export function located(env, key, find, retryMs = 30000) {
+  const m = env?.memo, now = Date.now();
+  const c = m?.get(key);
+  if (c?.file) return c.file;
+  if (c && now - c.miss < retryMs) return null;
+  const file = find();
+  m?.set(key, file ? { file } : { miss: now });
+  return file;
+}

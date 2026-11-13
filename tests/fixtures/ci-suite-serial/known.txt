@@ -1,0 +1,1 @@
+# ci-suite serial-phase fixture: no listed reds

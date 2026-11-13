@@ -1,0 +1,15 @@
+{
+    "pid":  46356,
+    "start":  "2026-10-30T20:42:24.2620941-05:00",
+    "brief":  "C:\\Users\\owner\\dev\\kestrel-mono\\.superpowers\\sdd\\2026-09-25-water-picture-plan\\task-META-GENERAL-DESIGN-brief.md",
+    "worktree":  "C:\\Users\\owner\\dev\\sdd-codex",
+    "agent":  "kestrel-planner",
+    "model":  "claude-opus-5-5",
+    "effort":  "xhigh",
+    "notes":  "C:\\Users\\owner\\dev\\norn-projects\\norn\\design\\META-GENERAL-DESIGN.md",
+    "log":  "C:\\Users\\owner\\dev\\sdd-codex\\meta\\logs\\metadesign-20261030-204224.log",
+    "final":  "C:\\Users\\owner\\dev\\sdd-codex\\meta\\logs\\metadesign-20261030-204224.json",
+    "auto_resumes":  0,
+    "exit":  0,
+    "end":  "2026-10-30T20:55:58.7626033-05:00"
+}
