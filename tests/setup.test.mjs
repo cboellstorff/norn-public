@@ -61,16 +61,16 @@ test('setup without a required prerequisite reports it and writes nothing', () =
   assert.equal(fs.existsSync(path.join(sb.root, 'local', 'machine.json')), false);
 });
 
-test('setup --project registers the project as ${meta}-relative and installs agents / skills with a sha manifest', () => {
+test('setup --project registers the project as ${norn}-relative and installs agents / skills with a sha manifest', () => {
   const sb = sandbox(); const f = project(sb);
   const r = sb.run('setup', '--non-interactive', '--no-scheduler', '--project', f);
   assert.equal(r.code, 0, r.err + r.out);
-  assert.deepEqual(sb.machine().projects, [{ name: 'demo', config: '${meta}/projects/demo/project.json' }]);
+  assert.deepEqual(sb.machine().projects, [{ name: 'demo', config: '${norn}/projects/demo/project.json' }]);
   assert.equal(fs.readFileSync(path.join(sb.cfg, 'agents', 'demo-impl.md'), 'utf8'), '# impl\n');
   assert.equal(fs.readFileSync(path.join(sb.cfg, 'skills', 'demo-s', 'SKILL.md'), 'utf8'), '# skill\n');
   const man = JSON.parse(fs.readFileSync(path.join(sb.root, 'local', 'install-manifest.json'), 'utf8'));
   assert.deepEqual(man.entries.map(e => [e.project, e.target]).sort(), [['demo', fwd(path.join(sb.cfg, 'agents', 'demo-impl.md'))], ['demo', fwd(path.join(sb.cfg, 'skills', 'demo-s', 'SKILL.md'))]]);
-  assert.ok(man.entries.every(e => /^[0-9a-f]{64}$/.test(e.sha256) && e.source.startsWith('${meta}/projects/demo/')));
+  assert.ok(man.entries.every(e => /^[0-9a-f]{64}$/.test(e.sha256) && e.source.startsWith('${norn}/projects/demo/')));
   // re-run keeps the project list (and the owner's H4 notify opt-in) and is idempotent
   const mf = path.join(sb.root, 'local', 'machine.json');
   fs.writeFileSync(mf, JSON.stringify({ ...sb.machine(), notify: { backend: 'ntfy', topic: 't' } }));
@@ -304,4 +304,18 @@ test('META-ONBOARD cut-over expand: doctor notes pending compatibility paths (no
   const r = sb.run('doctor');
   assert.equal(r.code, 0, r.out + r.err); assert.match(r.out, /^doctor: ok/m);
   assert.match(r.out, /^note compat: 2 retained pre-swap path\(s\) \+ 1 project alias\(es\) since 2026-11-11T17:00:00\.000Z \(pre-swap runs: demo RUN-7\) - remove with onboard-cutover\.mjs --contract once none is live$/m);
+});
+
+test('META-NAME-W3: doctor names a project.json / template still using ${meta} / {{meta}} with the one-line fix; it still loads', () => {
+  const sb = sandbox(); const f = project(sb);   // project() writes the old ${meta} form
+  const extra = path.join(sb.root, 'projects', 'demo', 'extra.md');
+  fs.writeFileSync(extra, 'run {{meta}} status\n');
+  const o = JSON.parse(fs.readFileSync(f, 'utf8')); fs.writeFileSync(f, JSON.stringify({ ...o, checkin_extra: '${meta}/projects/demo/extra.md' }));
+  assert.equal(sb.run('setup', '--non-interactive', '--no-scheduler', '--project', f).code, 0);
+  let r = sb.run('doctor'); assert.equal(r.code, 0, r.out + r.err); assert.match(r.out, /^ok project demo /m);
+  const pj = fwd(path.resolve(f)), ex = fwd(path.resolve(extra));
+  assert.ok(r.out.includes(`note demo: ${pj} uses the old variable name \${meta} (still resolves) - fix: replace \${meta} with \${norn}`), r.out);
+  assert.ok(r.out.includes(`note demo: ${ex} uses the old variable name {{meta}} (still resolves) - fix: replace {{meta}} with {{norn}}`), r.out);
+  fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replaceAll('${meta}', '${norn}')); fs.writeFileSync(extra, 'run {{norn}} status\n');
+  r = sb.run('doctor'); assert.equal(r.code, 0, r.out); assert.doesNotMatch(r.out, /old variable name/);
 });

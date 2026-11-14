@@ -10,6 +10,7 @@ import { hostWrite, slopReport, slopDir, slopHolds, openBlocks, activeWaivers } 
 import { loadRules } from './check.mjs';
 import { makeTool } from './tools.mjs';
 import { spawnOutside } from '../jobguard.mjs';
+import { slopOn } from '../policy.mjs';
 
 const num = n => n.toLocaleString('en-US');
 /** "+1,204 (+6.0 %)": the absolute change always beside the percentage */
@@ -56,7 +57,7 @@ export function dailyReport({ repo, state, env = process.env, now = Date.now() }
 
 /** the tick's hook: start `norn slop daily` detached once a day (not while one started in the last 30 min). -> the tick-log words | null */
 export function tickSlop(p, state, { metaCmd, spawnFn, now = Date.now() } = {}) {
-  if (!p?.file || p.policy?.slop?.daily === false) return null;
+  if (!p?.file || !slopOn(p.policy) || p.policy?.slop?.daily === false) return null;   // META-BETA-PREP: the one switch off = no report
   if (slopReport(state)?.day === today(now)) return null;
   const mark = path.join(slopDir(state), 'daily.started');
   try { if (now - fs.statSync(mark).mtimeMs < 30 * 60e3) return null; } catch { /* never started: start it now */ }

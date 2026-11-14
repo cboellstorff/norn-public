@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseCodexLog } from './runs.mjs';
 import { runName } from './names.mjs';
-import { findTranscript } from './harness/claude.mjs';
+import { findTranscript, usageCtx } from './harness/claude.mjs';
+import { ctxView } from './ctxlimit.mjs';
 import { findRollout } from './harness/codex.mjs';
 
 const RECENT_MS = 2 * 3600000;   // ended runs stay in the tree for 2 h
@@ -35,7 +36,6 @@ export function tail(file, cache, init, onRecord) {
   return { c, bytesRead };
 }
 
-const usageCtx = u => (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
 function onTranscript(c, j) {
   if (j.timestamp && (!c.first || j.timestamp < c.first)) c.first = j.timestamp;
   if (j.timestamp && (!c.last || j.timestamp > c.last)) c.last = j.timestamp;
@@ -47,18 +47,19 @@ function onTranscript(c, j) {
   if (m.model) c.model = m.model;
   if (j.effort) c.effort = j.effort;
   c.ctx = usageCtx(u);
+  c.peak = Math.max(c.peak ?? 0, c.ctx);
   c.entries.push([Date.parse(j.timestamp), u.cache_read_input_tokens || 0, u.cache_creation_input_tokens || 0]);
 }
-const tInit = () => ({ seen: new Set(), entries: [], model: null, effort: null, ctx: null, first: null, last: null });
+const tInit = () => ({ seen: new Set(), entries: [], model: null, effort: null, ctx: null, peak: null, first: null, last: null });
 
-/** One transcript: { model, effort, first, last, ctx (last call in+cacheR+cacheC), cacheR (sum), burn30, bytesRead }. */
+/** One transcript: { model, effort, first, last, ctx (last call in+cacheR+cacheC), peak (its largest call), cacheR (sum), burn30, bytesRead }. */
 export function transcriptInfo(file, cache = new Map(), { now = Date.now() } = {}) {
   const r = tail(file, cache, tInit, onTranscript);
   if (!r) return null;
   const { c } = r;
   let cacheR = 0, burn30 = 0;
   for (const [t, cr, cc] of c.entries) { cacheR += cr; if (t >= now - BURN_MS) burn30 += cr + cc; }
-  return { model: c.model, effort: c.effort, first: c.first, last: c.last, ctx: c.ctx, cacheR, burn30, bytesRead: r.bytesRead };
+  return { model: c.model, effort: c.effort, first: c.first, last: c.last, ctx: c.ctx, peak: c.peak, cacheR, burn30, bytesRead: r.bytesRead };
 }
 
 const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
@@ -106,7 +107,8 @@ export const shownRunIds = (runs, now = Date.now()) => new Set([...runs].filter(
 
 /**
  * Agents tree (design 6): one root per RUN (running, or ended < 2 h ago) + one root per talk session.
- * o: { projectsDir, codexDir, cache (Map, kept by the server), now, ctxLimit, sessions [{name, model, effort, alive, context}] }
+ * o: { projectsDir, codexDir, cache (Map, kept by the server), now, policy (the project's: each run's context lines), sessions [{name, model, effort, alive, context}] }
+ * META-CTX-ENFORCE R1: ctx = the run's CURRENT context (its last request), ctx_peak beside it, ctx_limit / ctx_hard = its role's policy lines.
  */
 export function agentsTree(runs, o = {}) {
   const now = o.now ?? Date.now(), cache = o.cache || new Map();
@@ -117,7 +119,7 @@ export function agentsTree(runs, o = {}) {
     const node = { id: r.id, name: runName(r), kind: d.kind ?? null, executor: d.executor ?? null, lane: d.lane ?? null, stage: d.stage ?? null,
       model: end.model ?? d.model ?? null, effort: end.effort ?? d.effort ?? null, state: r.state, outcome: end.outcome ?? null,
       started: r.created, age_min: Math.round((now - Date.parse(r.created)) / 60000), budget_min: d.budget_min ?? null,
-      ctx: null, ctx_limit: null, cacheR: null, burn30: null, tokens: null, tokens_src: null, children: [] };
+      ctx: null, ctx_peak: null, ctx_limit: null, ctx_hard: null, cacheR: null, burn30: null, tokens: null, tokens_src: null, children: [] };
     const exe = d.executor || '';
     if (exe.startsWith('codex')) {
       const b = d.log ? parseCodexLog(readText(d.log)) : {};
@@ -128,17 +130,13 @@ export function agentsTree(runs, o = {}) {
       else if (Number.isInteger(end.tokens ?? b.tokens)) { node.tokens = end.tokens ?? b.tokens; node.tokens_src = 'end'; }
     } else if (d.kind === 'cli') {   // a cli executor's plain output carries no usage
       node.tokens = '-';
-    } else if (d.kind === 'checkin') {
-      const u = end.usage;
-      if (u) { node.ctx = usageCtx(u); node.cacheR = u.cache_read_input_tokens ?? null; node.tokens_src = 'end'; }
-    } else {
+    } else {   // a check-in too: its end usage SUMS its requests (RUN-869: "1176k" for a 64k session) - the transcript has the truth
       const file = end.transcript || d.transcript || findTranscript(o.projectsDir, d.session_id);
       const t = file ? transcriptInfo(file, cache, { now }) : null;
       if (t) {
-        Object.assign(node, { ctx: t.ctx, cacheR: t.cacheR, burn30: t.burn30, model: t.model ?? node.model, effort: t.effort ?? node.effort });
+        Object.assign(node, { ctx: t.ctx, ctx_peak: t.peak, cacheR: t.cacheR, burn30: t.burn30, model: t.model ?? node.model, effort: t.effort ?? node.effort });
         node.children = subagents(file, cache, { now });
       }
-      if (d.kind !== 'interactive') node.ctx_limit = o.ctxLimit ?? null;
       // a claude-compatible provider bills its own account: no Claude-plan burn; tokens from the CLI final json (META-EXEC-S1)
       if (d.kind === 'provider') {
         node.burn30 = null; node.billing = exe; node.children = node.children.map(c => ({ ...c, burn30: null }));
@@ -146,6 +144,7 @@ export function agentsTree(runs, o = {}) {
         if (u) { node.tokens = ['input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'].reduce((a, k) => a + (Number(u[k]) || 0), 0); node.tokens_src = 'end'; }
       }
     }
+    if (d.kind !== 'interactive' && d.kind !== 'cli') { const v = ctxView(d, o.policy); node.ctx_limit = v.ctx_limit; node.ctx_hard = v.ctx_hard; }
     if (d.role === 'helper') Object.assign(node, { kind: 'helper', parent: d.parent ?? null, q: d.q ?? null, class: d.class ?? null });
     if (node.tokens === null && end.usage) { node.tokens = ['input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'].reduce((a, k) => a + (Number(end.usage[k]) || 0), 0); node.tokens_src = 'end'; }
     roots.push(node);

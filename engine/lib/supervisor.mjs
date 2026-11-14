@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
+import { slopOn } from './policy.mjs';
 import { record, RecordError, loadState } from './records.mjs';
 import { providerEnv, limitPatterns, authPatterns, executorInfo } from './executors.mjs';
 import { classifyAuth, markAuthDown, AUTH_REQUEUE_MAX, AUTH_RESUME_PROMPT } from './authguard.mjs';
@@ -22,6 +23,8 @@ import { readGate, noteCheckin } from './gate.mjs';
 import { ledgerStep } from './ledger.mjs';
 import { checkBranch, slopPrompt } from './slop/runend.mjs';
 import { hostWrite } from './slop/host.mjs';
+import { ctxRole, ctxLimits, ctxLevel, transcriptCtx, specPolicy } from './ctxlimit.mjs';
+import { findTranscript } from './harness/claude.mjs';
 
 const spec = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const { run, state } = spec;
@@ -37,6 +40,7 @@ let finished = false;
 // META-ADOPT A2: a hard time cap (spec.capMs, the adopt read): the executor's tree is killed when it passes; the end says capped
 let capTimer = null, capped = false;
 let nudging = null, nudgeTimer = null, nudgeWaitLast = null;   // META-GTP-MAIL piece 3 (nudgeCheck)
+let ctxForced = null, ctxTimer = null, ctxFile = null, ctxWaitLast = null;   // META-CTX-ENFORCE R1 (ctxCheck)
 
 const beat = () => {
   try {
@@ -90,6 +94,7 @@ if (cmd) {
     child.on('error', e => finish(null, null, String(e.message)));
     child.on('exit', (code, signal) => finish(code, signal, null));
     if (nudgeable()) nudgeTimer = setInterval(nudgeCheck, spec.hbMs);
+    if (ctxWatched()) ctxTimer = setInterval(ctxCheck, spec.hbMs);
     if (spec.capMs) capTimer = setTimeout(() => { capped = true; logLine(`time cap ${spec.capMs} ms: stopping the executor`); killTree(childPid); }, spec.capMs);
   } catch (e) { finish(null, null, String(e.message)); }
 }
@@ -99,19 +104,20 @@ function finish(code, signal, error) {
   finished = true;
   clearInterval(timer);
   if (nudgeTimer) clearInterval(nudgeTimer);
+  if (ctxTimer) clearInterval(ctxTimer);
   if (capTimer) clearTimeout(capTimer);
   for (const fd of fds) { try { fs.closeSync(fd); } catch { /* closed */ } }
   logLine(`exit=${code}${signal ? ' signal=' + signal : ''}${error ? ' error=' + error : ''}`);
   // a read-only helper cannot write: its final message (claude json result / a cli executor's plain stdout) becomes the answer file
-  if (spec.role === 'helper' && spec.notes && !(read(spec.notes) || '').trim()) {
+  if ((spec.role === 'helper' || spec.kind === 'audit') && spec.notes && !(read(spec.notes) || '').trim()) {   // META-TEND P5: an audit's report = its final message
     const raw = read(spec.final) || '';
     let text = raw;
     if (cmd?.parse === 'claude') { try { text = String(JSON.parse(raw).result ?? ''); } catch { text = ''; } }
     try { if (text.trim()) fs.writeFileSync(spec.notes, text.endsWith('\n') ? text : text + '\n'); } catch (e) { logLine(`answer not written: ${e.message}`); }
   }
   const marker = parseOutcome(spec.notes ? read(spec.notes) : null);
-  // a check-in has no NOTES end marker: its outcome is its exit (S5)
-  let outcome = code !== 0 ? 'crash' : spec.kind === 'checkin' ? 'done' : marker.outcome;
+  // a check-in has no NOTES end marker: its outcome is its exit (S5); so has an audit (its notes = the vendor report)
+  let outcome = code !== 0 ? 'crash' : spec.kind === 'checkin' || spec.kind === 'audit' ? 'done' : marker.outcome;
   // META-AUTH: a crash whose log tail / final carries the executor's auth-failure signature is `auth` (its login is down), not a crash
   let auth = null;
   try {
@@ -126,11 +132,13 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   } catch (e) { logLine(`limit patterns failed: ${e.message}`); }   // a broken project pattern never costs the end record
   if (limit) outcome = 'limit';
   if (nudging) { outcome = 'nudged'; limit = null; auth = null; }   // stopped by the nudge: whatever the killed tree exited with
+  if (ctxForced) { outcome = 'handoff'; limit = null; auth = null; }   // ended at the hard max: a HANDOFF whatever the killed tree exited with
   const data = { exit: Number.isInteger(code) ? code : null, outcome, marker_line: marker.marker_line, pid: childPid, supervisor_pid: process.pid, ...(capped ? { capped: true } : {}) };
   if (limit) { data.reset = limit.reset; data.limit_line = limit.line; }
   if (auth) { data.auth_line = auth.line; data.auth_class = auth.cls; }   // META-AUTH-VENDOR: login | vendor
   if (outcome === 'stopped') data.why = marker.why;
   if (nudging) data.nudge = nudging.mail.id;
+  if (ctxForced) data.ctx_forced = ctxForced;
   if (signal) data.signal = signal;
   if (error) data.error = error;
   // NORN-WATCH S5 evidence: an exit no `norn stop` explains, the worktree's uncommitted state, the branch + head it ended on
@@ -290,7 +298,7 @@ function autoResume() {
 // BLOCK findings (no waiver) hold the branch's merge and go back to the SAME lane once, as a resume with the list (the same session
 // where the executor resumes by flag). The resumed run is never resumed again for slop: a second BLOCK is the check-in's to decide.
 function slopEnd() {
-  if (spec.kind === 'checkin' || spec.role === 'helper' || spec.readonly || !spec.worktree || spec.policy?.slop?.run_end === false || killedByMeta()) return false;
+  if (spec.kind === 'checkin' || spec.role === 'helper' || spec.readonly || !spec.worktree || !slopOn(spec.policy) || killedByMeta()) return false;
   let c;
   try { c = checkBranch({ repo: spec.worktree, state }); } catch (e) { logLine(`slop: check failed: ${e.message.split('\n')[0]}`); return false; }
   if (!c) return false;   // no lane branch (on main, detached, no main to diff against)
@@ -348,4 +356,29 @@ function nudgeResume() {
   catch (e) { if (!(e instanceof RecordError)) throw e; logLine(`resume not recorded: ${e.message}`); }
   logLine(next ? `nudge ${id} -> resumed ${next} (session ${spec.session_id})` : `nudge ${id}: resume refused: ${refused}`);
   return !!next;
+}
+
+// ---------- META-CTX-ENFORCE R1 (owner DIR-56): the hard max in code. Every hbMs the run's CURRENT context (its transcript's last
+// request) is held against its role's hard_max_k from the CURRENT project policy (ctxlimit.mjs); past it the tree is stopped and
+// the run ends as HANDOFF (a forced note closes its NOTES; committed work is kept; auto-resume as for any HANDOFF). The no-new-step
+// and hand-off orders before it are the PostToolUse hook's (norn mail check --inject). A claude-shaped run with a transcript only.
+function ctxWatched() { return cmd?.parse === 'claude' && !!spec.session_id && !!spec.projectsDir; }
+function ctxWait(why) { if (why !== ctxWaitLast) logLine(`context check waits: ${why}`); ctxWaitLast = why; }
+function ctxCheck() {
+  if (finished || ctxForced || nudging || !childPid) return;
+  ctxFile ??= findTranscript(spec.projectsDir, spec.session_id);
+  if (!ctxFile) return;
+  let c;
+  try { c = ctxLimits(specPolicy(spec), ctxRole(spec)); } catch (e) { ctxWait(`policy not readable: ${e.message}`); return; }
+  const ctx = transcriptCtx(ctxFile);
+  if (ctxLevel(ctx, c) !== 'hard_max') return;
+  ctxForced = { ctx, hard_max_k: c.hard_max_k, role: c.role };
+  logLine(`context ${Math.round(ctx / 1000)}k past the hard max (${c.hard_max_k}k, role ${c.role}): stopping the executor, the run ends as HANDOFF`);
+  if (spec.notes && spec.role !== 'helper' && spec.kind !== 'checkin' && spec.kind !== 'audit') {
+    try {
+      fs.appendFileSync(spec.notes, `\n## Forced hand-off (Norn, ${iso()})\nThe context reached ${Math.round(ctx / 1000)}k, past the hard max (${c.hard_max_k}k) of role ${c.role}: Norn ended this run. `
+        + 'Committed work is kept; anything uncommitted is still in the worktree. The next run picks the brief up from these notes.\n## HANDOFF\n');
+    } catch (e) { logLine(`forced note not written: ${e.message}`); }
+  }
+  killTree(childPid);
 }

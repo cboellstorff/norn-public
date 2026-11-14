@@ -1,0 +1,61 @@
+name: Beta feedback
+description: Tell us how the Norn beta went - what you tried, what broke, what felt confusing.
+title: "[beta] "
+labels: ["beta-feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for trying the Norn beta. Short answers are fine. Please leave out keys, tokens and private paths.
+  - type: textarea
+    id: tried
+    attributes:
+      label: What you tried
+      description: The steps you took (setup, a first task, the dashboard, ...).
+      placeholder: "I followed SETUP.md, started one task on my repo, then opened the dashboard ..."
+    validations:
+      required: true
+  - type: textarea
+    id: wrong
+    attributes:
+      label: What went wrong or felt confusing
+      description: What you expected, what happened instead, and any error text (paste it as text, not a screenshot).
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Your OS
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Linux under WSL
+        - Other (say which below)
+    validations:
+      required: true
+  - type: dropdown
+    id: sloppachoppa
+    attributes:
+      label: "SloppaChoppa (the orc in the dashboard header and the Guard page)"
+      description: "He can be switched off per project: Settings, Guard voice, SloppaChoppa: off."
+      options:
+        - Keep him
+        - Turn him off
+        - Did not notice him
+    validations:
+      required: true
+  - type: textarea
+    id: sloppachoppa-why
+    attributes:
+      label: Why (SloppaChoppa)
+      description: What made you want to keep him, turn him off, or why you did not notice him.
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Your OS version, Node version (node --version), which executors you used, other ideas.
+    validations:
+      required: false

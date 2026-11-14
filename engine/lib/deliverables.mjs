@@ -156,7 +156,7 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
 }
 
 // ---------- backfill (DELIVERABLES-SPEC 2) + the launcher's record at a DONE exit ----------
-const NOT_DELIVERING = ['checkin', 'talk', 'interactive', 'fake'];
+const NOT_DELIVERING = ['checkin', 'talk', 'interactive', 'fake', 'audit'];
 const isDeliveringRun = r => r?.kind === 'run' && r.end?.outcome === 'done' && !NOT_DELIVERING.includes(r.data?.kind) && r.data?.role !== 'helper' && !r.data?.parent;
 const isMainBranch = b => !b || b === 'HEAD' || b === 'main' || b === 'master';
 const endTs = r => r.history.find(h => h.ev === 'end')?.ts || r.updated;

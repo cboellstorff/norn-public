@@ -1,0 +1,155 @@
+{
+  "about": "META-TEND P4: what the vendors say about each model / harness, as dated DATA. Every row names its source and the day it was read; advice.mjs marks a row stale past stale_days so old advice is visible, never silent. tier: 1 = cheapest; the highest tier is the priciest model. Prices: USD per million tokens. A field the source does not state is null.",
+  "stale_days": 60,
+  "efforts": [
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max"
+  ],
+  "rows": [
+    {
+      "id": "fable",
+      "model": "fable",
+      "match": "fable",
+      "harness": "claude",
+      "tier": 4,
+      "start_effort": "high",
+      "strengths": "the hardest and longest-running tasks and ambiguous problems; use it when evals on Opus at higher effort still fall short",
+      "price": {
+        "input": 8,
+        "output": 40,
+        "cache_read": 0.2
+      },
+      "cautions": [
+        "At high and above it thinks before almost every reply, a greeting included: use a lower level for easy turns (a coordinator with many short turns is a poor fit at high).",
+        "xhigh: only the hardest long-running coding and agentic work, where a gain has been measured.",
+        "In -p runs it can bill to usage credits without asking."
+      ],
+      "quote": "Claude Opus 5.5 stays the default for most workloads. Use Fable when evals on Opus at higher effort still fall short.",
+      "sources": [
+        {
+          "ref": "MM",
+          "title": "claude-api skill 2.1.322, shared/model-migration.md, Migrating to Claude Fable 5.2",
+          "url": "bundled skill claude-api 2.1.322: shared/model-migration.md",
+          "read": "2026-11-14"
+        },
+        {
+          "ref": "MC",
+          "title": "Claude Code docs: model configuration",
+          "url": "https://code.claude.com/docs/en/model-config",
+          "read": "2026-11-14"
+        }
+      ],
+      "start_effort_from": "xhigh only where a gain has been measured [MM] (owner Q3: high by default, xhigh = the escalation step)"
+    },
+    {
+      "id": "opus-5-5",
+      "model": "claude-opus-5-5",
+      "match": "opus",
+      "harness": "claude",
+      "tier": 3,
+      "start_effort": "high",
+      "strengths": "the default for most workloads; complex architectural decisions",
+      "price": {
+        "input": 4,
+        "output": 20,
+        "cache_read": 0.2
+      },
+      "cautions": [
+        "xhigh: only the hardest long-running coding and agentic work, where a gain has been measured.",
+        "Sonnet handles most coding tasks well: reserve Opus for complex architectural decisions."
+      ],
+      "quote": "xhigh: only the hardest long-running coding and agentic work, where a gain has been measured.",
+      "sources": [
+        {
+          "ref": "MM",
+          "title": "claude-api skill 2.1.322, shared/model-migration.md",
+          "url": "bundled skill claude-api 2.1.322: shared/model-migration.md",
+          "read": "2026-11-14"
+        },
+        {
+          "ref": "CO",
+          "title": "Claude Code docs: costs",
+          "url": "https://code.claude.com/docs/en/costs",
+          "read": "2026-11-14"
+        }
+      ],
+      "start_effort_from": "xhigh only where a gain has been measured [MM] (owner Q3: high by default, xhigh = the escalation step)"
+    },
+    {
+      "id": "sonnet-5-5",
+      "model": "claude-sonnet-5-5",
+      "match": "sonnet",
+      "harness": "claude",
+      "tier": 2,
+      "start_effort": null,
+      "strengths": "most coding tasks; teammates",
+      "price": null,
+      "cautions": [
+        "No price and no starting effort in the sources read."
+      ],
+      "quote": "Sonnet handles most coding tasks well ... Use Sonnet for teammates.",
+      "sources": [
+        {
+          "ref": "CO",
+          "title": "Claude Code docs: costs",
+          "url": "https://code.claude.com/docs/en/costs",
+          "read": "2026-11-14"
+        }
+      ]
+    },
+    {
+      "id": "haiku",
+      "model": "haiku",
+      "match": "haiku",
+      "harness": "claude",
+      "tier": 1,
+      "start_effort": null,
+      "strengths": "simple subagents",
+      "price": null,
+      "cautions": [
+        "No price or effort level in the sources read."
+      ],
+      "quote": "Haiku for simple subagents.",
+      "sources": [
+        {
+          "ref": "BP",
+          "title": "Claude Code docs: best practices",
+          "url": "https://code.claude.com/docs/en/best-practices",
+          "read": "2026-11-14"
+        }
+      ]
+    },
+    {
+      "id": "harness-subagents",
+      "model": null,
+      "match": null,
+      "harness": "claude",
+      "tier": null,
+      "start_effort": null,
+      "strengths": "the orchestrator pattern buys something only when there is bulk to hand off",
+      "price": null,
+      "cautions": [
+        "Subagents can be a large part of a session's cost: check which model the harness runs them on by default.",
+        "For one dependent chain, the coordinator's model alone at lower effort came out ahead."
+      ],
+      "quote": "Subagents can be a large part of a session's cost, so check which model the harness runs them on by default.",
+      "sources": [
+        {
+          "ref": "MM",
+          "title": "claude-api skill 2.1.322, shared/model-migration.md (Opus 5 delegation passage)",
+          "url": "bundled skill claude-api 2.1.322: shared/model-migration.md l.1114-1136",
+          "read": "2026-11-14"
+        },
+        {
+          "ref": "CST",
+          "title": "claude-api skill 2.1.322, shared/cost-optimization.md",
+          "url": "bundled skill claude-api 2.1.322: shared/cost-optimization.md l.186-188",
+          "read": "2026-11-14"
+        }
+      ]
+    }
+  ]
+}

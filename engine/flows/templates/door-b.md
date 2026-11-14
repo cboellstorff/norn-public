@@ -1,7 +1,7 @@
 # task DOOR-{{n}} stage B - install {{door_branch}} in main + C3 boot + C4 sheet (flow {{flow}} {{epic}}, step {{step}})
 
 The procedure is the door skill ({{skill}}): read its headings first, then "FAST DOOR = THE DEFAULT", "0. Rules", "1b" and
-"2. Stage B". The skill wins over this brief wherever they differ. Project {{project}}. Meta: {{meta}}.
+"2. Stage B". The skill wins over this brief wherever they differ. Project {{project}}. Norn: {{norn}}.
 Main checkout {{main_checkout}}. Stage A's NOTES: {{notes_dir}}/DOOR{{n}}-A-NOTES.md (its `## NOW` block and the tested tree).
 NOTES {{notes_dir}}/DOOR{{n}}-B-NOTES.md (durable; a `## NOW` block at the top); last line exactly `## DONE`, `## STOPPED: <why>`
 or `## HANDOFF` (door stages: no new step past ~140k, hand off at ~160k, commit finished work first).

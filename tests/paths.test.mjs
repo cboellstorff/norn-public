@@ -1,7 +1,7 @@
 // S3 discovery (META-GENERAL-DESIGN 8): fake PATH + a virtual file system per OS, so every OS's rules run on any host.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { discover, which } from '../engine/lib/paths.mjs';
+import { discover } from '../engine/lib/paths.mjs';
 
 // virtual fs: { '<path>': mtimeMs } ; dirs are implied by the file paths; windows names are case-insensitive like NTFS
 const vfs = (files, sep) => ({
@@ -63,10 +63,4 @@ test('required prerequisites missing or node < 22 are problems', () => {
   assert.equal(d.git, null); assert.equal(d.claude, null);
   assert.deepEqual(d.problems.map(p => p.msg), ['node 20.11.0 < 22 (required)', 'git not found (required: PATH)',
     'claude not found (required: PATH, ~/.local/bin, npm global prefix)']);
-});
-
-test('which: first PATH hit, empty PATH entries skipped', () => {
-  const fs = vfs({ '/b/tool': 1, '/c/tool': 1 }, '/');
-  assert.equal(which('tool', { platform: 'linux', env: { PATH: '::/b:/c' }, fs }), '/b/tool');
-  assert.equal(which('none', { platform: 'linux', env: { PATH: '/b' }, fs }), null);
 });

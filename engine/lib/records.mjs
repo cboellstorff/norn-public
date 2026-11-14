@@ -8,6 +8,7 @@ import { writeViews } from './views.mjs';
 import { isAncestor, refTip } from './dlvgit.mjs';
 import { validLabels } from './fed.mjs';
 import { ownerPickGuard, carriesOwnerPick, ownerWordsOf, choiceKeyOf } from './qreconcile.mjs';
+import { ownerOnlyRefusal, OWNER_ONLY_EXIT } from './checkinguards.mjs';
 
 // worker (META-GTP-MAIL): a supervised run speaking for itself (META_RUN_ID) - only mail events allow it
 export const ROLES = ['owner', 'controller', 'checkin', 'launcher', 'dashboard', 'migration', 'status', 'worker'];
@@ -79,6 +80,8 @@ export const KINDS = {
     hold: { from: ['queued'], to: null, roles: ['launcher'] },
     // META-AUTONOMY R1: a ruling 'its work counts as merged on main' (git cannot see it): { why, sha? } - after.mjs honours it
     landed: { from: ['exited', 'filled', 'lost', 'killed', 'withdrawn'], to: null, roles: [...OWNER, ...CK] },
+    // META-CHECKIN-GUARDS R1: a guard refused a move of this (running) run ({ guard: busy | owner-only, why, lane, stage?, answers? })
+    refuse: { from: ['running'], to: null, roles: ['launcher'] },
   } },
   // DELIVERABLES-SPEC 1: a lane's / DONE run's branch followed to main and the install. Its own file (deliverables.jsonl), so
   // loadState / `rec list` stay as they were. DONE / MERGED / INSTALLED are derived from git (deliverables.mjs), never events.
@@ -330,8 +333,6 @@ function validateData(kind, ev, d, target, st, by) {
     if (ev === 'create') {
       str(d.lane, 'lane'); str(d.question, 'question'); str(d.choice, 'choice'); str(d.why, 'why');
       if (d.answers !== undefined && kindOfId(d.answers) !== 'question') fail('answers must be a Q-n id');
-      // NORN-WATCH S3: an owner_only Q is never ruled by a check-in (DIR-47 covers every other Q)
-      if (by === 'checkin' && st.items[d.answers]?.data?.owner_only === true) fail(`${d.answers} is owner_only: a check-in never rules it (the owner answers it; re-send it with norn notify)`);
       list(d.on_runs, 'on_runs');
       str(d.owner_words, 'owner_words', { req: false, max: 4000 });   // META-Q-RECONCILE R1
       if (d.not_an_answer !== undefined && d.not_an_answer !== true) fail('not_an_answer must be true');
@@ -417,7 +418,7 @@ function validateData(kind, ev, d, target, st, by) {
   if (kind === 'proposal') validateProposal(ev, d, target, st);
   if (kind === 'run') {
     if (ev === 'start' || ev === 'queue') { oneOf(d.priority, 'priority', PRIORITIES, false); if (d.epic !== undefined && !/^EP-\d+$/.test(d.epic)) fail('epic must be an EP-n id'); }
-    if (ev === 'start' || ev === 'queue') oneOf(d.kind, 'kind', ['worker', 'codex', 'cli', 'checkin', 'talk', 'interactive', 'fake', 'provider']);
+    if (ev === 'start' || ev === 'queue') oneOf(d.kind, 'kind', ['worker', 'codex', 'cli', 'checkin', 'talk', 'interactive', 'fake', 'provider', 'audit']);
     if ((ev === 'start' || ev === 'queue') && d.after !== undefined && !(Array.isArray(d.after) && d.after.every(c => c && ['kind', 'id', 'state'].every(k => typeof c[k] === 'string'))))
       fail('after must be a list of {kind, id, state}');
     if ((ev === 'start' || ev === 'queue') && d.inputs !== undefined) list(d.inputs, 'inputs');
@@ -694,7 +695,8 @@ export function record(stateDir, evIn, opts = {}) {
   const run = opts.run !== undefined ? opts.run : (process.env.META_RUN_ID && launchedHere(stateDir, process.env) ? process.env.META_RUN_ID : null);
   const pfx = nodePrefix(stateDir);
   const via = writeOrigin.getStore()?.via ?? null;   // C6: a remote device's write (the dashboard sets it per request)
-  return withLock(lock, () => {
+  try { return recordLocked(); } catch (e) { if (e instanceof RecordError && e.refusal) noteRefusal(stateDir, e.message, e.refusal); throw e; }
+  function recordLocked() { return withLock(lock, () => {
     const base = readEvents(file);
     let st = fold(base);
     const batch = [];
@@ -729,6 +731,10 @@ export function record(stateDir, evIn, opts = {}) {
     const caller = ev.by;
     if (kind === 'decision' && ev.ev === 'create' && caller !== 'migration') {
       const d = ev.data || {}, g = ownerPickGuard(st.items, d);
+      // NORN-WATCH S3 + META-CHECKIN-GUARDS R1 guard B (checkinguards.ownerOnlyRefusal, the grader's too): an open owner_only Q is
+      // ruled by the owner only (DIR-47 covers every other Q) - exit 7, noted on the writer's run (the Agents tab shows it)
+      const oo = d.answers ? ownerOnlyRefusal(st.items[d.answers], caller) : null;
+      if (oo) throw Object.assign(new RecordError(oo, OWNER_ONLY_EXIT), { refusal: { guard: 'owner-only', lane: d.lane ?? null, answers: d.answers } });
       if (g) throw new RecordError(`${g.id} is open on lane ${d.lane} - pass --answers ${g.id} or --not-an-answer`, 3);
       if (d.answers && st.items[d.answers]?.state === 'open' && carriesOwnerPick(d) && !d.owner_words)
         fail(`${d.answers} is open: --answers with an owner pick needs --owner-words "<the owner's words, verbatim>" (they answer it in the same step)`);
@@ -777,5 +783,15 @@ export function record(stateDir, evIn, opts = {}) {
       if (opts.onViews) opts.onViews(v);
     }
     return many ? primaries : primaries[0];
-  });
+  }); }
+}
+/**
+ * META-CHECKIN-GUARDS R1: a guard's refusal noted on the refused writer's own RUNNING run (env META_RUN_ID, when it belongs to this
+ * state: launchedHere) as a run `refuse` event - nothing else happened, the next tick and the Agents tab see it. No run = no note.
+ */
+export function noteRefusal(stateDir, why, { guard, ...extra }, env = process.env) {
+  const id = env.META_RUN_ID;
+  if (!id || !launchedHere(stateDir, env)) return null;
+  if (fold(readEvents(recordsFile(stateDir, 'run'))).items[id]?.state !== 'running') return null;
+  return record(stateDir, { kind: 'run', ev: 'refuse', id, by: 'launcher', data: { guard, why, ...extra } }, { run: id });
 }

@@ -14,6 +14,7 @@ import { acquireLock, laneWriter, killTree } from './runs.mjs';
 import { renderBatchBrief, suiteMode } from './mergebrief.mjs';
 import { spawnOutside } from './jobguard.mjs';
 import { openBlocks } from './slop/host.mjs';
+import { slopOn } from './policy.mjs';
 
 const H = 3600e3;
 const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
@@ -53,7 +54,7 @@ function retriesOf(runs, stateDir, row, since) {
  * Returns { rows: [{ ...view row, score, priority, epic, epic_hours, dlv_hours, retries, gate, word (rehearsal), into (target branch) }], cfg }
  */
 export function mergeQueue({ stateDir, project = {}, now = Date.now(), git = makeGit(), view = null } = {}) {
-  const cfg = mergeConfig(project);
+  const cfg = mergeConfig(project), slop = slopOn(project.policy);
   const v = view || deliverablesView({ stateDir, project, now, git });
   const epics = (() => { try { return loadEpics(stateDir); } catch { return {}; } })();
   const runs = Object.values(fold(readEvents(recordsFile(stateDir, 'run'))).items);
@@ -74,7 +75,7 @@ export function mergeQueue({ stateDir, project = {}, now = Date.now(), git = mak
     rows.push({ ...r, score: mrScore({ epicHours: epic_hours, priority, retries, dlvHours: dlv_hours }), priority, epic: ep?.id ?? null,
       epic_hours: +epic_hours.toFixed(1), dlv_hours: +dlv_hours.toFixed(1), retries, gate: gateKind(r, cfg), word: rehearsalWord(r) || '?',
       into, red: red[r.id] && (red[r.id] === r.tip || red[r.id] === r.done_tip) ? red[r.id] : null,
-      slop: openBlocks(stateDir, r.branch).length });   // META-SLOP-A: open BLOCK findings hold the branch out of a batch
+      slop: slop ? openBlocks(stateDir, r.branch).length : 0 });   // META-SLOP-A: open BLOCK findings hold the branch out of a batch (META-BETA-PREP: not while off)
   }
   rows.sort((a, b) => b.score - a.score || Number(a.id.slice(4)) - Number(b.id.slice(4)));
   return { rows, cfg };

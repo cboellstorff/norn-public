@@ -78,7 +78,7 @@ test('agentsTree: one root per RUN (running + ended < 2 h), children = subagents
   const runs = Object.values(loadState(state).items).filter(i => i.kind === 'run');
   // RUN-4 ended "3 h ago": shift its updated stamp back
   runs.find(r => r.id === 'RUN-4').updated = new Date(now - 3 * 3600000).toISOString();
-  const tree = agentsTree(runs, { projectsDir: d.projects, codexDir: d.codex, cache: new Map(), now, ctxLimit: 110000 });
+  const tree = agentsTree(runs, { projectsDir: d.projects, codexDir: d.codex, cache: new Map(), now, policy: { context: { implementer: { handoff_k: 110 } } } });
   assert.deepEqual(tree.map(r => r.id), ['RUN-1', 'RUN-2', 'RUN-3']);
   const [w, c, g] = tree;
   assert.equal(w.ctx, 4 + 33810 + 31513);

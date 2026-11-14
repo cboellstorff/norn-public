@@ -9,9 +9,9 @@ Norn takes over that job. Give it the work as lanes: it runs the agents headless
 reviews what finished, merges what passes your tests and starts the next step inside the budget you set. It asks you, with a
 ping on your phone, only for the decisions that really are yours.
 
-**Norn is built with Norn.** From 9 to 13 November 2026, building itself, it ran 119 agent tasks and 226 check-ins, landed work
-on main 58 times and recorded 159 decisions - 141 of them made by its own check-ins. Its owner gave 16 instructions and answered
-8 questions.
+**Norn is built with Norn.** From 9 to 14 November 2026, building itself, it ran 218 agent tasks and 345 check-ins, landed work
+on main 106 times and recorded 305 decisions - 248 of them made by its own check-ins. Its owner gave 52 instructions and answered
+9 questions.
 
 ![The Norn Home: the controller chat, each check-in one line, a question that needs you and an approval card](docs/img/home.png)
 
@@ -59,6 +59,9 @@ then drafts a roadmap, project rules, the test command and a first task. Nothing
 applied until you approve it. Setup offers a phone or desktop notification and puts the `norn` command in
 `~/.local/bin`. The full walkthrough, also in a scripted form for agents: [SETUP.md](SETUP.md).
 
+Platforms, honestly: SETUP covers Windows, macOS and Linux. Fresh-machine installs were walked through on Windows and Linux; macOS is
+covered by the 3-OS smoke workflow (last green 11 November), not by a walked install.
+
 ## What you get
 - **A dashboard** (`norn dash`): what needs you, what is running, usage against the caps, every record; answer a question, add a
   directive or overrule a decision from the page. Details: [engine/dash/README.md](engine/dash/README.md).
@@ -68,6 +71,13 @@ applied until you approve it. Setup offers a phone or desktop notification and p
   main next, and the usage forecast up to the weekly reset.
 
 ![The Plan tab: what starts next, the chains behind it, and how long the usage lasts](docs/img/plan.png)
+
+- **A lean, honest agent setup** (the Instructions, Tests, Usage and Guard tabs): what each session loads and which instruction
+  lines are stale or contradict each other; tests that guard real behaviour; which model fits each kind of work, with the
+  vendor's own advice and the day it was read; one Guard page with every open finding; and SloppaChoppa, the orc who voices it
+  (switch him off per project in Settings).
+
+![The Guard page: SloppaChoppa and every open finding of every check in one list](docs/img/guard.png)
 
 - **A roadmap** (`norn road`, the Roadmap tab): themes and items whose status is derived from the runs and records, never typed.
 - **Adopting an existing repo** (`norn init` / `norn adopt`): a drafted setup in six parts, each line naming its source.
@@ -115,8 +125,13 @@ to main and on demand (`.github/workflows/smoke.yml`).
 - **Profile**: a starting set of limits and routing (`try-it`, `solo`, `heavy`). It is only a starting point, so change any
   value afterwards in Settings.
 - **Urd**, **Verdandi**, **Skuld**: the dashboard's three groups in the Norn look. Urd is what was (records, ledger, docs),
-  Verdandi is what is (overview, map, agents, lanes, usage), and Skuld is what shall be (plan, inbox, settings).
+  Verdandi is what is (overview, map, agents, lanes, usage, tests, instructions), and Skuld is what shall be (plan, inbox, settings).
 - **Wyrd**: all three at once, which is the roadmap view.
+
+## Beta feedback
+This is a beta. Tell us how it went: open this repository's **Issues** tab, choose **New issue**, then **Beta feedback**. The form
+asks what you tried, what went wrong or felt confusing, your OS, and whether to keep SloppaChoppa (the orc in the dashboard header
+who checks a branch for leftovers before it merges). He can be switched off per project: Settings, Guard voice, SloppaChoppa: off.
 
 ## License
 MIT, see [LICENSE](LICENSE).

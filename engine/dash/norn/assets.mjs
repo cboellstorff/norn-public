@@ -5,6 +5,8 @@
 // the UI art scale --px). Every final PNG is palette-indexed (palette.hex) with binary alpha (art brief).
 export const TOKENS = ['running', 'done', 'handoff', 'stopped', 'parked', 'needs', 'idle'];
 export const EMPTIES = ['no-runs', 'nothing-needs-you', 'no-questions', 'all-delivered'];
+// SloppaChoppa's 96 strips -> frame count (orc.mjs STRIPS holds the per-frame times)
+export const ORC_STRIPS = { idle: 4, warn: 4, appear: 5, speak: 3, 'fidget-axe': 5, 'fidget-look': 5, chop: 5, exit: 4 };
 
 export const ASSETS = {
   'logo-128': { file: 'logo-128.png', w: 128, h: 128, k: 1, use: 'README / about' },
@@ -18,6 +20,10 @@ export const ASSETS = {
   ...Object.fromEntries(EMPTIES.map(e => [`empty-${e}`, { file: `empty-${e}.png`, w: 96, h: 64, k: 1, use: `empty state ${e}` }])),
   'hero-night': { file: 'hero-night.png', w: 320, h: 180, k: 'ui', use: 'Overview header, dark ground' },
   'hero-day': { file: 'hero-day.png', w: 320, h: 180, k: 'ui', use: 'Overview header, light ground' },
+  // META-TEND P6: SloppaChoppa (ORC-1 round 5 + 6, norn-art-orc/out): the header bust, the phone's axe, the 96 strips of the stage
+  'orc-32': { file: 'orc-32.png', w: 32, h: 32, k: 1, use: 'header: call SloppaChoppa up' },
+  'orc-16': { file: 'orc-16.png', w: 16, h: 16, k: 'ui', use: 'phone header: call SloppaChoppa up (UI scale: fills the 44 px touch target)' },
+  ...Object.fromEntries(Object.entries(ORC_STRIPS).map(([s, n]) => [`orc-96-${s}`, { file: `orc-96-${s}.png`, w: 96 * n, h: 96, k: 2, use: `SloppaChoppa ${s} strip, ${n} frames` }])),
 };
 export const ART_FILES = Object.values(ASSETS).map(a => a.file);
 

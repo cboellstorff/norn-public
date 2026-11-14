@@ -142,7 +142,7 @@ export function delegateStart(o) {
         ...(mode ? { mode } : {}), lock: parentId || acc !== 'write' ? false : undefined,
         budgetMin: o.budgetMin ?? HELPER_BUDGET_MIN, model, effort, exe, promptText: isProvider(prov) ? text : undefined,
         env: { ...(prov?.env || {}), META_PARENT_RUN: parentId || 'none', META_ROLE: null }, budget, via: 'delegate',
-        policy: { auto_resume_handoff: false, trigger_on_exit: false }, tick: null, projectsDir: o.machine?.claude?.projects_dir, ...(o.gitLedger ? { git_ledger: o.gitLedger } : {}),
+        policy: { auto_resume_handoff: false, trigger_on_exit: false }, tick: null, projectsDir: o.machine?.claude?.projects_dir, ctx_from: o.project?.file, ...(o.gitLedger ? { git_ledger: o.gitLedger } : {}),
         ...(o.hbMs ? { hbMs: o.hbMs } : {}), staleMs,
       });
       return { run: r.run, executor: ex, mode, dir, brief, out };

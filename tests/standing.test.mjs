@@ -8,7 +8,8 @@ import path from 'node:path';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { transcriptHead, splitParts, measureRun, roleOfRun, standingRuns, standingSummary, PARTS, STANDING_METHOD,
-  profileOf, PROFILE_DEFAULTS, profileDrops } from '../engine/lib/standing.mjs';
+  profileDrops } from '../engine/lib/standing.mjs';
+import { profileOf, PROFILE_DEFAULTS } from '../engine/lib/launchpolicy.mjs';
 import { ADAPTERS } from '../engine/lib/harness/index.mjs';
 import { buildCommand } from '../engine/lib/runs.mjs';
 
@@ -172,7 +173,7 @@ test('norn doctor rows: a project whose worker profile is lean names the skills 
 });
 
 test('lean without the user setup: a user-level agent goes inline (--agents), a project agent stays on its own; full is untouched', async () => {
-  const { inlineAgent, agentDef } = await import('../engine/lib/standing.mjs');
+  const { inlineAgent, agentDef } = await import('../engine/lib/launchpolicy.mjs');
   const st = mkTmp('meta-sc-'), base = path.dirname(st), cfg = path.join(base, 'home', '.claude'), wt = path.join(base, 'wt');
   w(path.join(cfg, 'agents', 'kestrel-runner.md'), '---\nname: kestrel-runner\ndescription: Cheap mechanical work\nmodel: sonnet\ntools: Bash, Read, Skill\n---\n\nYou are a runner.\n');
   w(path.join(wt, '.claude', 'agents', 'local-one.md'), '---\nname: local-one\n---\nx\n');

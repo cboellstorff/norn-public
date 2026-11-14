@@ -1,5 +1,5 @@
 // project.json / machine.json loading (META-GENERAL-DESIGN 4.2 / 4.3): schema check, then ${var} expansion with cycle detection.
-// Builtins: home, meta (engine root), name, root, state (= ${meta}/state/<name>), dev (default: parent of root; a project var may set it),
+// Builtins: home, norn (engine root; `meta` = its read-only old name, META-NAME-W3), name, root, state (= ${norn}/state/<name>), dev (default: parent of root; a project var may set it),
 // project_dir (the directory of the project.json: a project's own files, wherever it lives - META-ONBOARD 3.2).
 // ${lane} is late-bound (lane_defaults): it survives loading and is filled by expandLate at use.
 import fs from 'node:fs';
@@ -18,9 +18,13 @@ export const MACHINE_SCHEMA = readSchema('machine.schema.json');
 export const fwd = p => String(p).replace(/\\/g, '/');
 export const metaRoot = (env = process.env) => fwd(env.META_ROOT || path.resolve(ENGINE, '..'));
 export const homeDir = () => fwd(os.homedir());
-const BUILTINS = ['home', 'meta', 'state', 'name', 'root', 'lane', 'project_dir'];
+const BUILTINS = ['home', 'norn', 'meta', 'state', 'name', 'root', 'lane', 'project_dir'];
 const LATE = ['lane'];
 const VAR = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+// META-NAME-W3 (DEC-257): the old names of the engine-root variable; they keep resolving, `norn doctor` names a file still using one
+const OLD_NAMES = ['${meta}', '{{meta}}'];
+/** the old variable names a config / template text still uses (each once, in OLD_NAMES order) */
+export const oldNameUses = text => OLD_NAMES.filter(o => String(text ?? '').includes(o));
 
 // JSON-schema subset: type (incl. lists, "integer"), enum, required, properties, additionalProperties (bool | schema), items, minimum, pattern.
 export function validate(schema, v, at = '$') {
@@ -113,7 +117,7 @@ export function loadProject(file, { home = homeDir(), meta = metaRoot() } = {}) 
   const { label, obj: raw } = readJson(file);
   const obj = withPresets(raw, label);
   checkProject(obj, label);
-  const vars = { ...obj.vars, home: fwd(home), meta: fwd(meta), name: obj.name, root: obj.root, state: '${meta}/state/${name}', project_dir: fwd(path.dirname(path.resolve(file))) };
+  const vars = { ...obj.vars, home: fwd(home), norn: fwd(meta), meta: '${norn}', name: obj.name, root: obj.root, state: '${norn}/state/${name}', project_dir: fwd(path.dirname(path.resolve(file))) };
   if (!Object.hasOwn(vars, 'dev')) vars.dev = get => get('root').replace(/\/+$/, '').replace(/\/[^/]*$/, '');
   const exp = resolver(vars, LATE);
   let out;
@@ -127,13 +131,13 @@ export function loadMachine(file, { home = homeDir(), meta = metaRoot() } = {}) 
   const { label, obj } = readJson(file);
   const errs = validate(MACHINE_SCHEMA, obj).map(e => (MOVED_SLOTS.some(k => e === `$.${k} is not allowed`) ? `${e} - run \`norn migrate\`` : e));
   if (errs.length) throw new ConfigError(`${label}: ${errs.join('; ')}`);
-  const exp = resolver({ home: fwd(obj.home || home), meta: fwd(meta) }, []);
+  const exp = resolver({ home: fwd(obj.home || home), norn: fwd(meta), meta: '${norn}' }, []);
   try { return walk(obj, exp); } catch (e) { throw new ConfigError(`${label}: ${e.message}`); }
 }
 
-// the stored (unexpanded) form of a path: ${meta}/... when under the engine root, else absolute with forward slashes
+// the stored (unexpanded) form of a path: ${norn}/... when under the engine root, else absolute with forward slashes
 export function portable(p, { meta = metaRoot() } = {}) {
   const a = fwd(path.resolve(p)), m = fwd(meta).replace(/\/+$/, '');
   const same = process.platform === 'win32' ? a.toLowerCase().startsWith(m.toLowerCase() + '/') : a.startsWith(m + '/');
-  return same ? '${meta}' + a.slice(m.length) : a;
+  return same ? '${norn}' + a.slice(m.length) : a;
 }

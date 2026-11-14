@@ -53,9 +53,11 @@ export function detectExe(exe) {
 }
 
 // the per-family HEADLESS snippet core: the outcome contract is the same for every harness (the NOTES end marker)
+// META-BETA-PREP (DIR-52): the slop sentence on its own - a pack of a project whose SloppaChoppa switch is off leaves it out (setup.mjs)
+export const HEADLESS_SLOP = ' Before you write `## DONE`, run `norn slop check` in your worktree and fix every BLOCK it lists.';
 export const HEADLESS_CORE = 'You run headless: nobody answers questions and your process ends with your turn. Decide under the '
   + "brief's DECISION-RULES or stop. Write only your NOTES file; its last line is exactly `## DONE`, `## STOPPED: <why>` or `## HANDOFF`."
-  + ' Before you write `## DONE`, run `norn slop check` in your worktree and fix every BLOCK it lists.';
+  + HEADLESS_SLOP;
 // META-GTP-MAIL delivery (b): the line for executors WITHOUT the mail hook (a claude run gets its mail from a PostToolUse hook)
 export const HEADLESS_MAIL = ' Mail: check your mail between steps (MCP norn_mail check, else `norn mail check --run $META_RUN_ID`), act on it, and ack each one (norn_mail ack / norn mail ack MAIL-n).';
 

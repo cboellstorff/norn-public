@@ -16,8 +16,14 @@ import { ADAPTERS, harnessOf } from './harness/index.mjs';
 import { genStates, frontmatter } from './setup.mjs';
 import { loadState } from './records.mjs';
 import { threadFile } from './chat.mjs';
-import { standingRuns, standingSummary, profileOf, PROFILE_ROLES } from './standing.mjs';
+import { standingRuns, standingSummary } from './standing.mjs';
+import { profileOf, PROFILE_ROLES } from './launchpolicy.mjs';
 import { checkinDays } from './checkins.mjs';
+import { staticChecks, CHECKS, memoryDir, rulePaths, frontOf, memoryMap, memoryOpened } from './instrchecks.mjs';
+import { memoryOf, roleOfSpec } from './launchpolicy.mjs';
+import { ruleLedger, rowCounts } from './rules.mjs';
+import { readEvidence } from './readev.mjs';
+import { auditsView } from './audit.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url)), ENGINE = path.join(HERE, '..');
 const fwd = p => String(p).replace(/\\/g, '/');
@@ -45,8 +51,8 @@ export const LOAD_LABEL = { session: 'every session', checkin: 'check-ins', chat
 const SKIP_DIRS = new Set(['node_modules', '.git', 'target', 'dist', 'build', '.venv', 'venv', '__pycache__']);
 /** repo-relative paths of the instruction files under root: git ls-files (tracked + untracked, not ignored), else a bounded walk */
 function repoFiles(root, names) {
-  const want = f => names.includes(path.posix.basename(f)) || /^\.claude\/agents\/[^/]+\.md$/.test(f) || /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f);
-  const r = spawnSync('git', ['-C', root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', ...names.map(n => `*${n}`), '.claude/agents/*.md', '.claude/skills/*/SKILL.md'],
+  const want = f => names.includes(path.posix.basename(f)) || /^\.claude\/agents\/[^/]+\.md$/.test(f) || /^\.claude\/skills\/[^/]+\/SKILL\.md$/.test(f) || /^\.claude\/rules\/.+\.md$/.test(f);
+  const r = spawnSync('git', ['-C', root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', ...names.map(n => `*${n}`), '.claude/agents/*.md', '.claude/skills/*/SKILL.md', '.claude/rules/*.md'],
     { encoding: 'utf8', windowsHide: true, timeout: 20000, maxBuffer: 64 * 1024 * 1024 });
   if (r.status === 0) return [...new Set(r.stdout.split('\0').filter(Boolean).map(fwd).filter(want))].sort();
   const out = [];
@@ -142,6 +148,7 @@ export function discover(p, { home, machine = null, git = true } = {}) {
       const f = path.join(root, rel), base = path.posix.basename(rel);
       if (rows.has(key(f))) continue;
       if (/^\.claude\/agents\//.test(rel)) { add(f, { kind: 'agent' }, [{ class: 'role', role: path.basename(rel, '.md'), families: ['claude'] }]); continue; }
+      if (/^\.claude\/rules\//.test(rel)) { add(f, { kind: 'rule' }, [ruleLoad(f)]); continue; }   // META-PRACTICE-P1: no (parsable) paths = every session
       if (/^\.claude\/skills\//.test(rel)) { add(f, { kind: 'skill' }, [{ class: 'session', families: ['claude'], part: 'description' }]); continue; }
       const fams = hs.filter(h => h.repo.some(n => path.posix.basename(n) === base)).map(h => h.family);
       add(f, { kind: 'repo' }, [{ class: 'on-demand', families: fams }]);
@@ -149,13 +156,23 @@ export function discover(p, { home, machine = null, git = true } = {}) {
   }
   // 2. the user's own files (this machine only, read-only)
   for (const h of hs) for (const t of h.user || []) { const f = tmpl(t); if (isFile(f)) add(f, { kind: 'user' }, [{ class: 'session', families: [h.family] }]); }
+  // 2b. META-PRACTICE-P1: the user's .claude/rules and the auto-memory folder (MEMORY.md: every Claude session that keeps memory - the
+  // launch key policy.launch.memory per role; the topic files on demand). machine_only: the owner's files, read-only.
+  { let es = []; try { es = fs.readdirSync(path.join(vars.claude_config, 'rules')).sort(); } catch { /* none */ }
+    for (const n of es) { const f = path.join(vars.claude_config, 'rules', n); if (/\.md$/i.test(n) && isFile(f)) add(f, { kind: 'rule' }, [ruleLoad(f)]); } }
+  const mem = root ? memoryDir(root, vars.claude_config) : null;
+  if (mem && isFile(path.join(mem, 'MEMORY.md'))) {
+    add(path.join(mem, 'MEMORY.md'), { kind: 'memory' }, [{ class: 'session', families: ['claude'], memory: true }]);
+    let es = []; try { es = fs.readdirSync(mem).sort(); } catch { /* unreadable memory folder: only MEMORY.md is listed, no topic rows */ }
+    for (const n of es) { const f = path.join(mem, n); if (/\.md$/i.test(n) && n !== 'MEMORY.md' && isFile(f)) add(f, { kind: 'memory-topic' }, [{ class: 'on-demand', families: ['claude'], memory: true }]); }
+  }
   // 3. the project's rules: rules_read_whole + checkin_extra every check-in, the rest of the rules folder on demand
   for (const f of p.rules_read_whole || []) if (isFile(f)) add(f, { kind: 'rules' }, [{ class: 'checkin' }]);
   if (p.checkin_extra && isFile(p.checkin_extra)) add(p.checkin_extra, { kind: 'checkin_extra' }, [{ class: 'checkin' }]);
   const ruleDirs = new Set([...(p.rules_read_whole || []), p.checkin_extra].filter(Boolean).map(f => path.dirname(f)));
   if (p.project_dir) ruleDirs.add(path.join(p.project_dir, 'rules'));
   for (const d of ruleDirs) {
-    let es = []; try { es = fs.readdirSync(d); } catch { /* none */ }
+    let es = []; try { es = fs.readdirSync(d); } catch { /* rules folder absent: it adds no rows, the next folder is scanned */ }
     for (const n of es.sort()) { const f = path.join(d, n); if (/\.(md|txt)$/i.test(n) && isFile(f) && !rows.has(key(f))) add(f, { kind: 'rules' }, [{ class: 'on-demand' }]); }
   }
   // 4. Norn's own prompts: the check-in template (major / minor tick) and the chat's system prompt
@@ -184,14 +201,14 @@ export function discover(p, { home, machine = null, git = true } = {}) {
   const queue = [...rows.values()].map(r => [r, 0]);
   while (queue.length) {
     const [r, depth] = queue.shift();
-    const fams = new Set(r.loads.flatMap(s => s.families || [])), via = r.kind === 'repo' || r.kind === 'user' || r.kind === 'import';
+    const fams = new Set(r.loads.flatMap(s => s.families || [])), via = ['repo', 'user', 'import', 'rule'].includes(r.kind);
     if (depth >= 5 || !via || ![...fams].some(f => importing.has(f))) continue;
     const text = readText(r.path);
     if (text == null) continue;
     for (const f of importsOf(text, r.path, home)) {
       const specs = r.loads.filter(s => s.class !== 'source').map(s => ({ ...s, families: (s.families || []).filter(x => importing.has(x)), via: r.path }));
       const had = rows.has(key(f)), n = add(f, { kind: 'import' }, specs);
-      if (!had) queue.push([n, depth + 1]);
+      if (!had) { Object.assign(n, { import_depth: depth + 1, importer: fwd(r.path) }); queue.push([n, depth + 1]); }
     }
   }
   // finish: size, lines, change, where, the strongest load, families
@@ -212,6 +229,8 @@ export function discover(p, { home, machine = null, git = true } = {}) {
   const order = r => [LOADS.indexOf(r.load), r.where, r.path];
   return out.sort((a, b) => { const x = order(a), y = order(b); return x[0] - y[0] || x[1].localeCompare(y[1]) || x[2].localeCompare(y[2]); });
 }
+/** a .claude/rules file's load spec: parsable `paths` = on demand (when a matching file is read), else every Claude session */
+function ruleLoad(f) { const t = readText(f) || '', ps = rulePaths(t); return frontOf(t).ok && ps.length ? { class: 'on-demand', families: ['claude'], paths: ps } : { class: 'session', families: ['claude'] }; }
 const idOf = p => createHash('sha1').update(key(p)).digest('hex').slice(0, 10);
 
 // ---------- sessions + daily cost ----------
@@ -228,7 +247,7 @@ export function sessionsOn(state, p, day = new Date().toISOString().slice(0, 10)
     let fam = harnessOf(ex, entry) ?? (entry?.preset || entry?.exe ? 'cli' : null);
     if (fam === 'fake' || !fam) continue;   // the test double loads nothing
     if (fam === 'cli') fam = cliFam[entry?.preset || ex]?.family ?? ex;
-    out.push({ run: it.id, kind: d.kind === 'checkin' ? 'checkin' : 'worker', family: fam, executor: ex, agent: d.agent ?? null, tick: d.tick_class || 'major' });
+    out.push({ run: it.id, kind: d.kind === 'checkin' ? 'checkin' : 'worker', family: fam, executor: ex, agent: d.agent ?? null, tick: d.tick_class || 'major', role: d.kind === 'checkin' ? 'checkin' : roleOfSpec({ lane: d.lane }), memory: d.memory !== 'off' });
   }
   for (const l of (readText(threadFile(state)) || '').split('\n')) {
     let j; try { j = JSON.parse(l); } catch { continue; }
@@ -240,6 +259,7 @@ export function sessionsOn(state, p, day = new Date().toISOString().slice(0, 10)
 /** does load spec sp load in session s */
 export function matches(sp, s) {
   const fam = sp.families?.length ? sp.families.includes(s.family) || sp.families.includes(s.executor) : true;
+  if (sp.memory && s.memory === false) return false;   // META-PRACTICE-P1: a launch with auto memory off loads no memory file
   if (sp.class === 'session') return fam;
   if (sp.class === 'checkin') return s.kind === 'checkin' && (!sp.tick || sp.tick === s.tick) && (!sp.families?.length || fam);
   if (sp.class === 'chat') return s.kind === 'chat';
@@ -252,7 +272,8 @@ export const profileKey = s => (s.kind === 'checkin' ? `checkin:${s.tick || 'maj
 const profileLabel = s => (s.kind === 'checkin' ? `check-in (${s.tick || 'major'})` : s.kind === 'chat' ? 'chat' : `worker${s.agent ? ' ' + s.agent : ''} (${s.family})`);
 
 /** rows + sessions -> { rows (+ loads_today, cost_today; a source: its targets' sum, via), standing [{ key, label, sessions, tokens }], total } */
-export function dailyCost(rows, sessions) {
+export function dailyCost(rows, sessions, { policy = null } = {}) {
+  const memOn = role => memoryOf(policy, role) === 'on';
   const out = rows.map(r => {
     const hit = sessions.filter(s => r.loads.some(sp => matches(sp, s)));
     return { ...r, loads_today: hit.length, cost_today: hit.reduce((n, s) => n + perSession(r, s), 0) };
@@ -265,8 +286,8 @@ export function dailyCost(rows, sessions) {
   const profiles = new Map();
   const prof = s => { const k = profileKey(s); if (!profiles.has(k)) profiles.set(k, { s, n: 0 }); return profiles.get(k); };
   for (const s of sessions) prof(s).n++;
-  prof({ kind: 'checkin', tick: 'major', family: 'claude', executor: 'claude' });
-  for (const r of rows) for (const sp of r.loads) if (sp.class === 'role') for (const f of sp.families || ['claude']) prof({ kind: 'worker', family: f, executor: f, agent: sp.role });
+  prof({ kind: 'checkin', tick: 'major', family: 'claude', executor: 'claude', memory: memOn('checkin') });
+  for (const r of rows) for (const sp of r.loads) if (sp.class === 'role') for (const f of sp.families || ['claude']) prof({ kind: 'worker', family: f, executor: f, agent: sp.role, memory: memOn('worker') });
   const loaded = out.filter(r => r.load !== 'source');
   const standing = [...profiles.entries()].map(([k, { s, n }]) => ({ key: k, label: profileLabel(s), sessions: n, tokens: loaded.reduce((t, r) => t + perSession(r, s), 0) }))
     .sort((a, b) => b.sessions - a.sessions || b.tokens - a.tokens || a.key.localeCompare(b.key));
@@ -290,10 +311,11 @@ const proseLines = text => { let fence = false; return String(text).split(/\r?\n
 
 function pathCandidate(tok, vars) {
   let t = tok.replace(/^[('"]+/, '').replace(/[.,:;)!'"]+$/, '').replace(/:\d+(?:-\d+)?$/, '').replace(/\\/g, '/');
+  if (t.startsWith('/')) return null;   // a literal /token (a URL path, a flag); a POSIX root reached through ${root} / ~/ is checked below
   t = t.replace(/\$\{(\w+)\}/g, (a, v) => vars[v] ?? a);
-  if (!t || /[*?<>{}|$%]|\.\.\.|:\/\/|^-|^@/.test(t) || t.startsWith('/')) return null;
+  if (!t || /[*?<>{}|$%]|\.\.\.|:\/\/|^-|^@/.test(t)) return null;
   if (t.startsWith('~/')) t = vars.home + t.slice(1);
-  const abs = /^[A-Za-z]:\//.test(t);
+  const abs = /^[A-Za-z]:\//.test(t) || t.startsWith('/');
   if (!abs && !(t.includes('/') && /\.[A-Za-z0-9]{1,8}$/.test(t.split('/').pop()))) return null;
   return { t, abs };
 }
@@ -314,7 +336,7 @@ export function lint(rows, { project: p = {}, commands = knownCommands(), home }
   const directives = Object.values(items).filter(i => i.kind === 'directive' && i.state === 'active');
   const paras = new Map();
   for (const r of files) {
-    const text = readText(r.path) || '', lines = proseLines(text), hint = (kind, line, t) => hints.push({ id: r.id, path: r.path, kind, line, text: t });
+    const text = readText(r.path) || '', lines = proseLines(text), hint = (kind, line, t, x = {}) => hints.push({ id: r.id, path: r.path, kind, line, text: t, ...x });
     const seen = new Set();
     for (const { n, text: l } of lines) {
       const spans = [...l.matchAll(/`([^`\n]+)`/g)].map(m => m[1]);
@@ -327,8 +349,8 @@ export function lint(rows, { project: p = {}, commands = knownCommands(), home }
         const c = pathCandidate(tok, vars);
         if (!c || seen.has(c.t)) continue;
         seen.add(c.t);
-        const found = c.abs ? fs.existsSync(c.t) : [path.dirname(r.path), ...bases].some(b => fs.existsSync(path.join(b, c.t)));
-        if (!found) hint('missing-path', n, `${c.t} does not exist`);
+        const cands = c.abs ? [c.t] : [path.dirname(r.path), ...bases].map(b => fwd(path.join(b, c.t)));
+        if (!cands.some(x => fs.existsSync(x))) hint('missing-path', n, `${c.t} does not exist`, { cands }); // cands: where it was looked for
       }
       for (const m of l.matchAll(/\b((?:DIR|DEC)-\d+)\b/g)) {
         const it = items[m[1]];
@@ -373,26 +395,29 @@ export function loadsPerDay(rows, p, now = Date.now(), days = 7) {
   return out;
 }
 const tailCache = new Map();
+export const TREND_DAYS = 30;
 /** the measured standing context of project p (standing.mjs) over the last `days` days, + window_days */
 export function measuredStanding(p, { machine = null, home, now = Date.now(), days = 7 } = {}) {
   if (!p.state) return null;
   const h = home || machine?.home || '';
   const runs = standingRuns(p.state, p, { projectsDir: machine?.claude?.projects_dir || path.join(h, '.claude', 'projects'),
-    codexDir: machine?.codex?.sessions_dir || path.join(h, '.codex', 'sessions'), now, days, cache: tailCache });
-  return { ...standingSummary(runs), window_days: days };
+    codexDir: machine?.codex?.sessions_dir || path.join(h, '.codex', 'sessions'), now, days: Math.max(days, TREND_DAYS), cache: tailCache });
+  const since = now - days * 86400000;
+  // META-TEND P5 (REPORT 5.3 view 1): "is it growing forever?" - the median standing context per session, per role and day, 30 days
+  return { ...standingSummary(runs.filter(r => Date.parse(r.created) >= since)), window_days: days, trend: { days: TREND_DAYS, rows: standingSummary(runs).days } };
 }
 
 /** { project, day, method, sessions, total, rows (+ loads_today, cost_today, hints, stale, oldest_days), standing, hints, measured, suggest, stale_days }
  * (+ a non-enumerable `paras`: Map id -> paragraphs, for the file view). o.standing: a measured summary (tests); else measured here. */
-export function instructionsView(p, { home, machine = null, now = Date.now(), day = new Date(now).toISOString().slice(0, 10), git = true, ages = true, standing } = {}) {
+export function instructionsView(p, { home, machine = null, now = Date.now(), day = new Date(now).toISOString().slice(0, 10), git = true, ages = true, standing, remember = false } = {}) {
   const rows = discover(p, { home, machine, git });
   const sessions = p.state ? sessionsOn(p.state, p, day) : [];
-  const c = dailyCost(rows, sessions);
+  const c = dailyCost(rows, sessions, { policy: p.policy });
   const hints = lint(rows, { project: p, home: home || machine?.home });
   const count = new Map();
   for (const h of hints) count.set(h.id, (count.get(h.id) || 0) + 1);
   const measured = standing !== undefined ? standing : measuredStanding(p, { machine, home, now });
-  const staleDays = p.policy?.instructions?.stale_days ?? 30, paras = new Map();
+  const staleDays = p.policy?.instructions?.stale_days ?? 30, paras = new Map(), perDay = loadsPerDay(rows, p, now);
   let sug = [];
   if (ages) {
     let items = {};
@@ -401,16 +426,61 @@ export function instructionsView(p, { home, machine = null, now = Date.now(), da
     const dates = lineDates(dated, { state: p.state, now, git });
     for (const r of dated) paras.set(r.id, paragraphs(readText(r.path) || '', dates.get(r.id), { items, now, staleDays, confirms, file: r.path }));
     const profiles = Object.fromEntries([...PROFILE_ROLES.map(k => [k, profileOf(p.policy, k)]), ['lean', profileOf({ launch: { ...(p.policy?.launch || {}), roles: { x: 'lean' } } }, 'x')]]);
-    sug = suggest({ rows: dated, hints, paras, perDay: loadsPerDay(rows, p, now), standing: measured, profiles });
+    sug = suggest({ rows: dated, hints, paras, perDay, standing: measured, profiles });
   }
   const v = { project: p.name, day, method: TOKEN_METHOD, sessions: sessions.length, total: c.total,
-    rows: c.rows.map(r => { const ps = paras.get(r.id); return { ...r, hints: count.get(r.id) || 0, ...(ps ? { stale: ps.filter(x => x.stale).length, oldest_days: Math.max(0, ...ps.map(x => x.age_days ?? 0)) } : {}) }; }),
+    rows: c.rows.map(r => { const ps = paras.get(r.id); return { ...r, hints: count.get(r.id) || 0, loads_day: perDay.get(r.id)?.loads ?? 0, ...(ps ? { stale: ps.filter(x => x.stale).length, oldest_days: Math.max(0, ...ps.map(x => x.age_days ?? 0)) } : {}) }; }),
     standing: c.standing, hints, measured, suggest: sug, stale_days: staleDays,
     checkins: p.state ? checkinDays(p.state, { now }) : [] };   // META-CHECKIN-DIET R1: per day check-ins: n (m mechanical, k minor, j full)
+  // META-PRACTICE-P1: the static checks (free, no model call) + the one-line "managed" summary; remember = keep the last scan's keys
+  let items = {};
+  try { if (p.state) items = loadState(p.state).items; } catch { items = {}; }
+  v.findings = staticChecks(rows, { project: p, home: fwd(home || machine?.home || process.env.USERPROFILE || process.env.HOME || ''), items, harness: harnessRows(), versions: { claude: machine?.claude?.version } });
+  const fc = new Map();
+  for (const f of v.findings) if (f.row) fc.set(f.row, (fc.get(f.row) || 0) + 1);
+  for (const r of v.rows) r.findings = fc.get(r.id) || 0;
+  // META-TEND P1-VISUAL: the file map's colour per file + the memory map (REPORT 5.3 views 3 and 5)
+  const conflict = new Set();
+  for (const f of v.findings) { if (CONFLICT_CHECKS.has(f.check)) conflict.add(f.path.toLowerCase()); if (f.other) conflict.add(f.other.toLowerCase()); }
+  for (const r of v.rows) r.map_state = mapState(r, conflict);
+  const memRow = rows.find(r => r.kind === 'memory');
+  v.memory_map = memoryMap(rows, { opened: memRow ? memoryOpened(path.dirname(memRow.path), { now }) : new Map() });
+  // META-TEND P3: the rule ledger (every must / never rule, its one home, its enforcement, when it last fired) + the repeat cards
+  const ls = p.root ? spawnSync('git', ['-C', p.root, 'ls-files', '--cached', '--others', '--exclude-standard'], { encoding: 'utf8', windowsHide: true, timeout: 20000, maxBuffer: 64 * 1024 * 1024 }) : null;
+  v.rules = ruleLedger(rows, { project: p, items, hints, home: fwd(home || machine?.home || process.env.USERPROFILE || process.env.HOME || ''), files: ls?.status === 0 ? ls.stdout.split('\n').filter(Boolean) : [], remember, now });
+  const rc = rowCounts(v.rules.rules);
+  for (const r of v.rows) r.rules = rc.get(r.id) || { total: 0, prose: 0, repeated: 0, enforced: 0 };
+  // META-TEND P5: check 20 (read evidence: opened / cited per file; never read + never cited = a prune advisory) + the audit runs
+  if (p.state) {
+    const h = home || machine?.home || '';
+    v.evidence = readEvidence(v.rows, p, { items, projectsDir: machine?.claude?.projects_dir || path.join(h, '.claude', 'projects'), now });
+    for (const r of v.rows) { const e = v.evidence.files[r.id]; if (e) { r.reads = e.reads; r.read_last = e.last; r.cites = e.cites.length; } }
+    v.audits = auditsView(p, items, { rows: v.rows, cards: v.rules.cards, machine });
+    v.findings.push(...v.evidence.advisories, ...v.audits.advisories);
+    for (const a of [...v.evidence.advisories, ...v.audits.advisories]) { const r = v.rows.find(x => x.id === a.row || fwd(x.path).toLowerCase() === fwd(a.path ?? '').toLowerCase()); if (r) r.findings = (r.findings || 0) + 1; }
+  }
+  v.managed = managedLine(p, v, { remember, now });
   Object.defineProperty(v, 'paras', { value: paras, enumerable: false });
   return v;
 }
 
+// conflict = two files say the same thing or point past each other: a memory line restating a repo file (6, both sides), twin
+// AGENTS.md / CLAUDE.md (11), a pointer to a Moved: stub (13). A generated file not in sync with its source wins over the rest.
+const CONFLICT_CHECKS = new Set([6, 11, 13]);
+const mapState = (r, conflict) => (r.generated && !['ok', 'same'].includes(r.drift) ? 'generated-stale' : conflict.has(fwd(r.path).toLowerCase()) ? 'conflict' : r.stale ? 'stale' : 'fresh');
+/** { files, open, by_severity, fixed, since, memory { role: on | off } }; remember: keep the scan's finding keys in <state>/instructions-scan.json
+ * (a cache, not a record): "fixed" = the keys of the last scan that changed and are gone now */
+function managedLine(p, v, { remember, now }) {
+  const keys = [...new Set(v.findings.map(f => f.id))].sort(), sev = {};
+  for (const f of v.findings) sev[f.severity] = (sev[f.severity] || 0) + 1;
+  const file = p.state ? path.join(p.state, 'instructions-scan.json') : null;
+  let last = null;
+  try { last = file ? JSON.parse(fs.readFileSync(file, 'utf8')) : null; } catch { last = null; }
+  let fixed = last?.fixed || 0, since = last?.since || null;
+  if (last?.keys && last.keys.join() !== keys.join()) { const now2 = new Set(keys); fixed = last.keys.filter(x => !now2.has(x)).length; since = last.at; }
+  if (remember && file && last?.keys?.join() !== keys.join()) { try { fs.writeFileSync(file, JSON.stringify({ at: new Date(now).toISOString(), keys, fixed, since })); } catch { /* read-only state */ } }
+  return { files: v.rows.length, open: v.findings.length, by_severity: sev, fixed, since, memory: Object.fromEntries(PROFILE_ROLES.map(r => [r, memoryOf(p.policy, r)])) };
+}
 const k = n => (n >= 1000 ? `~${(n / 1000).toFixed(1)}k` : `~${n}`);
 const loadText = r => (r.load === 'role' ? `role ${r.role}` : r.load === 'session' && r.standing_tokens < r.tokens ? 'every session (description)' : LOAD_LABEL[r.load] || r.load);
 /** the view as text (norn instructions) */
@@ -423,7 +493,9 @@ export function formatInstructions(v) {
   return [`Instructions of ${v.project} - ${v.day}: ${v.rows.length} files, ${k(v.total)} tokens loaded today by ${v.sessions} session(s)`,
     `(${v.method})`, '', ...formatMeasured(v.measured), ...table, '', 'Standing context per role from the files alone (tokens one session of it loads before any work):',
     ...v.standing.map(s => `  ${s.label.padEnd(32)} ${k(s.tokens).padStart(8)}   ${s.sessions} session(s) today`), '',
-    `Hints (${v.hints.length}, read-only - nothing is edited):`, ...v.hints.map(h => `  ${h.kind.padEnd(16)} ${h.path}:${h.line}  ${h.text}`)].join('\n');
+    `Hints (${v.hints.length}, read-only - nothing is edited):`, ...v.hints.map(h => `  ${h.kind.padEnd(16)} ${h.path}:${h.line}  ${h.text}`), '',
+    ...(v.managed ? [`Managed: ${v.managed.files} files scanned, ${v.managed.open} findings open, ${v.managed.fixed} fixed since the last scan; memory: ${Object.entries(v.managed.memory).map(([r, m]) => `${r} ${m}`).join(', ')}`] : []),
+    ...(v.findings || []).map(f => `  C${String(f.check).padEnd(3)} ${f.severity.padEnd(6)} ${f.path}:${f.line}  ${f.why}  -> ${f.fix.action}`)].join('\n');
 }
 
 // ---------- META-STANDING-CONTEXT R1: dated lines, STALE, confirm, suggest ----------

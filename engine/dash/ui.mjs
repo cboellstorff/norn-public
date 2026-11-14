@@ -6,10 +6,12 @@ import { renderMarkdown } from './docs.mjs';
 import { parseLedger, ledgerInline, LEDGER_KINDS, recordBlocks } from './ledger.mjs';
 import { renderAdopt, adoptStep } from './adopt.mjs';
 import { renderHome } from './home.mjs';
+import { bars, columns, stack, board, lines, meter } from './widgets.mjs';
+import { orcLine, badgeLabel } from './norn/orc.mjs';
 export const TABS = [['home', 'Home'], ['overview', 'Overview'], ['inbox', 'Inbox'], ['lanes', 'Lanes'], ['agents', 'Agents'], ['map', 'Map'], ['roadmap', 'Roadmap'], ['plan', 'Plan'], ['records', 'Records'],
-  ['usage', 'Usage'],
-  ['docs', 'Docs'], ['instructions', 'Instructions'], ['ledger', 'Ledger'], ['settings', 'Settings']];
-export const ONE_PROJECT = ['home', 'map', 'roadmap', 'records', 'docs', 'instructions', 'ledger', 'settings'];
+  ['usage', 'Usage'], ['tests', 'Tests'],
+  ['docs', 'Docs'], ['instructions', 'Instructions'], ['guard', 'Guard'], ['ledger', 'Ledger'], ['settings', 'Settings']];
+export const ONE_PROJECT = ['home', 'map', 'roadmap', 'records', 'docs', 'instructions', 'guard', 'ledger', 'settings', 'tests'];
 
 // ---------- formatting ----------
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -43,10 +45,6 @@ export function exChip(ex, model, effort) {
   const t = [ex, model && ex && String(model).startsWith(ex + '-') ? String(model).slice(ex.length + 1) : model].filter(Boolean).join(' ') + (effort && effort !== '-' ? ` · ${effort}` : '');
   return t ? chip(exClass(ex), t) : dash;
 }
-export function bar(v, max, mark, cls = '') {
-  if (!fin(v) || !fin(max) || max <= 0) return dash;
-  return `<div class="bar ${cls}" title="${esc(v)} of ${esc(max)}"><i style="width:${Math.min(100, 100 * v / max).toFixed(1)}%"></i>${fin(mark) ? `<u style="left:${Math.min(100, 100 * mark / max).toFixed(1)}%"></u>` : ''}</div>`;
-}
 // Lane / run state text -> chip class + short word (lanes.mjs text grammar, design 5).
 export function stateOf(text) {
   const t = String(text ?? '');
@@ -74,8 +72,8 @@ export const pageTitle = (n, project, look = 'classic') => `${n > 0 ? `(${n}) ` 
 // the three Norns; routes, record kinds and the CLI are unchanged. [key, name, what it shows, tab ids in display order]
 export const NORN_GROUPS = [
   ['norn', 'Norn', 'the thread', ['home']],   // META-CONTROLLER C2 (Look 3, owner Q-25): the conversation is the home page
-  ['verdandi', 'Verdandi', 'what is', ['overview', 'map', 'agents', 'lanes', 'usage']],
-  ['urd', 'Urd', 'what was', ['records', 'ledger', 'docs', 'instructions']],
+  ['verdandi', 'Verdandi', 'what is', ['overview', 'map', 'agents', 'lanes', 'usage', 'tests', 'instructions', 'guard']],   // META-TEND P6: the Guard overview beside them (REPORT 5.3). META-TEND: Tests (suite time is a cost) and Instructions (steering files load now, REPORT 5.3) beside Usage
+  ['urd', 'Urd', 'what was', ['records', 'ledger', 'docs']],
   ['skuld', 'Skuld', 'what shall be', ['plan', 'inbox', 'settings']],   // META-PLAN R1: the near term first
   ['wyrd', 'Wyrd', 'all three', ['roadmap']],   // META-ROADMAP S2: one roadmap row is all three at once (SPEC sec. 4 "Where it sits")
 ];
@@ -97,6 +95,8 @@ const art = (ctx, name, cls = '') => (ctx.look === 'norn' && ctx.art ? ctx.art(n
 // ---------- data: one loader per tab over the S6 endpoints; get(path) -> JSON (throws on non-200) ----------
 // the deliverables card is extra: a missing / failing /api/deliverables never breaks the tab
 const dlvGet = (get, q) => Promise.resolve().then(() => get(`/api/deliverables?${q}`)).catch(() => null);
+// META-TEND P6: the Guard rows for the chips in place (one project; a missing / failing /api/guard never breaks the tab)
+const guardGet = (get, q, all) => (all ? Promise.resolve(null) : Promise.resolve().then(() => get(`/api/guard?${q}`)).catch(() => null));
 export async function loadTab(tab, project, get, ctx = {}) {
   // META-ADOPT A3: the setup page (not a nav tab) - Add a project with no project (or "+ Add a project"), else GET /api/adopt
   if (tab === 'adopt') {
@@ -115,7 +115,7 @@ export async function loadTab(tab, project, get, ctx = {}) {
   if (tab === 'inbox') { const [ib, deliverables] = await Promise.all([get(`/api/inbox?${q}`), dlvGet(get, q)]); return { ...ib, deliverables }; }
   if (tab === 'lanes') return { ...(await get(`/api/lanes?${q}${ctx.allLanes ? '&all=1' : ''}`)), allLanes: !!ctx.allLanes };
   if (tab === 'map') return get(`/api/map?${q}${ctx.mapMore?.size ? `&more=${encodeURIComponent([...ctx.mapMore].join(','))}` : ''}${ctx.mapAll ? '&all=1' : ''}`);
-  if (tab === 'agents') { const [a, o] = await Promise.all([get(`/api/agents?${q}`), get(`/api/overview?${q}`)]); return { ...a, top: o.burn.top }; }
+  if (tab === 'agents') { const [a, o, guard] = await Promise.all([get(`/api/agents?${q}`), get(`/api/overview?${q}`), guardGet(get, q, all)]); return { ...a, top: o.burn.top, guard }; }
   if (tab === 'records') return get(`/api/records?${q}`);
   if (tab === 'roadmap') {
     const d = await get(`/api/roadmap?${q}`);
@@ -127,21 +127,23 @@ export async function loadTab(tab, project, get, ctx = {}) {
     return d;
   }
   if (tab === 'docs') {
-    const { docs } = await get(`/api/docs?${q}`);
+    const [{ docs }, guard] = await Promise.all([get(`/api/docs?${q}`), guardGet(get, q, all)]);
     const pickI = docs.some(d => d.i === ctx.doc && d.exists) ? ctx.doc : docs.find(d => d.exists)?.i;
-    return { docs, doc: pickI === undefined ? null : await get(`/api/docs/${pickI}?${q}`) };
+    return { docs, guard, doc: pickI === undefined ? null : await get(`/api/docs/${pickI}?${q}`) };
   }
   if (tab === 'instructions') {   // META-INSTRUCTIONS R1
     const v = await get(`/api/instructions?${q}`);
     const pick = ctx.ins && (v.rows || []).some(r => r.id === ctx.ins && r.exists) ? ctx.ins : null;
-    return { ...v, file: pick ? await get(`/api/instructions/${encodeURIComponent(pick)}?${q}`) : null };
+    return { ...v, file: pick ? await get(`/api/instructions/${encodeURIComponent(pick)}?${q}`) : null, focus_line: pick && ctx.insLine ? ctx.insLine : null };
   }
   if (tab === 'ledger') return get(`/api/ledger?${q}${ctx.ledgerN ? `&count=${ctx.ledgerN}` : ''}`);
   if (tab === 'settings') {   // C6: /api/remote exists only while dash.remote is on (404 = off)
-    const [d, remote] = await Promise.all([get(`/api/settings?${q}`), get('/api/remote').catch(() => null)]);
-    return { ...d, remote: remote?.on === true ? remote : null };
+    const [d, remote, guard] = await Promise.all([get(`/api/settings?${q}`), get('/api/remote').catch(() => null), guardGet(get, q, all)]);
+    return { ...d, remote: remote?.on === true ? remote : null, guard };
   }
   if (tab === 'usage') return get(`/api/usage?${q}`);
+  if (tab === 'tests') return get(`/api/tests?${q}`);   // META-TEND TESTS
+  if (tab === 'guard') return get(`/api/guard?${q}`);   // META-TEND P6
   if (tab === 'plan') return get(`/api/plan?${q}`);
   throw new Error('unknown tab ' + tab);
 }
@@ -154,11 +156,72 @@ export function renderTab(tab, d, ctx = {}) {
   if (tab === 'usage') return panel(tab, usage(d, { ...ctx, now }));
   if (tab === 'plan') return panel(tab, plan(d, { ...ctx, now }));
   if (tab === 'home') return panel(tab, renderHome(d, { ...ctx, now }));
-  return panel(tab, ({ overview, inbox, lanes, agents, map, roadmap, records, docs, instructions, ledger, settings })[tab](d, { ...ctx, now }));
+  return panel(tab, ({ overview, inbox, lanes, agents, map, roadmap, records, docs, instructions, ledger, settings, tests, guard })[tab](d, { ...ctx, now }));
+}
+
+// META-TEND TESTS (owner DIR-19 + DIR-47): lean tests, measured - count + suite time over time, the slowest, never-failing and
+// duplicate tests with their mutant evidence, the last lean-tests wave before / after, the merge check's advisories
+const sec = ms => (fin(ms) ? (ms >= 10000 ? `${Math.round(ms / 1000)} s` : `${(ms / 1000).toFixed(1)} s`) : '-');
+const shortT = t => String(t ?? '').replace(/^(\S+\.test\.mjs) :: /, '<span class="mute">$1</span> ');
+const none = '<p class="mute" style="padding:0 12px">none measured</p>';
+function testsHead(d, ctx, last, gl) {
+  const ratio = gl ? (gl.test_lines / (gl.code_lines || 1)).toFixed(2) : null;
+  const wall = [...(d.history || [])].reverse().find(x => fin(x.suite_ms));   // a merge check folds files in: no wall time of its own
+  const what = last ? `${int(last.tests)} tests in ${int(last.files)} files · ${sec(last.file_ms)} of file time${wall ? ` · suite ${sec(wall.suite_ms)} wall (full measure)` : ''}` : 'per-test time: not measured yet';
+  const when = last ? `measured ${esc(fmtTime(last.at, ctx.now))} at ${esc(last.sha ?? '?')} (<span class="mono">${esc(d.commands.measure)}</span>)`
+    : `<span class="mono">${esc(d.commands.measure)}</span> measures a node:test suite (tests/*.test.mjs, run by ci-suite)`;
+  const hist = d.git ? `history ${esc(fmtTime(d.git.at, ctx.now))} (<span class="mono">${esc(d.commands.history)}</span>)` : `tests vs code over git: <span class="mono">${esc(d.commands.history)}</span>`;
+  return `<div class="card" id="tests-head"><b>${what}</b>${last?.coverage ? ` · line coverage <b>${pct(last.coverage.pct)}</b>` : ''}${gl ? ` · ${int(gl.tests)} test cases, ${int(gl.test_lines)} test lines vs ${int(gl.code_lines)} code lines (<b>${ratio}:1</b>)` : ''}
+    <div class="small mute">${when} · ${hist}. Measured, never judged by a model; every finding is advisory.</div></div>`;
+}
+function testsOver(h, g, last, gl) {
+  const col = (title, cur, body) => `<div><div class="small"><b>${title}</b> <span class="mute">${cur}</span></div>${body}</div>`;
+  return `<div class="tablecard" id="tests-time"><h3>Over time <span class="mute small">per day: test cases and lines (git, first parent) · per measure or merge check: the summed file time</span></h3><div class="tgrid">
+    ${col('test cases', gl ? `${int(gl.tests)} now` : '-', g.length ? columns(g.map(x => ({ label: x.day.slice(5), value: x.tests })), { fmt: int, title: 'test cases per day', id: 'tests-count' }) : '<p class="small mute">no history yet</p>')}
+    ${col('suite file time', last ? `${sec(last.file_ms)} now` : '-', h.length ? columns(h.map(x => ({ label: String(x.at).slice(5, 10), value: x.file_ms })), { fmt: sec, title: 'suite file time per measure', id: 'tests-suite' }) : '<p class="small mute">no measure yet</p>')}
+    ${col('test lines per code line', gl ? `${(gl.test_lines / (gl.code_lines || 1)).toFixed(2)}:1 now` : '-', g.length ? columns(g.map(x => ({ label: x.day.slice(5), value: Math.round(100 * x.test_lines / (x.code_lines || 1)) / 100 })), { fmt: v => `${v}:1`, title: 'test lines per code line', id: 'tests-ratio' })
+      + stack([{ key: 'tests', label: 'test lines', value: gl.test_lines }, { key: 'code', label: 'code lines', value: gl.code_lines }], { fmt: int }) : '')}</div></div>`;
+}
+function testsLean(lean, mx) {
+  const files = mx?.files || [], never = lean?.never || [], dup = lean?.duplicates || [];
+  const slow = lean?.slowest?.length ? `<div class="tablecard" id="tests-slow"><h3>Slowest ${int(lean.slowest.length)} <span class="mute small">per-test time, last measure · cause = what the test body does</span></h3><div style="padding:4px 12px">
+    ${bars(lean.slowest.map(t => ({ label: `${t.file.replace(/^tests\//, '')} · ${t.name}`, value: t.ms, note: t.cause.map(c => chip(c === 'in-process work' ? 'idle' : 'prov', c)).join(' ') })), { fmt: sec, id: 'tests-slow-bars' })}</div></div>` : '';
+  const mut = mx ? `<div class="tablecard" id="tests-mut"><h3>Mutation trial <span class="mute small">StrykerJS, outside the repo · a mutant = one planted bug; a test that fails on it kills it</span></h3><div class="inswrap"><table class="instab"><thead><tr><th>file</th><th>mutants</th><th>score</th><th class="insopt">survived</th><th class="insopt">test-process time</th></tr></thead><tbody>
+    ${files.map(f => `<tr><td class="mono">${esc(f.file.split('/').pop())}</td><td class="num">${int(f.mutants)}</td><td class="num"><b>${pct(f.score)}</b>${meter(f.score, 100)}</td><td class="num insopt">${int(f.survived)}</td><td class="num insopt">${sec(f.ms)}</td></tr>`).join('')}</tbody></table></div></div>` : '';
+  if (!lean) return slow + mut;
+  const nv = `<div class="tablecard" id="tests-never"><h3>Never fail <span class="mute small">${int(never.length)} · ran against every mutant of ${esc(files.map(f => f.file.split('/').pop()).join(', ') || 'no file')} and killed none</span></h3>
+    ${never.length ? `<ul class="tlist">${never.map(t => `<li>${chip('warn', 'kills 0')} ${shortT(esc(t.test))}${fin(t.ms) ? ` <span class="small mute">${sec(t.ms)}</span>` : ''}</li>`).join('')}</ul>` : none}</div>`;
+  const dp = `<div class="tablecard" id="tests-dup"><h3>Duplicates <span class="mute small">${int(dup.length)} · every mutant it kills, another test kills too (equal sets: the slower one is listed)</span></h3>
+    ${dup.length ? `<ul class="tlist">${dup.map(t => `<li>${chip(t.same ? 'warn' : 'idle', t.same ? 'same set' : 'subset')} ${shortT(esc(t.test))} <span class="small mute">kills ${int(t.kills)}${fin(t.ms) ? ` · ${sec(t.ms)}` : ''}</span><div class="small mute">inside: ${shortT(esc(t.within))}</div></li>`).join('')}</ul>` : none}
+    <p class="small mute" style="padding:0 12px">The evidence covers the trial's files only: a listed test may still guard other code - the wave gate re-measures coverage and mutants before a cut stands.</p></div>`;
+  return slow + mut + nv + dp;
+}
+function testsWave(w, ctx) {
+  if (!w) return '';
+  return `<div class="tablecard" id="tests-wave"><h3>Last lean-tests wave ${chip(w.ok ? 'ok' : 'bad', w.ok ? 'gate passed' : 'gate failed')}${w.restored?.length ? ` ${chip('warn', 'restored')}` : ''} <span class="mute small">${esc(fmtTime(w.at, ctx.now))} · ${esc(w.head)} vs ${esc(w.base)}</span></h3><div style="padding:4px 12px">
+    ${bars([{ label: 'tests before', value: w.before.tests }, { label: 'tests after', value: w.after.tests }], { fmt: int, id: 'tests-wave-bars' })}
+    <div class="small">coverage ${pct(w.before.cov?.pct)} -> <b>${pct(w.after.cov?.pct)}</b>${w.score ? ` · mutation score ${pct(w.score.before)} -> <b>${pct(w.score.after)}</b>` : ''} · changed files ${sec(w.ms_before)} -> <b>${sec(w.ms_after)}</b>${w.lost_lines ? ` · lost ${int(w.lost_lines)} line(s)` : ''}</div>
+    <div class="small mute" style="margin-top:4px;overflow-wrap:anywhere">cut: ${w.removed.map(t => shortT(esc(t))).join(' · ') || 'nothing'}</div></div></div>`;
+}
+function tests(d, ctx) {
+  const h = d.history || [], last = h.at(-1), g = d.git?.points || [], gl = g.at(-1), adv = d.advisories;
+  const advCard = adv ? `<div class="tablecard" id="tests-adv"><h3>Last merge check <span class="mute small">${esc(adv.head)} vs ${esc(adv.base)} · ${int(adv.files.length)} changed test file(s) · advisory, never a merge block</span></h3>
+    ${adv.list.length ? `<ul class="tlist">${adv.list.map(a => `<li>${chip(a.severity === 'medium' ? 'warn' : 'idle', a.key)}${a.new ? ` ${chip('open', 'new')}` : ''} <b>${esc(a.path ?? a.surface)}</b> ${esc(a.why)}<div class="small mute">${esc(a.fix.action)} · ${esc(a.id)}</div></li>`).join('')}</ul>` : '<p class="mute" style="padding:0 12px">no finding</p>'}</div>` : '';
+  return testsHead(d, ctx, last, gl) + advCard + testsOver(h, g, last, gl) + testsLean(d.lean, d.mutation) + testsWave((d.waves || []).at(-1), ctx);
 }
 
 // OOTB-R2 N-5: runs held for a login (the command to type, the held runs, the failing line)
 const loginRow = (i, ctx) => `<div class="item">${chip('needs', i.id)}<div><b>${esc(i.title)}</b><div class="small mute">${projTag(ctx, i.project)}${i.cls === 'vendor' ? 'nothing to do - a vendor outage, not your login' : `open a terminal and run <span class="mono">${esc(i.command)}</span>`}; held: ${esc((i.runs || []).join(', '))} - they resume by themselves${i.line ? ` · "${esc(i.line)}"` : ''}</div></div></div>`;
+// META-TEND P4: one model-advice card - what, why (the measured numbers), the vendor source and the day it was read (stale = past the
+// re-read date), the proposed Settings change and one tap: apply it, or keep the setting. Both write a decision record; nothing is automatic.
+export function adviceRow(i, ctx) {
+  const s = i.source || {}, ch = Object.entries(i.change || {}).map(([k, v]) => `${k} = ${v}`).join(', ');
+  return `<div class="item advice" id="adv-${esc(i.key ?? i.id)}">${chip(i.severity === 'low' ? 'idle' : 'warn', 'advice')}<div style="flex:1;min-width:0"><b>${esc(i.title)}</b>
+    <div class="small">${esc(i.text)}</div>
+    <div class="small mute">${projTag(ctx, i.project)}source <b>${esc(s.ref ?? '-')}</b> ${esc(s.title ?? '')} · read <span class="mono">${esc(s.read ?? '-')}</span>${s.stale ? ' ' + chip('warn', 'stale: re-read it') : ` (${s.age_d ?? '-'} d ago)`}</div>
+    <div class="small">Change: <span class="mono">${esc(ch)}</span> <span class="mute">- ${esc(i.trial ?? '')}</span></div></div>
+    <span class="spacer"></span><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="primary" data-act="advice-apply" data-project="${esc(i.project)}" data-key="${esc(i.key ?? i.id)}">Apply</button><button class="ghost" data-act="advice-keep" data-project="${esc(i.project)}" data-key="${esc(i.key ?? i.id)}">Keep as is</button></div></div>`;
+}
 function needItem(i, ctx) {
   const ago = fmtMin(minsSince(i.created, ctx.now));
   if (i.type === 'question') {
@@ -200,15 +263,24 @@ function firstTask(f) {
    <p class="small" style="margin:10px 0 0">Or let Norn look at the repo and draft a roadmap, rules and a first task <button data-tab="adopt">Look at the repo</button></p>
    <div class="small mute" style="margin-top:8px">Caps in force: <b>${esc(capShown(c.max_claude_workers))}</b> Claude worker(s) · <b>${esc(capShown(c.max_codex))}</b> Codex · weekly stop <b>${esc(unit(c.weekly_stop_pct, '%'))}</b> · rate cap <b>${esc(unit(c.usage_rate_cap_pct_per_h, '%/h'))}</b> (Settings, Workers &amp; budget)</div></section>`;
 }
+// META-CTX-ENFORCE R1 (DIR-56): ONE context cell - the CURRENT context (last request) on a bar to the hard max, the tick = the hand-off
+// line of the run's role; red past the hand-off line, a chip naming which line it passed; the peak beside it when it was higher
+export function ctxMeter(n, { codexNote = false } = {}) {
+  if (!fin(n.ctx)) return `<span class="small mute">${codexNote && String(n.executor ?? '').startsWith('codex') ? 'n/a (codex: tokens at end)' : '-'}</span>`;
+  const lim = fin(n.ctx_limit) ? n.ctx_limit : null, hard = fin(n.ctx_hard) ? n.ctx_hard : null;
+  const over = hard && n.ctx >= hard ? 'over' : lim && n.ctx >= lim ? 'hot' : '';
+  const flag = over === 'over' ? ` ${chip('bad', 'past hard max')}` : over === 'hot' ? ` ${chip('bad', 'past hand-off')}` : '';
+  const peak = fin(n.ctx_peak) && n.ctx_peak > n.ctx ? ` · peak ${kTok(n.ctx_peak)}` : '';
+  return `<span class="ctxm${over ? ' ' + over : ''}">${meter(n.ctx, Math.max(hard ?? 150000, n.ctx), lim, over)}<span class="small mute">${kTok(n.ctx)} ctx${lim ? ` / hand-off ${kTok(lim)}` : ''}${hard ? ` · max ${kTok(hard)}` : ''}${peak}</span>${flag}</span>`;
+}
 function overview(d, ctx) {
   const o = d.overview, tree = d.agents?.tree || [], byId = Object.fromEntries(tree.map(n => [n.id, n]));
   const top = Object.fromEntries((o.burn.top || []).map(t => [t.id, t]));
   const needs = o.needs.length ? o.needs.map(i => needItem(i, ctx)).join('') : `<div class="item">${art(ctx, 'empty-nothing-needs-you', 'empty')}${chip('ok', 'all clear')}<span>Nothing needs you</span></div>`;
   const rows = o.running.lanes.map(l => {
-    const n = byId[l.run] || {}, age = n.age_min, b = n.budget_min, ck = fin(n.ctx) ? n.ctx / 1000 : null, lk = fin(n.ctx_limit) ? n.ctx_limit / 1000 : null;
-    const ageCell = fin(b) ? `${bar(age, b * 2, b, age > b ? 'hot' : '')}<div class="small mute">${fmtMin(age)} / budget ${b} min</div>` : `<div class="small mute">${fmtMin(age)} (no time budget)</div>`;
-    const ctxCell = ck === null ? `<span class="small mute">${String(n.executor ?? '').startsWith('codex') ? 'n/a (codex: tokens at end)' : '-'}</span>`
-      : `${bar(ck, Math.max(150, ck), lk, lk && ck > lk ? 'hot' : '')}<div class="small mute">${kTok(n.ctx)} ctx${lk ? ` / hand-off ${lk}k` : ''}</div>`;
+    const n = byId[l.run] || {}, age = n.age_min, b = n.budget_min;
+    const ageCell = fin(b) ? `${meter(age, b * 2, b, age > b ? 'hot' : '')}<div class="small mute">${fmtMin(age)} / budget ${b} min</div>` : `<div class="small mute">${fmtMin(age)} (no time budget)</div>`;
+    const ctxCell = ctxMeter(n, { codexNote: true });
     return `<tr id="run-${esc(l.run)}"><td><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="small mute"><span class="id">${esc(l.run)}</span>${aname(l.run_name ?? n.name)}${n.stage ? ' ' + esc(n.stage) : ''}</div></td>
       <td>${exChip(n.executor ?? l.executor, n.model, n.effort)}</td><td style="width:24%">${ageCell}</td><td style="width:22%">${ctxCell}</td>
       <td class="mono">${fin(top[l.run]?.pct_per_h) ? top[l.run].pct_per_h.toFixed(2) + ' %/h' : '-'}</td></tr>`;
@@ -231,7 +303,7 @@ function overview(d, ctx) {
    <section class="card" id="running"><h2>Running <b>${o.running.claude.n}/${o.running.claude.cap ?? '-'}</b> Claude · <b>${o.running.codex.n}/${o.running.codex.cap ?? '-'}</b> Codex</h2>
      <table><thead><tr><th>lane</th><th>executor</th><th>age vs time budget (mark = budget, end = 2x)</th><th>context</th><th>burn</th></tr></thead><tbody>${rows}</tbody></table></section>
    <section class="card" id="burn"><h2>Burn</h2>
-     <div class="kv"><span class="mute small">weekly</span><div><span class="big">${pct(used)}</span> <span class="mute">of ${pct(stop, 0)} guard</span> ${guardChip}${bar(used, 100, stop, fin(used) && fin(stop) && used > stop - 10 ? 'hot' : '')}</div>
+     <div class="kv"><span class="mute small">weekly</span><div><span class="big">${pct(used)}</span> <span class="mute">of ${pct(stop, 0)} guard</span> ${guardChip}${meter(used, 100, stop, fin(used) && fin(stop) && used > stop - 10 ? 'hot' : '')}</div>
      <span class="mute small">trailing 2 h</span><div><b>${fin(u.rate) ? u.rate.toFixed(2) + ' %/h' : '-'}</b> <span class="mute">vs cap ${fin(u.cap) ? u.cap.toFixed(2) + ' %/h' : '-'}</span> ${rateChip}</div>
      <span class="mute small">guard trips</span><div>${trip}</div>
      <span class="mute small">reset</span><div>${esc(fmtLocal(u.resetAt))}</div>
@@ -256,6 +328,10 @@ function inbox(d, ctx) {
     <input type="search" id="ans-${esc(q.id)}" placeholder="or answer in your words ..." style="flex:1;min-width:220px"><button data-act="answer-text" data-project="${esc(q.project)}" data-id="${esc(q.id)}">Send</button></div>
     <div class="small mute" style="margin-top:6px">Writes <span class="mono">answer ${esc(q.id)}</span> (by dashboard). The next tick applies it${q.lane ? ` and unparks ${esc(q.lane)}` : ''}.</div></article>`;
   }).join('') || `<div class="card" style="margin-bottom:12px">${art(ctx, 'empty-no-questions', 'empty')}${chip('ok', 'all clear')} <span>No open question.</span></div>`;
+  const aud = items.filter(i => i.type === 'audit');
+  const audCard = aud.length ? `<section class="tablecard" id="inbox-audit" style="margin-bottom:12px"><h3>Audit hunks <span class="mute small">${int(aud.length)} open · the vendor prompt audit proposed them; accept = the check-in applies it, decline = keep the text; Norn edits nothing</span></h3><ul>${aud.map(i => auditCard(i.card, i.project)).join('')}</ul></section>` : '';
+  const enf = items.filter(i => i.type === 'enforce');
+  const enfCard = enf.length ? `<section class="tablecard" id="inbox-enforce" style="margin-bottom:12px"><h3>Make it enforced? <span class="mute small">${int(enf.length)} correction(s) said again · approve = a directive asks the check-in for a brief; Norn installs nothing</span></h3><ul>${enf.map(i => enforceCard({ ...i.card, approve: i.approve }, i.project)).join('')}</ul></section>` : '';
   const dlvCard = (items.some(i => i.type === 'setup' || i.type === 'login') ? `<section class="card needs" style="margin-bottom:12px">${items.filter(i => i.type === 'login').map(i => loginRow(i, ctx)).join('')}${items.filter(i => i.type === 'setup').map(i => setupRow(i, ctx)).join('')}</section>` : '')
     + (d.deliverables ? `<div style="margin-bottom:12px">${deliverablesCard(d.deliverables, ctx)}</div>` : '');
   const row = (i, st, what) => `<tr id="in-${esc(i.id)}"><td class="id">${esc(i.id)}</td><td>${st}</td><td>${projTag(ctx, i.project)}${what}</td></tr>`;
@@ -265,7 +341,9 @@ function inbox(d, ctx) {
       `<b>${esc(i.lane ?? '-')}</b> ${esc(i.why ?? '')}<div class="small mute">${aname(i.name)} unreviewed: ended with no review event</div>`)),
     ...items.filter(i => i.type === 'answered').map(i => row(i, chip('answered'), `${esc(i.title)}<div class="small mute">${esc(i.answer?.text ?? '')} · ${fmtTime(i.updated, ctx.now)} · waits for the next tick to apply</div>`)),
   ].join('');
-  return `<div class="legend small mute">States: ${['open', 'answered', 'applied', 'superseded', 'withdrawn'].map(s => chip(s)).join(' ')} - set by explicit events only; this page never guesses.</div>${qs}${dlvCard}
+  const adv = items.filter(i => i.type === 'advice');
+  const advCard = adv.length ? `<section class="card" id="inbox-advice" style="margin-bottom:12px"><h2>Model advice <span class="mute small">${plural(adv.length, 'card')} · vendor guidance over what each kind of work cost (Usage tab) · nothing changes until you tap</span></h2>${adv.map(i => adviceRow(i, ctx)).join('')}</section>` : '';
+  return `<div class="legend small mute">States: ${['open', 'answered', 'applied', 'superseded', 'withdrawn'].map(s => chip(s)).join(' ')} - set by explicit events only; this page never guesses.</div>${qs}${enfCard}${audCard}${dlvCard}${advCard}
    <div class="tablecard"><h3>Also needs a look <span class="mute small">parked lanes · unreviewed runs · answered, not yet applied</span></h3><table><thead><tr><th>id</th><th>state</th><th>what</th></tr></thead><tbody>${other || '<tr><td colspan="3" class="mute">nothing</td></tr>'}</tbody></table></div>`;
 }
 
@@ -290,20 +368,70 @@ function agents(d, ctx) {
   const tok = n => n.tokens === '-' ? '-' : fin(n.tokens) ? `${int(n.tokens)}${n.tokens_src ? ` (${esc(n.tokens_src)})` : ''}` : fin(n.cacheR) ? `${mTok(n.cacheR)} cacheR` : String(n.executor ?? '').startsWith('codex') ? 'at end' : '-';
   const age = n => fin(n.age_min) ? fmtMin(n.age_min) : n.first ? fmtMin(minsSince(n.first, ctx.now)) : n.started ? fmtMin(minsSince(n.started, ctx.now)) : '-';
   const one = (n, lvl, kids, pid) => {
-    const ck = fin(n.ctx) ? n.ctx / 1000 : null, lk = fin(n.ctx_limit) ? n.ctx_limit / 1000 : null, b = top[n.id];
+    const b = top[n.id];
     const feed = /^RUN-\d+$/.test(n.id) ? ` data-feed="${esc(n.id)}" data-project="${esc(n.project)}" title="Open the live feed"` : '';
-    return `<div class="node lvl${lvl}" id="node-${esc(n.id)}"${lvl ? ` data-p="${esc(pid)}"` : ''}${feed}><div class="name">${kids ? `<span class="caret" data-t="${esc(pid)}">&#9662;</span>` : '<span class="caret"></span>'}${chip(n.kind === 'subagent' ? 'idle' : exClass(n.executor), n.kind ?? 'run')}<span class="t">${projTag(ctx, n.project)}${name(n)}</span>${(n.guard || []).map(g => `<span class="guard-chip" title="${esc(`${g.id}: ${g.why}`)}">${chip(g.state === 'ruled' ? 'idle' : g.cls === 'runaway' ? 'bad' : 'warn', `${g.cls}${g.action ? ': ' + g.action : ''}`)}</span>`).join('')}</div>
+    return `<div class="node lvl${lvl}" id="node-${esc(n.id)}"${lvl ? ` data-p="${esc(pid)}"` : ''}${feed}><div class="name">${kids ? `<span class="caret" data-t="${esc(pid)}">&#9662;</span>` : '<span class="caret"></span>'}${chip(n.kind === 'subagent' ? 'idle' : exClass(n.executor), n.kind ?? 'run')}<span class="t">${projTag(ctx, n.project)}${name(n)}</span>${(n.guard || []).map(g => `<span class="guard-chip" title="${esc(`${g.id}: ${g.why}`)}">${chip(g.state === 'ruled' ? 'idle' : g.cls === 'runaway' ? 'bad' : 'warn', `${g.cls}${g.action ? ': ' + g.action : ''}`)}</span>`).join('')}${guardChip(guardOn(d.guard, r => r.run === n.id), { tab: 'guard' })}</div>
      <div>${exChip(n.kind === 'subagent' ? null : n.executor, n.model, n.effort)}</div><div>${runChip(n.state)}</div><div class="small">${age(n)}</div><div class="mono small">${tok(n)}</div>
-     <div>${ck === null ? dash : `${bar(ck, Math.max(150, ck), lk, lk && ck > lk ? 'hot' : '')}<span class="small mute">${kTok(n.ctx)}${lk ? ` / ${lk}k` : ''}</span>`}</div><div class="mono small">${fin(b?.pct_per_h) ? b.pct_per_h.toFixed(2) + ' %/h' : fin(n.burn30) && n.burn30 > 0 ? mTok(n.burn30) + ' /30 min' : '-'}</div></div>`;
+     <div>${fin(n.ctx) ? ctxMeter(n) : dash}</div><div class="mono small">${fin(b?.pct_per_h) ? b.pct_per_h.toFixed(2) + ' %/h' : fin(n.burn30) && n.burn30 > 0 ? mTok(n.burn30) + ' /30 min' : '-'}</div></div>`;
   };
-  const tree = d.tree || [], rows = tree.map(n => one(n, 0, (n.children || []).length, 'p-' + n.id) + (n.children || []).map(k => one(k, 1, false, 'p-' + n.id)).join('')).join('')
+  // META-CHECKIN-GUARDS R1: a move a guard refused in code, as a plain row under the run that tried it
+  const refusedRows = n => (n.refused || []).map(x => `<div class="node lvl1 refusedrow" data-p="p-${esc(n.id)}"><div class="small" style="grid-column:1/-1">${chip('refused', `refused: ${x.words}`)} ${esc([x.lane, x.stage ?? x.answers].filter(Boolean).join(' '))} <span class="mute">${esc(String(x.ts ?? '').slice(11, 16))} - ${esc(x.why)}</span></div></div>`).join('');
+  const tree = d.tree || [], rows = tree.map(n => one(n, 0, (n.children || []).length || (n.refused || []).length, 'p-' + n.id) + refusedRows(n) + (n.children || []).map(k => one(k, 1, false, 'p-' + n.id)).join('')).join('')
     || '<div class="node"><div class="mute">No running or recent (2 h) sessions.</div></div>';
   const by = k => tree.filter(n => exClass(n.executor) === k).length;
   return `<div class="legend small mute"><span>Tree = every run of the last 2 h (workers, check-ins, Codex, own-account executors), talk sessions and their subagents. Click a run for its live feed.</span>
     <span>Sources: RUN records + transcript <span class="mono">&lt;session&gt;.jsonl</span>, <span class="mono">subagents/agent-*.meta.json</span>, Codex log banner / rollout.</span></div>
-   <div class="tree"><div class="node head"><div>session</div><div>model · effort</div><div>state</div><div>age</div><div>tokens</div><div>context (mark = hand-off)</div><div>burn</div></div>${rows}</div>
+   <div class="tree"><div class="node head"><div>session</div><div>model · effort</div><div>state</div><div>age</div><div>tokens</div><div>context now (tick = hand-off, bar end = hard max)</div><div>burn</div></div>${rows}</div>
    <p class="small mute">Sessions: Claude ${by('claude')} · Codex ${by('codex')} · own-account ${by('prov')}. Runs waiting to start: the Plan tab.</p>`;
 }
+// ---------- META-TEND P6: the Guard (REPORT s.5.0-5.1) - every open advisory across types, a query that owns no data ----------
+// Chips in place: guardOn(guard, pick) = the rows of one owning thing; guardChip = ONE chip shape on every tab (severity colour, the
+// count, a title with the worst line). The Guard page: SloppaChoppa's section (his portrait, his line, call him up, Mute), counts per
+// type (bars), the trend (lines), the rule ledger (stack), and every row with the tab that fixes it.
+export const guardOn = (g, pick) => (g?.rows || []).filter(pick);
+export function guardChip(rows, go = null) {
+  if (!rows?.length) return '';
+  const cls = rows.some(r => r.severity === 'high') ? 'bad' : rows.some(r => r.severity === 'medium') ? 'warn' : 'idle';
+  const t = `${rows.length} Guard finding${rows.length === 1 ? '' : 's'}`, title = esc(`${t}: ${rows[0].why}`);
+  return go ? ` <button class="lnk gchip" ${goAttrs(go)} title="${title}">${chip(cls, t)}</button>` : ` <span class="gchip" title="${title}">${chip(cls, t)}</span>`;
+}
+/** a link to where a finding is fixed: data-go (the tab) + the tab's own target (a file + line, a doc, an element id) */
+export const goAttrs = go => [`data-go="${esc(go.tab)}"`, go.ins ? `data-goins="${esc(go.ins)}"` : '', go.line ? `data-goline="${esc(go.line)}"` : '',
+  go.doc !== undefined ? `data-godoc="${esc(go.doc)}"` : '', go.jump ? `data-gojump="${esc(go.jump)}"` : ''].filter(Boolean).join(' ');
+const G_TAB = { instructions: 'Instructions', tests: 'Tests', usage: 'Usage', agents: 'Agents', docs: 'Docs', guard: 'the Guard' };
+const G_SEV = { high: 'bad', medium: 'warn', low: 'idle', count: 'idle' };
+const G_MAX = 80;
+const shortPath = p => String(p).replace(/\\/g, '/').split('/').slice(-2).join('/');
+function guard(d, ctx) {
+  const rows = d.rows || [], types = d.types || [], fresh = d.new || 0;
+  const typeLabel = Object.fromEntries(types.map(t => [t.type, t.label]));
+  const portrait = ctx.look === 'norn' && ctx.art ? '<span class="orc-portrait" aria-hidden="true"></span>' : '';
+  const voice = d.voice || {}, pop = voice.popups ?? 'off', on = d.slop !== false;
+  // META-BETA-PREP (DIR-52): SloppaChoppa off for the project = a plain list with a plain count badge, no orc, no pop-up line
+  const plain = `<section class="card" id="guard-plain"><h2>The Guard ${chip(fresh ? 'warn' : 'ok', fresh ? `${int(fresh)} new` : 'nothing new')}</h2>
+    <p class="small mute">Code checks at run end, their merge hold and pop-ups are off for this project · <button class="lnk" data-tab="settings">Settings</button> (Guard voice) turns them back on; code findings show again from the next check.</p></section>`;
+  const him = !on ? plain : `<section class="card orc-section" id="guard-orc">${portrait}<div><h2>SloppaChoppa <span class="mute small">the one voice of the Guard</span></h2>
+    <p class="orc-line" id="guard-line">${esc(orcLine({ rows, fresh, pending: d.pending }))}</p>
+    <div class="small orc-acts">${chip(fresh ? 'warn' : 'ok', fresh ? badgeLabel(fresh).replace(/^SloppaChoppa: /, '') : 'nothing new')}
+     <button data-act="orc-call">Call him up</button> <button class="ghost" data-act="orc-mute" data-days="1">Mute 1 day</button> <button class="ghost" data-act="orc-mute" data-days="7">Mute 7 days</button> <button class="ghost" data-act="orc-mute" data-days="0" id="guard-unmute">Unmute</button></div>
+    <div class="small mute" id="guard-popups">Pop-ups: <b>${esc(pop)}</b>${pop === 'off' ? ' (they ship off until the owner review on 2026-11-21, DIR-36)' : ''} · at most ${esc(voice.daily_cap ?? 3)} a day · only a new finding at warn level or above, once each · <button class="lnk" data-tab="settings">Settings</button>. Muted = silent, not blind: findings are still recorded.</div></div></section>`;
+  const tb = bars(types.map(t => ({ label: t.label, value: t.open, cls: t.warn ? 'hot' : '',
+    note: `${t.warn ? chip('warn', `${t.warn} warn`) : chip('ok', 'no warning')}${t.new ? ' ' + chip('needs', `${t.new} new`) : ''} <button class="lnk" ${goAttrs({ tab: t.tab })}>fix in ${esc(G_TAB[t.tab] ?? t.tab)}</button>` })), { id: 'guard-types', fmt: n => `${n} open` });
+  const trend = d.trend?.series?.length ? lines(d.trend.series, { days: d.trend.days, id: 'guard-trend', title: 'open findings by the day first seen' }) : '<p class="small mute">No open finding.</p>';
+  const L = d.ledger;
+  const ledger = L ? `${stack([['prose', 'prose only'], ['repeated', 'repeated'], ['enforced', 'enforced'], ['retired', 'retired']].map(([key, label]) => ({ key: 'rl-' + key, label, value: L[key] ?? 0 })), { id: 'guard-ledger' })}
+    <div class="small">${chip(L.prose ? 'warn' : 'ok', `${L.prose ?? 0} prose only`)} rules that no hook, test or gate enforces · <button class="lnk" ${goAttrs({ tab: 'instructions', jump: 'ins-ladder' })}>the ladder in Instructions</button></div>` : '<p class="small mute">The rule ledger is not scanned yet.</p>';
+  const list = rows.slice(0, G_MAX).map(r => `<li class="grow" id="guard-${esc(r.id)}"><div>${chip(G_SEV[r.severity] ?? 'idle', r.severity)} ${chip('idle', typeLabel[r.type] ?? r.type)}${r.new ? ' ' + chip('needs', 'new') : ''}
+    <span>${esc(r.why)}</span></div><div class="small mute">${esc(r.surface ?? '')}${r.path ? ` · ${esc(shortPath(r.path))}${r.line ? ':' + esc(r.line) : ''}` : ''} <button class="lnk" ${goAttrs(r.go)}>fix in ${esc(G_TAB[r.go?.tab] ?? r.go?.tab)}</button></div></li>`).join('');
+  return `<div class="banner">The Guard: every open finding of every check (instruction files, memory, rules, docs, tests, models${on ? ", and SloppaChoppa's code checks" : ''}) in one list. It owns no data: each row is fixed on the tab that owns the thing, where it also shows as a chip. Only a NEW finding warns.${d.pending ? ' The instruction-file scan is running: its rows follow.' : ''}</div>
+   ${(d.errors || []).length ? `<div class="small mute" id="guard-errors">${d.errors.map(esc).join(' · ')}</div>` : ''}
+   ${him}
+   <section class="card" id="guard-count"><h2>Open per type <span class="mute small">${plural(d.total ?? rows.length, 'open finding')} · ${fresh} new at warn level</span></h2>${tb}</section>
+   <section class="card" id="guard-trend-card"><h2>Is it growing? <span class="mute small">the findings open now, by the day each was first seen (30 days)</span></h2>${trend}</section>
+   <section class="card" id="guard-ledger-card"><h2>The rule ledger <span class="mute small">every must / never rule by how it is enforced</span></h2>${ledger}</section>
+   <section class="card" id="guard-rows"><h2>Every open finding <span class="mute small">new first, then by severity</span></h2><ol class="glist">${list || `<li class="mute">${chip('ok', 'all clear')} nothing open</li>`}</ol>${rows.length > G_MAX ? `<p class="small mute">+${rows.length - G_MAX} more (the owning tabs list them all)</p>` : ''}</section>`;
+}
+
 // ---------- the Plan tab (META-PLAN R1, norn DIR-13): what happens next, and when - /api/plan = engine/lib/plan.mjs per project ----------
 // Up next (the queue in fill order, hold-ups in plain words; it moved here from Agents), Chains (one line per dependency chain), Landing
 // next (heading to main), Forecast (usage now vs the cap and the weekly stop). Status shapes: check / play / ring / pause / stop / !
@@ -345,8 +473,8 @@ function planPart(p, ctx) {
   const land = (p.landing || []).map((l, i) => `<div class="pl-row"><span class="mono pl-pos">${i + 1}.</span><span class="pl-what"><b>${esc(l.label)}</b> <span class="id">${esc(l.id)}</span>${l.what ? ` <span class="small mute">${esc(l.what)}</span>` : ''}</span>${chip(landCls(l.word), l.word)}</div>`).join('');
   const f = p.forecast || {};
   const fc = !fin(f.weekly) ? `${plEmpty('Usage not measured yet.')}` : `<div class="pl-fc"><div class="kv">
-    <span class="small mute">rate now</span><span>${bar(f.rate, Math.max(f.cap ?? 0, f.rate ?? 0) || 1, f.cap, f.over ? 'hot' : '')} <span class="small">${pct(f.rate, 2)}/h of the ${pct(f.cap, 1)}/h cap</span></span>
-    <span class="small mute">this week</span><span>${bar(f.weekly, 100, f.stop, fin(f.stop) && f.weekly >= f.stop ? 'hot' : '')} <span class="small">~${pct(f.weekly)}${fin(f.stop) ? ` of the ${pct(f.stop, 0)} stop` : ''}</span></span>
+    <span class="small mute">rate now</span><span>${meter(f.rate, Math.max(f.cap ?? 0, f.rate ?? 0) || 1, f.cap, f.over ? 'hot' : '')} <span class="small">${pct(f.rate, 2)}/h of the ${pct(f.cap, 1)}/h cap</span></span>
+    <span class="small mute">this week</span><span>${meter(f.weekly, 100, f.stop, fin(f.stop) && f.weekly >= f.stop ? 'hot' : '')} <span class="small">~${pct(f.weekly)}${fin(f.stop) ? ` of the ${pct(f.stop, 0)} stop` : ''}</span></span>
     <span class="small mute">reset</span><span class="small">${f.reset ? esc(plAt(f.reset, now)) : '-'}</span></div>
     <p><b>${esc(f.lineAt ? `${f.linePre}${plAt(f.lineAt, now)}${f.linePost}` : f.line)}</b>${f.costLine ? `<br><span class="small">${esc(f.costLine)}</span>` : ''}</p></div>`;
   return `${head}${plSection('pl-up', 'Up next', 'every queued run, in the order it will start', up || plEmpty('Nothing is waiting to start.'))}
@@ -475,12 +603,11 @@ export function renderFeedHead(h, now = Date.now()) {
   const st = h.state === 'exited' ? `exited: ${OUTCOME[h.outcome] ?? h.outcome ?? 'no-marker'}` : h.state;
   const [cls, word] = stateOf(st);
   const over = fin(h.elapsed_min) && fin(h.budget_min) && h.elapsed_min > h.budget_min;
-  const lim = fin(h.ctx_limit) ? h.ctx_limit : null, hot = lim && fin(h.ctx) && h.ctx > lim;
   const c = h.commit;
   return `<div class="fh-top"><b class="aname">${esc(h.name ?? h.run)}</b><span class="id">${esc(h.run)}</span>${h.lane ? `<span class="tag">${esc(h.lane)}</span>` : ''}${chip(cls, word)}${h.marker ? chip(MARK[h.marker] ?? 'idle', h.marker) : ''}</div>
    <div class="fh-ex">${exChip(h.executor, h.model, h.effort)}${h.role === 'helper' ? ' <span class="tag">helper</span>' : ''}</div>
-   <div class="kv small fh-kv"><span class="mute">elapsed</span><span>${fmtMin(h.elapsed_min)}${fin(h.budget_min) ? ` of ${fmtMin(h.budget_min)} budget` : ''}${fin(h.budget_min) ? bar(h.elapsed_min, Math.max(h.budget_min, h.elapsed_min ?? 0), h.budget_min, over ? 'over' : '') : ''}</span>
-   <span class="mute">context</span><span>${kTok(h.ctx)}${lim ? ` of ${kTok(lim)} ${h.executor && String(h.executor).startsWith('codex') ? 'window' : 'hand-off'}` : ''}${lim && fin(h.ctx) ? bar(h.ctx, Math.max(lim, h.ctx), lim, hot ? 'hot' : '') : ''}</span>
+   <div class="kv small fh-kv"><span class="mute">elapsed</span><span>${fmtMin(h.elapsed_min)}${fin(h.budget_min) ? ` of ${fmtMin(h.budget_min)} budget` : ''}${fin(h.budget_min) ? meter(h.elapsed_min, Math.max(h.budget_min, h.elapsed_min ?? 0), h.budget_min, over ? 'over' : '') : ''}</span>
+   <span class="mute">context</span><span>${fin(h.ctx) ? ctxMeter(h) : kTok(h.ctx)}${fin(h.ctx_window) ? ` <span class="small mute">(window ${kTok(h.ctx_window)})</span>` : ''}</span>
    <span class="mute">last commit</span><span>${c ? `<span class="mono">${esc(c.sha)}</span> ${esc(c.subject)} <span class="mute">${fmtMin(c.age_min)} ago</span>` : dash}</span></div>`;
 }
 const hms = ts => { const t = Date.parse(ts ?? ''); return Number.isFinite(t) ? new Date(t).toISOString().slice(11, 19) : ''; };
@@ -517,7 +644,7 @@ function records(d, ctx) {
 }
 
 function docs(d, ctx) {
-  const btns = d.docs.map(x => x.exists ? `<button id="doc-${x.i}" data-doc="${x.i}" class="${d.doc?.i === x.i ? 'strong' : ''}" aria-pressed="${d.doc?.i === x.i}">${esc(x.tab)}</button>`
+  const btns = d.docs.map(x => x.exists ? `<button id="doc-${x.i}" data-doc="${x.i}" class="${d.doc?.i === x.i ? 'strong' : ''}" aria-pressed="${d.doc?.i === x.i}">${esc(x.tab)}${guardChip(guardOn(d.guard, r => r.go?.tab === 'docs' && r.go.doc === x.i))}</button>`
     : `<button id="doc-${x.i}" disabled title="${esc(x.path)}">${esc(x.tab)} ${chip('bad', 'missing')}</button>`).join('');
   return `<div class="filters">${btns || '<span class="mute">project.json lists no docs</span>'}<span class="small mute">tabs come from project.json "docs"</span></div>
    ${d.doc ? docBody(d.doc, ctx) : ''}`;
@@ -532,7 +659,7 @@ function instructions(d, ctx) {
   const now = ctx.now ?? Date.now();
   const load = r => r.load === 'role' ? `role ${r.role}` : r.load === 'session' && r.standing_tokens < r.tokens ? 'every session (description)' : INS_LOAD[r.load] ?? r.load;
   const rows = (d.rows || []).map(r => `<tr id="ins-row-${esc(r.id)}"${d.file?.id === r.id ? ' class="sel"' : ''}>
-    <td><button class="lnk" data-ins="${esc(r.id)}"${r.exists ? '' : ' disabled'}>${esc(r.name)}</button>${r.exists || r.generated ? '' : ` ${chip('bad', 'missing')}`}${r.generated ? ` ${chip(DRIFT_CHIP[r.drift] ?? 'idle', `generated · ${r.drift || '?'}`)}` : ''}${r.stale ? ` ${chip('warn', `${r.stale} stale`)}` : ''}<div class="inspath mute">${esc(r.path)}</div></td>
+    <td><button class="lnk" data-ins="${esc(r.id)}"${r.exists ? '' : ' disabled'}>${esc(r.name)}</button>${r.exists || r.generated ? '' : ` ${chip('bad', 'missing')}`}${r.generated ? ` ${chip(DRIFT_CHIP[r.drift] ?? 'idle', `generated · ${r.drift || '?'}`)}` : ''}${r.stale ? ` ${chip('warn', `${r.stale} stale`)}` : ''}${r.findings ? ` ${chip('warn', `${r.findings} finding${r.findings > 1 ? 's' : ''}`)}` : ''}${insRuleChips(r.rules)}<div class="inspath mute">${esc(r.path)}</div></td>
     <td>${chip(INS_CHIP[r.load] ?? 'idle', load(r))}</td><td class="insopt">${esc((r.harness || []).join(', ') || 'any')}</td>
     <td class="num">${tk(r.tokens)}</td><td class="num">${r.cost_today ? `${tk(r.cost_today)}${r.via ? ' <span class="mute small">via</span>' : ''}<div class="small mute">${int(r.loads_today)} load(s)</div>` : dash}</td>
     <td class="insopt">${r.changed ? `${esc(fmtTime(r.changed, now))} <span class="small mute">${esc(r.changed_by)}</span>` : dash}</td>
@@ -541,11 +668,139 @@ function instructions(d, ctx) {
   const hints = (d.hints || []).map(h => `<li class="inshint">${chip('warn', h.kind)} <button class="lnk" data-ins="${esc(h.id)}">${esc(h.path.split('/').pop())}:${esc(h.line)}</button> ${esc(h.text)}</li>`).join('');
   return `${insMeasured(d.measured)}${insCheckins(d.checkins)}<div class="card"><b>${int((d.rows || []).length)} files steer the agents</b> · ${tk(d.total)} tokens loaded today by ${int(d.sessions)} session(s)
      <div class="small mute">${esc(d.method)}. Cost today = size x the sessions that loaded it (runs.jsonl + the chat's starts). Read-only: hints are never applied.</div></div>
-   ${d.file ? insBody(d.file, ctx) : ''}
+   ${insManaged(d.managed)}
+   ${insTrend(d.measured)}
+   ${insLoads(d)}
+   ${insFileMap(d)}
+   ${insMemory(d.memory_map)}
+   ${insRepeats(d.rules)}
+   ${insLadder(d.rules)}
+   ${insAudits(d.audits)}
+   ${d.file ? insBody(d.file, ctx, d) : ''}
+   ${insFindings(d)}
    <div class="tablecard"><h3>Standing context per role <span class="mute small">what one session of it loads before any work</span></h3><div class="inswrap"><table><thead><tr><th>role</th><th>sessions today</th><th>~tokens / session</th></tr></thead><tbody>${standing || `<tr><td colspan="3">${dash}</td></tr>`}</tbody></table></div></div>
    <div class="tablecard"><h3>Files</h3><div class="inswrap"><table class="instab" id="ins-table"><thead><tr><th>file</th><th>loaded</th><th class="insopt">harness</th><th>size</th><th>today</th><th class="insopt">changed</th><th>hints</th></tr></thead><tbody>${rows || `<tr><td colspan="7" class="mute">no instruction files found</td></tr>`}</tbody></table></div></div>
    <div class="tablecard"><h3>Hints <span class="mute small">${int((d.hints || []).length)} · lint, read-only</span></h3>${hints ? `<ul id="ins-hints">${hints}</ul>` : '<p class="mute" style="padding:0 12px">none</p>'}</div>
    ${insSuggest(d)}`;
+}
+// META-TEND P3 (REPORT 5.3 view 6): the ladder - every must / never rule as a card in its state's column (prose only -> repeated n
+// times -> enforced -> retired): its home (a click opens the source line), its enforcement, when that last fired. Built on board().
+const ENF_LABEL = { prose: 'prose only', hook: 'hook', deny: 'deny rule', test: 'test', lint: 'lint', gate: 'gate', 'git-hook': 'git hook' };
+const LADDER_MAX = 40;
+const baseName = p => String(p ?? '').split('/').pop();
+function insRuleChips(c) {
+  if (!c?.total) return '';
+  return ` ${chip('idle', `${c.total} rule${c.total > 1 ? 's' : ''}`)}${c.prose ? ` ${chip('warn', `${c.prose} prose only`)}` : ''}${c.repeated ? ` ${chip('bad', `${c.repeated} repeated`)}` : ''}${c.enforced ? ` ${chip('ok', `${c.enforced} enforced`)}` : ''}`;
+}
+function ruleCard(r) {
+  const h = r.home || {}, where = `${h.path?.startsWith('records:') ? h.path.slice(8) : baseName(h.path)}${h.line ? `:${h.line}` : ''}`;
+  const e = r.enforcement || { kind: 'prose' };
+  const enf = e.kind === 'prose' ? chip(e.by_choice ? 'idle' : 'warn', e.by_choice ? 'prose only, by choice' : 'prose only') : `${chip('ok', ENF_LABEL[e.kind] ?? e.kind)} <span class="small mute" title="${esc(e.path ?? '')}">${esc(e.target ?? '')}</span>`;
+  const fired = r.state === 'retired' ? `retired ${esc(String(r.retired_at ?? '').slice(0, 10))}` : e.kind === 'prose' ? 'nothing fires: no enforcement' : r.fired ? `fired ${esc(String(r.fired.at).slice(0, 10))} <span class="mute">(${esc(r.fired.what)})</span>` : 'last fired: unknown <span class="mute">(no log of it)</span>';
+  return `<div class="wbtext">${esc(r.text.length > 160 ? r.text.slice(0, 157) + '...' : r.text)}</div>
+    <div class="small">${h.row ? `<button class="lnk" data-ins="${esc(h.row)}" data-line="${esc(h.line ?? '')}" title="${esc(h.path)}">${esc(where)}</button>` : `<b>${esc(where)}</b>`}${r.homes?.length > 1 ? ` ${chip('warn', `${r.homes.length} homes`)}` : ''}${r.repeats ? ` ${chip('bad', `said ${r.repeats}x`)}` : ''} · ${enf}</div>
+    <div class="small mute">${fired}</div>`;
+}
+function insLadder(L) {
+  if (!L) return '';
+  const order = { prose: (a, b) => b.homes.length - a.homes.length, repeated: (a, b) => b.repeats - a.repeats, enforced: (a, b) => String(b.fired?.at ?? '').localeCompare(String(a.fired?.at ?? '')), retired: (a, b) => String(b.retired_at ?? '').localeCompare(String(a.retired_at ?? '')) };
+  const NOTE = { prose: 'every rule is enforced or retired', repeated: 'no rule said again', enforced: 'nothing enforces a rule yet', retired: 'no rule retired since the first scan' };
+  const cols = ['prose', 'repeated', 'enforced', 'retired'].map(st => { const xs = L.rules.filter(r => r.state === st).sort(order[st]);
+    return { key: st, label: st === 'prose' ? 'prose only' : st, cards: xs.slice(0, LADDER_MAX).map(ruleCard), more: Math.max(0, xs.length - LADDER_MAX), note: NOTE[st] }; });
+  const adv = L.advisories || [], by = new Map();
+  for (const a of adv) { if (!by.has(a.key)) by.set(a.key, []); by.get(a.key).push(a); }
+  const KEY = { 'rule-several-homes': 'one rule in several homes', 'rule-drift-claim': 'says enforced, nothing found', 'rule-drift-policy': 'line vs the policy', 'rule-drift-path': 'points at code that is gone', 'rule-path-unknown': 'path not found (a runtime file or a typo)', 'enforcement-unexplained': 'enforcement no rule explains' };
+  const finds = [...by].map(([k, xs]) => `<li><details class="rulegroup insgroup"><summary>${chip(xs[0].severity === 'medium' ? 'warn' : 'idle', xs[0].severity)} <b>${int(xs.length)}</b> × ${esc(KEY[k] ?? k)} <span class="small mute">${esc(xs[0].source)}</span><div class="small">fix: <i>${esc(xs[0].fix.action)}</i></div></summary>
+    <ul>${xs.slice(0, 60).map(a => `<li class="insfind small"><span class="mute">${esc(baseName(a.path) || a.surface)}${a.line ? `:${esc(a.line)}` : ''}</span> ${esc(a.why)}${a.fix.patch ? `<pre class="inspatch">${esc(a.fix.patch)}</pre>` : ''}</li>`).join('')}</ul></details></li>`).join('');
+  return `<div class="tablecard" id="ins-ladder"><h3>The ladder <span class="mute small">${int(L.rules.length)} must / never rules by state · prose only ${int(L.counts.prose)} → repeated ${int(L.counts.repeated)} → enforced ${int(L.counts.enforced)} → retired ${int(L.counts.retired)} · tap a home to open its line</span></h3>
+    ${board(cols, { id: 'ins-board', aria: 'rules by state' })}
+    ${finds ? `<ul id="ins-rule-findings">${finds}</ul>` : ''}</div>`;
+}
+// META-TEND P5 (REPORT 3.3): one vendor-audit hunk = one card; accept = a decision + a directive (the check-in applies it), decline = a decision
+function auditCard(c, project) {
+  const pj = project ? ` data-project="${esc(project)}"` : '';
+  return `<li class="insfind" id="aud-${esc(c.id)}">${chip(SEV_CHIP[c.severity] ?? 'idle', c.severity)} <b>${esc(baseName(c.path))}:${esc(c.line)}</b> ${esc(c.why)} <span class="small mute">${esc(c.run)} · ${esc(c.id)}</span>
+    <pre class="inspatch">${esc(c.fix.patch ?? '')}</pre>
+    <button class="primary" data-act="audit-accept"${pj} data-id="${esc(c.id)}">Accept: apply it</button> <button data-act="audit-decline"${pj} data-id="${esc(c.id)}">Decline: keep the text</button></li>`;
+}
+const AUD_OUT = { done: 'ok', crash: 'bad', stopped: 'warn', limit: 'warn', auth: 'warn' };
+function insAudits(a) {
+  if (!a) return '';
+  const runs = a.runs.map(r => `<tr><td class="id">${esc(r.id)}</td><td class="small">${esc(String(r.created).slice(0, 16).replace('T', ' '))}</td><td>${chip(r.state === 'running' ? 'run' : AUD_OUT[r.outcome] ?? 'idle', r.state === 'running' ? 'running' : r.outcome ?? r.state)}</td>
+    <td class="num">${int(r.accepted + r.declined + r.open)}</td><td class="num">${int(r.accepted)}</td><td class="num">${int(r.declined)}</td><td class="num">${int(r.open)}</td>
+    <td class="small">${r.watch.length ? r.watch.map(w => (w.alarms.length ? chip('bad', `${w.alarms.length} alarm(s)`) : chip(w.done ? 'ok' : 'idle', `${w.seen} of ${w.of} runs ${w.done ? 'clean' : 'watched'}`))).join(' ') : dash}</td></tr>`).join('');
+  const trig = a.triggers.map(t => `<li>${chip(t.key === 'never' ? 'idle' : 'warn', t.key)} ${esc(t.why)}</li>`).join('');
+  return `<div class="tablecard" id="ins-audits"><h3>Audits <span class="mute small">the vendor prompt audit (/doctor prompt-audit), read-only · one card per proposed hunk · ${esc(a.rule.why)}</span></h3>
+   <div style="padding:0 12px"><div class="small"><b>Triggers now</b> ${a.triggers.length ? `<span class="mute">(${a.rule.mode === 'auto' ? 'they may start an audit' : 'manual: start it with'} <span class="mono">${esc(a.command)}</span>)</span>` : '<span class="mute">none: no event calls for an audit</span>'}</div>${trig ? `<ul class="small" id="ins-audit-triggers">${trig}</ul>` : ''}</div>
+   <div class="inswrap"><table class="instab" id="ins-audit-runs"><thead><tr><th>run</th><th>started</th><th>outcome</th><th>hunks</th><th>accepted</th><th>declined</th><th>open</th><th>watch after apply</th></tr></thead><tbody>${runs || '<tr><td colspan="8" class="mute">no audit has run yet</td></tr>'}</tbody></table></div>
+   ${a.cards.length ? `<ul>${a.cards.map(c => auditCard(c, null)).join('')}</ul>` : ''}</div>`;
+}
+// META-TEND P5 (REPORT 5.3 view 1): is it growing forever? - the median standing context per session, one line per role, 30 days
+function insTrend(m) {
+  const rows = m?.trend?.rows || [];
+  if (!rows.length) return '';
+  const end = Date.parse(rows.map(r => r.day).sort().at(-1) + 'T00:00:00Z'), n = m.trend.days;
+  const days = Array.from({ length: n }, (_, i) => new Date(end - (n - 1 - i) * 86400000).toISOString().slice(0, 10));
+  const keys = [...new Set(rows.map(r => r.key))], lab = k => k.replace(/^(\w+)/, w => ROLE_LABEL[w] ?? w);
+  const series = keys.map(k => ({ key: k, label: lab(k), points: rows.filter(r => r.key === k && r.median_turn1 !== null).map(r => ({ x: r.day, y: r.median_turn1 })) }));
+  return `<div class="tablecard" id="ins-trend"><h3>Is it growing forever? <span class="mute small">standing tokens per session (the median first request), per role and day, last ${int(n)} days</span></h3>
+   <div style="padding:0 12px 8px">${lines(series, { days, fmt: tk, title: 'standing tokens per session' })}</div></div>`;
+}
+// META-TEND P5 (REPORT 5.3 view 4): per file - a strip of its paragraphs (width = tokens) coloured by age, with read and cite marks
+const AGE_BANDS = [[7, 'age-new', 'under 7 d'], [30, 'age-mid', '7-30 d'], [Infinity, 'age-old', 'over 30 d']];
+function insStrip(f) {
+  if (!f.paras?.length) return '';
+  const tot = f.paras.reduce((n, p) => n + Math.max(1, p.tokens), 0), ev = f.evidence;
+  const segs = f.paras.map(p => {
+    const cls = p.age_days === null || p.age_days === undefined ? 'age-unk' : AGE_BANDS.find(([d]) => p.age_days < d)[1], cited = p.cited || [];
+    return `<a class="psg ${cls}${p.stale ? ' stale' : ''}" href="#ins-${esc(p.anchor)}" style="flex-basis:${(100 * Math.max(1, p.tokens) / tot).toFixed(2)}%" title="${esc(`L${p.line}-${p.end} · ${p.age_days ?? '?'} d · ~${p.tokens} tokens · read ${p.read ?? 0}x${cited.length ? ` · cited by ${cited.join(', ')}` : ''}${p.stale ? ' · STALE' : ''}`)}">${p.read ? '<i class="pread"></i>' : ''}${cited.length ? '<i class="pcite"></i>' : ''}</a>`;
+  }).join('');
+  const cites = [...new Set((ev?.cites || []).map(c => c.id))];
+  const said = ev ? `read ${int(ev.reads)}x in ${int(f.read_days ?? 30)} days${ev.last ? ` (last ${fmtTime(ev.last)})` : ''} · ${cites.length ? `cited by ${cites.join(', ')}` : 'cited by no decision'}` : 'no read evidence';
+  return `<div id="ins-strip" class="small" style="margin:0 0 8px"><div class="pstrip" role="img" aria-label="${esc(`${f.paras.length} paragraphs by age; ${said}`)}">${segs}</div>
+    <div class="stklegend">${AGE_BANDS.map(([, c, w]) => `<span><i class="stkdot ${c}"></i>${esc(w)}</span>`).join('')}<span><i class="pread inl"></i>read</span><span><i class="pcite inl"></i>cited (its line)</span><b>${esc(said)}</b></div></div>`;
+}
+// META-TEND P3 (REPORT 3.6): the repeat detector's cards - one per cluster, ranked; approve = a directive (the one approvals path)
+function enforceCard(c, project) {
+  return `<li class="insfind" id="enf-${esc(c.id)}">${chip(c.severity === 'medium' ? 'warn' : 'idle', c.severity)} <b>${esc(c.why)}</b>
+    <details><summary class="small">${int((c.items || []).length)} corrections · the draft</summary><ul class="small">${(c.items || []).map(x => `<li>${esc(x.text)}</li>`).join('')}</ul><pre class="inspatch">${esc(c.fix.patch ?? '')}</pre></details>
+    <div class="small mute">${esc(c.fix.action)}</div>
+    <button class="primary" data-act="adv-approve"${project ? ` data-project="${esc(project)}"` : ''} data-id="${esc(c.id)}" data-text="${esc(c.approve)}">Approve: ask for a brief</button></li>`;
+}
+function insRepeats(L) {
+  if (!L) return '';
+  const cs = L.cards || [];
+  return `<div class="tablecard" id="ins-repeats"><h3>Said again <span class="mute small">${int(cs.length)} repeated correction(s), ranked · each card drafts the enforcement; Norn installs nothing (the Inbox holds the same cards)</span></h3>
+    ${cs.length ? `<ul>${cs.map(c => enforceCard(c, null)).join('')}</ul>` : '<p class="mute" style="padding:0 12px">no correction said 3 times</p>'}</div>`;
+}
+// META-PRACTICE-P1: the static checks in place - one "managed" line, then the findings per file (severity chips, counts, the fix)
+const SEV_CHIP = { high: 'bad', medium: 'warn', low: 'idle', count: 'idle' }, SEVS = ['high', 'medium', 'low', 'count'];
+function insManaged(m) {
+  if (!m) return '';
+  const sev = SEVS.filter(s => m.by_severity?.[s]).map(s => chip(SEV_CHIP[s], `${m.by_severity[s]} ${s}`)).join(' ');
+  const on = Object.entries(m.memory || {}).filter(([, v]) => v === 'on').map(([r]) => ROLE_LABEL[r] ?? r), off = Object.entries(m.memory || {}).filter(([, v]) => v === 'off').map(([r]) => ROLE_LABEL[r] ?? r);
+  return `<div class="card" id="ins-managed"><b>Managed:</b> ${int(m.files)} files scanned · <b>${int(m.open)}</b> findings open ${sev} · ${int(m.fixed)} fixed since the last scan${m.since ? ` <span class="small mute">(${esc(String(m.since).slice(0, 16).replace('T', ' '))}Z)</span>` : ''} · memory loaded by ${esc(on.join(', ') || 'no role')}${off.length ? ` <span class="mute">(off: ${esc(off.join(', '))})</span>` : ''}
+    <div class="small mute">Static checks 1-19 + 21-23 (free, no model call; check 20 comes with the audits). Read-only: a finding names the fix, nothing is edited.</div></div>`;
+}
+function insFindings(d) {
+  const fs2 = d.findings || [];
+  if (!fs2.length) return '<div class="tablecard"><h3>Findings</h3><p class="mute" style="padding:0 12px">none</p></div>';
+  const groups = new Map();
+  for (const f of fs2) { if (!groups.has(f.path)) groups.set(f.path, []); groups.get(f.path).push(f); }
+  const li = [...groups].map(([p, xs]) => {
+    const cnt = SEVS.filter(s => xs.some(x => x.severity === s)).map(s => chip(SEV_CHIP[s], `${xs.filter(x => x.severity === s).length} ${s}`)).join(' ');
+    const name = p.split('/').pop(), id = xs.find(x => x.row)?.row;
+    // DEC-273: one row per file x check (count, the check's title, the fix once); its lines in an expandable list
+    const byCheck = new Map();
+    for (const x of xs) { if (!byCheck.has(x.check)) byCheck.set(x.check, []); byCheck.get(x.check).push(x); }
+    const rows = [...byCheck].map(([c, ys]) => {
+      const top = SEVS.find(s => ys.some(y => y.severity === s)), fixes = [...new Set(ys.map(y => y.fix.action))];
+      return `<li><details class="insgroup"><summary>${chip(SEV_CHIP[top], top)} <b>${int(ys.length)}</b> × ${esc(ys[0].surface)} <span class="small mute">C${esc(c)} · L${esc(ys.map(y => y.line).slice(0, 8).join(', '))}${ys.length > 8 ? ' …' : ''}</span>${fixes.length === 1 ? `<div class="small">fix: <i>${esc(fixes[0])}</i></div>` : ''}</summary>
+        <ul>${ys.map(y => `<li class="insfind">${chip(SEV_CHIP[y.severity], y.severity)} <span class="small mute">L${esc(y.line)}</span> ${esc(y.why)}${fixes.length > 1 ? `<div class="small">fix: <i>${esc(y.fix.action)}</i></div>` : ''}</li>`).join('')}</ul></details></li>`;
+    }).join('');
+    return `<li class="insfile"><div>${id ? `<button class="lnk" data-ins="${esc(id)}">${esc(name)}</button>` : `<b>${esc(name)}</b>`} ${cnt} <span class="inspath mute">${esc(p)}</span></div><ul>${rows}</ul></li>`;
+  }).join('');
+  return `<div class="tablecard"><h3>Findings <span class="mute small">${int(fs2.length)} in ${int(groups.size)} file(s) · static checks, read-only</span></h3><ul id="ins-findings">${li}</ul></div>`;
 }
 // META-STANDING-CONTEXT R1: the measured standing context (median per session, last 7 days) per role + where it goes (the parts)
 const ROLE_LABEL = { worker: 'workers', merge: 'merge runs', checkin: 'check-ins', chat: 'chat' };
@@ -559,15 +814,73 @@ function insMeasured(m) {
   if (!m?.roles?.length) return '';
   const lab = k => esc(k.replace(/^(\w+)/, w => ROLE_LABEL[w] ?? w));
   const rows = m.roles.map(r => `<tr><td>${lab(r.key)}</td><td class="num">${int(r.runs)}</td><td class="num"><b>${tk(r.median_turn1)}</b></td><td class="num insopt">${tk(r.median_create1)}</td><td class="num insopt">${r.median_turns ?? dash}</td><td class="num">${r.cache_read >= 1e6 ? `~${(r.cache_read / 1e6).toFixed(1)}M` : tk(r.cache_read)}</td></tr>`).join('');
-  const bars = Object.entries(m.parts || {}).map(([k, s]) => {
-    const ps = (s.parts || []).filter(x => x.tokens > 0), tot = ps.reduce((n, x) => n + x.tokens, 0) || 1;
-    return `<div class="insbarrow"><div class="small"><b>${lab(k)}</b> <span class="mute">${tk(s.total)} · ${esc(s.run)} · ${esc(s.method)}</span></div>
-      <div class="insbar" role="img" aria-label="${esc(ps.map(x => `${x.label} ${x.tokens}`).join(', '))}">${ps.map(x => `<span class="insseg seg-${esc(x.key)}${x.ours ? '' : ' fixed'}" style="width:${(100 * x.tokens / tot).toFixed(2)}%" title="${esc(x.label)} ${tk(x.tokens)}"></span>`).join('')}</div>
-      <div class="small inslegend">${ps.map(x => `<span><i class="insdot seg-${esc(x.key)}${x.ours ? '' : ' fixed'}"></i>${esc(x.label)} ${tk(x.tokens)}${x.ours ? '' : ' <span class="mute">(fixed)</span>'}</span>`).join(' ')}</div></div>`;
-  }).join('');
   return `<div class="tablecard" id="ins-standing"><h3>Standing context <span class="mute small">what one session loads before any work, re-read every turn · median per session, last ${int(m.window_days ?? 7)} days</span></h3>
    <div class="inswrap"><table class="instab"><thead><tr><th>role</th><th>runs</th><th>turn 1</th><th class="insopt">cache create</th><th class="insopt">turns</th><th>cache reads</th></tr></thead><tbody>${rows}</tbody></table></div>
-   <div style="padding:6px 12px">${bars}<div class="small mute" style="margin-top:4px;overflow-wrap:anywhere">${esc(m.method)}</div></div></div>`;
+   <div class="small mute" style="padding:6px 12px;overflow-wrap:anywhere">${esc(m.method)}</div></div>`;
+}
+// META-TEND P1-VISUAL (REPORT 5.3 view 2): what one session loads - a stacked bar per role (the newest measured first request), the
+// memory switch per role (policy.launch.memory). Parts in the REPORT's order; Norn's prompt, the agents list and the prompt follow.
+const LOAD_ROLES = [['chat', 'controller / chat'], ['checkin', 'check-ins'], ['worker', 'workers'], ['merge', 'merge runs']];
+const PART_ORDER = ['base', 'plugins', 'memory', 'skills', 'claude_md', 'hooks', 'agent', 'mcp', 'norn', 'agents', 'prompt'];
+function insLoads(d) {
+  const ps = d.measured?.parts || {}, mem = d.managed?.memory || {};
+  const li = LOAD_ROLES.map(([role, name]) => {
+    const s = ps[role], sw = mem[role] ? chip(mem[role] === 'on' ? 'warn' : 'ok', `memory ${mem[role]}`) : '';
+    const segs = s ? [...(s.parts || [])].sort((a, b) => PART_ORDER.indexOf(a.key) - PART_ORDER.indexOf(b.key)).map(x => ({ key: x.key, label: x.ours === false ? `${x.label} (fixed)` : x.label, value: x.tokens })) : [];
+    return `<li class="insload"><div><b>${esc(name)}</b> ${sw} ${s ? `<span class="mute small">${tk(s.total)} tokens · ${esc(s.run)}</span>` : ''}</div>
+      ${s ? stack(segs, { fmt: tk }) : `<div class="small mute">no session measured in the last ${int(d.measured?.window_days ?? 7)} days</div>`}</li>`;
+  }).join('');
+  return `<div class="tablecard" id="ins-loads"><h3>What one session loads <span class="mute small">before any work, per role · the newest measured first request · memory on / off = the launch switch (policy.launch.memory)</span></h3><ul class="insloads">${li}</ul></div>`;
+}
+// META-TEND P1-VISUAL (REPORT 5.3 view 3): the file map - each steering file a block sized by ~tokens x loads per day (7-day mean),
+// coloured by its state, grouped by load class; a click opens the file with its findings. Generator sources are not loaded: left out.
+const MAP_GROUPS = [['always loaded', ['session']], ['per role', ['checkin', 'chat', 'role']], ['on demand', ['on-demand']]];
+const MAP_STATE = { fresh: 'fresh', stale: 'stale paragraphs', conflict: 'conflict (two files say it)', 'generated-stale': 'generated, out of sync' };
+function insFileMap(d) {
+  const rows = (d.rows || []).filter(r => r.exists && r.load !== 'source'), cost = r => Math.round((r.standing_tokens ?? r.tokens) * (r.loads_day || 0));
+  if (!rows.length) return '';
+  const groups = MAP_GROUPS.map(([name, loads]) => {
+    const xs = rows.filter(r => loads.includes(r.load)).sort((a, b) => cost(b) - cost(a) || b.tokens - a.tokens);
+    if (!xs.length) return '';
+    const sum = xs.reduce((n, r) => n + cost(r), 0), tsum = xs.reduce((n, r) => n + r.tokens, 0) || 1;
+    const blk = r => {
+      const share = sum > 0 ? cost(r) / sum : r.tokens / tsum, st = MAP_STATE[r.map_state] ? r.map_state : 'fresh';
+      return `<button class="fmblk st-${esc(st)}" data-ins="${esc(r.id)}" style="flex-basis:${(100 * share).toFixed(2)}%" title="${esc(`${r.name} · ${tk(r.tokens)} tokens x ${r.loads_day || 0} loads/day = ${tk(cost(r))} / day · ${MAP_STATE[st]}${r.findings ? ` · ${r.findings} findings` : ''}`)}">${share >= 0.06 ? esc(r.name) : ''}</button>`;
+    };
+    return `<div class="fmgroup"><div class="small"><b>${esc(name)}</b> <span class="mute">${int(xs.length)} files · ${tk(sum)} tokens / day</span></div><div class="fmblocks">${xs.map(blk).join('')}</div></div>`;
+  }).join('');
+  const n = k => rows.filter(r => (MAP_STATE[r.map_state] ? r.map_state : 'fresh') === k).length;
+  const legend = Object.entries(MAP_STATE).map(([k, w]) => `<span><i class="stkdot st-${k}"></i>${esc(w)} <b>${int(n(k))}</b></span>`).join('');
+  const top = rows.filter(r => cost(r) > 0).sort((a, b) => cost(b) - cost(a)).slice(0, 6);
+  return `<div class="tablecard" id="ins-filemap"><h3>The file map <span class="mute small">a block per file, sized by ~tokens x loads per day (last 7 days) · tap a block to open the file and its findings</span></h3>
+   <div class="stklegend small" style="padding:0 12px">${legend}</div><div style="padding:4px 12px">${groups}</div>
+   ${top.length ? `<div style="padding:0 12px 8px"><div class="small"><b>Most tokens per day</b></div>${bars(top.map(r => ({ label: r.name, value: cost(r), cls: `st-${MAP_STATE[r.map_state] ? r.map_state : 'fresh'}` })), { fmt: v => `${tk(v)} / day` })}</div>` : ''}</div>`;
+}
+// META-TEND P1-VISUAL (REPORT 5.3 view 5): memory - the 200-line / 25 KB gauge, MEMORY.md -> topic files, entries in no index, broken links
+function insMemory(m) {
+  if (!m) return '<div class="tablecard" id="ins-memory"><h3>Memory</h3><p class="small mute" style="padding:0 12px">No MEMORY.md for this repo: its auto-memory folder is empty, so no session loads memory.</p></div>';
+  const lk = m.topics.filter(t => t.linked).length, ago = iso => (iso ? esc(fmtTime(iso)) : '<span class="mute">not in 30 days</span>');
+  const over = m.lines > m.max_lines || m.kb > m.max_kb;
+  const g = (label, v, max, unit) => ({ label, value: 100 * v / max, cls: v > max ? 'over' : 'st-fresh', note: esc(`${v} of ${max} ${unit}`) });   // % of the limit; over = full + red
+  const gauge = bars([g('lines', m.lines, m.max_lines, 'lines'), g('size', m.kb, m.max_kb, 'KB')], { fmt: v => `${Math.round(v)} %`, max: 100 });
+  const shape = stack([{ key: 'linked', label: 'topic files in the index', value: lk }, { key: 'orphan', label: 'topic files in no index', value: m.orphans.length },
+    { key: 'broken', label: 'broken links', value: m.broken.length }], { fmt: int });
+  const broken = m.broken.map(e => `<li>${chip('bad', 'missing')} <span class="mute">L${esc(e.line)}</span> ${esc(e.title)} -&gt; ${esc(e.file)}</li>`).join('');
+  const orphans = m.orphans.map(o => `<button class="lnk" data-ins="${esc(o.id)}">${esc(o.name)}</button>`).join(' · ');
+  const tops = [...m.topics].sort((a, b) => String(b.opened ?? '').localeCompare(String(a.opened ?? '')) || a.name.localeCompare(b.name)).map(t => `<tr><td><button class="lnk" data-ins="${esc(t.id)}">${esc(t.name)}</button></td>
+    <td>${t.linked ? chip('ok', `in index${t.linked > 1 ? ` x${t.linked}` : ''}`) : chip('warn', 'in no index')}</td><td>${ago(t.opened)}</td><td class="insopt">${t.changed ? esc(fmtTime(t.changed)) : dash}</td></tr>`).join('');
+  return `<div class="tablecard" id="ins-memory"><h3>Memory <span class="mute small">MEMORY.md -&gt; ${int(m.topics.length)} topic files · the index last opened ${ago(m.index_opened)}</span></h3>
+   <div style="padding:0 12px"><div class="small">${over ? `${chip('bad', 'over the limit')} past 200 lines / 25 KB the rest of MEMORY.md is silently not loaded` : 'MEMORY.md loads whole: under 200 lines and 25 KB'}</div>${gauge}${shape}
+   ${broken ? `<div class="small" style="margin-top:6px"><b>Broken links</b></div><ul class="small">${broken}</ul>` : ''}
+   ${orphans ? `<div class="small" style="margin-top:6px"><b>In no index</b> <span class="mute">(a session never finds them)</span></div><div class="small" style="overflow-wrap:anywhere">${orphans}</div>` : ''}
+   <details style="margin:6px 0"><summary class="small">all ${int(m.topics.length)} topic files, last opened first</summary><div class="inswrap"><table class="instab"><thead><tr><th>file</th><th>index</th><th>last opened</th><th class="insopt">last changed</th></tr></thead><tbody>${tops}</tbody></table></div></details>
+   <div class="small mute" style="padding-bottom:6px">${esc(m.opened_method)}</div></div></div>`;
+}
+// META-TEND P1-VISUAL: the opened file's own findings above its text (the file map's click lands here)
+function insFileFindings(f, d) {
+  const xs = (d.findings || []).filter(x => x.path === f.path || x.other === f.path);
+  if (!xs.length) return '<div class="small mute" id="ins-file-findings">no findings on this file</div>';
+  return `<ul class="small" id="ins-file-findings">${xs.map(x => `<li class="insfind">${chip(SEV_CHIP[x.severity], x.severity)} <span class="mute">C${esc(x.check)} L${esc(x.line)}${x.path !== f.path ? ` in ${esc(x.path.split('/').pop())}` : ''}</span> ${esc(x.why)} <i>fix: ${esc(x.fix.action)}</i></li>`).join('')}</ul>`;
 }
 const SUG_CHIP = { superseded: 'bad', duplicate: 'warn', stale: 'warn', 'one-role': 'prov', large: 'idle', lean: 'claude' };
 function insSuggest(d) {
@@ -578,17 +891,17 @@ function insSuggest(d) {
   return `<div class="tablecard"><h3>Tighten <span class="mute small">${int(s.length)} candidates, ranked by ~tokens saved per day · read-only; apply = the owner's tap in the chat</span></h3>${li ? `<ul id="ins-suggest">${li}</ul>` : '<p class="mute" style="padding:0 12px">none</p>'}</div>`;
 }
 
-function insBody(f, ctx) {
+function insBody(f, ctx, d = {}) {
   const src = /\.json$/i.test(f.path) ? '```json\n' + (f.text ?? '') + '\n```' : (f.text ?? '');
   let { html, toc } = renderMarkdown(src, { sanitize: ctx.sanitize });
   // META-STANDING-CONTEXT R1: each paragraph with its age badge (stated date / last commit / first seen; STALE; confirmed)
   if (f.paras?.length && !/\.json$/i.test(f.path)) {
     const lines = src.split(/\r?\n/);
-    html = f.paras.map(p => `<div class="inspara${p.stale ? ' stale' : ''}" id="ins-${esc(p.anchor)}"><span class="agebadge chip ${p.stale ? 'warn' : p.confirmed ? 'ok' : 'idle'}" title="${esc([p.stated ? `stated ${p.stated}` : '', p.changed ? `changed ${p.changed.slice(0, 10)}` : '', p.confirmed ? 'confirmed' : '', p.why].filter(Boolean).join(' · '))}">${p.age_days ?? '?'} d${p.stale ? ' · STALE' : p.confirmed ? ' · confirmed' : ''}</span> <span class="small mute">#${esc(p.anchor)} L${esc(p.line)}</span>${renderMarkdown(lines.slice(p.line - 1, p.end).join('\n'), { sanitize: ctx.sanitize }).html}</div>`).join('');
+    html = f.paras.map(p => `<div class="inspara${p.stale ? ' stale' : ''}${d.focus_line && p.line <= d.focus_line && d.focus_line <= p.end ? ' focus" data-focus="1' : ''}" id="ins-${esc(p.anchor)}"><span class="agebadge chip ${p.stale ? 'warn' : p.confirmed ? 'ok' : 'idle'}" title="${esc([p.stated ? `stated ${p.stated}` : '', p.changed ? `changed ${p.changed.slice(0, 10)}` : '', p.confirmed ? 'confirmed' : '', p.why].filter(Boolean).join(' · '))}">${p.age_days ?? '?'} d${p.stale ? ' · STALE' : p.confirmed ? ' · confirmed' : ''}</span> <span class="small mute">#${esc(p.anchor)} L${esc(p.line)}</span>${renderMarkdown(lines.slice(p.line - 1, p.end).join('\n'), { sanitize: ctx.sanitize }).html}</div>`).join('');
   }
   const links = toc.map(t => `<a class="toc${t.depth}" href="#${esc(t.id)}">${esc(t.text)}</a>`).join('');
   return `<div class="small mute" style="margin-bottom:6px;overflow-wrap:anywhere">${esc(f.path)} · ${tk(f.tokens)} tokens · ${esc(int(f.lines))} lines <button data-ins="">Close</button>
-   <button disabled title="R2: needs the chat's verbs">Ask the controller to tighten this</button></div><div class="docwrap"><nav class="doctoc" aria-label="Contents"><b class="small">Contents</b>${links || '<span class="small mute">no headings</span>'}</nav>
+   <button disabled title="R2: needs the chat's verbs">Ask the controller to tighten this</button></div>${insStrip(f)}${insFileFindings(f, d)}<div class="docwrap"><nav class="doctoc" aria-label="Contents"><b class="small">Contents</b>${links || '<span class="small mute">no headings</span>'}</nav>
    <article class="card md" id="ins-body">${html}</article></div>`;
 }
 
@@ -656,10 +969,10 @@ const scopeTag = s => `<span class="tag" title="${esc(s.home ?? '')}">${s.scope 
 function row(s) {
   return `<div class="srow${s.modified ? ' modrow' : ''}" id="set-${esc(s.key)}"${s.basic ? ' data-basic="1"' : ''} data-search="${esc(searchText(s))}" data-mod="${s.modified ? 1 : 0}"><div class="sl"><label for="in-${esc(s.key)}" title="${tip(s)}"><b>${esc(s.label)}</b></label>${modChip(s)} ${scopeTag(s)}<span class="key">${esc(s.key)}</span><span class="help">${esc(s.help)}${s.recommended ? ` <span class="rec">Recommended: ${esc(s.recommended)}.</span>` : ''}</span></div><div class="sc">${input(s)}${resetBtn(s)}</div></div>`;
 }
-function inlineGroup(cat, sub, x, items) {
+function inlineGroup(cat, sub, x, items, extra = '') {
   const short = s => String(s.label).replace(/^[^:]+:\s*/, ''), mod = items.some(s => s.modified);
   const cells = items.map(s => `<span class="mini" id="set-${esc(s.key)}" title="${tip(s)}"><span><label for="in-${esc(s.key)}">${esc(short(s))}</label>${modChip(s)}</span><span>${input(s)}${resetBtn(s)}</span></span>`).join('');
-  return `<div class="srow inline${mod ? ' modrow' : ''}" id="grp-${esc([cat.id, sub.id, x.id].join('-'))}" data-search="${esc([x.label, ...items.map(searchText)].join(' ').toLowerCase())}" data-mod="${mod ? 1 : 0}"><div class="sl"><b>${esc(x.label)}</b> ${scopeTag(items[0])}<span class="help">${esc(items[0].help)}</span></div><div class="sc">${cells}</div></div>`;
+  return `<div class="srow inline${mod ? ' modrow' : ''}" id="grp-${esc([cat.id, sub.id, x.id].join('-'))}" data-search="${esc([x.label, ...items.map(searchText)].join(' ').toLowerCase())}" data-mod="${mod ? 1 : 0}"><div class="sl"><b>${esc(x.label)}</b>${extra} ${scopeTag(items[0])}<span class="help">${esc(items[0].help)}</span></div><div class="sc">${cells}</div></div>`;
 }
 function filesPane(d) {
   const tg = d.targets.map(t => `<div class="item">${t.exists ? chip('ok', `${t.markers.length} markers`) : chip('bad', 'missing')}<span class="mono small">${esc(t.file)}</span>${t.markers.length ? `<span class="small mute">${esc(t.markers.join(', '))}</span>` : ''}</div>`).join('');
@@ -719,7 +1032,7 @@ function settings(d, ctx) {
   const panes = sections.map(c => {
     const subs = c.info ? (c.id === 'notify' ? notifyPane(d) + remotePane(d.remote) : filesPane(d)) : c.subs.map(x => {
       const items = d.settings.filter(s => at(s) === `${c.id}/${x.id}` || at(s).startsWith(`${c.id}/${x.id}/`));
-      const body = x.subs ? x.subs.map(y => { const g = items.filter(s => s.section[2] === y.id); return g.length ? (x.inline ? inlineGroup(c, x, y, g) : g.map(row).join('')) : ''; }).join('') : items.map(row).join('');
+      const body = x.subs ? x.subs.map(y => { const g = items.filter(s => s.section[2] === y.id); return g.length ? (x.inline ? inlineGroup(c, x, y, g, x.id === 'routing' ? guardChip(guardOn(d.guard, r => r.type === 'models' && r.cls === y.id), { tab: 'usage', jump: 'usage-advice' }) : '') : g.map(row).join('')) : ''; }).join('') : items.map(row).join('');
       return `<div class="ssub${x.danger ? ' danger' : ''}" id="sub-${esc(c.id)}-${esc(x.id)}"><h3>${esc(x.label)}${x.help ? ` <span class="help">${esc(x.help)}</span>` : ''}</h3>${body}</div>`;
     }).join('');
     return `<section class="scat" id="cat-${esc(c.id)}" data-cat="${esc(c.id)}"${c.id === sel ? '' : ' hidden'}><h2>${esc(c.label)}</h2><p class="small mute">${esc(c.help)}</p>${subs}</section>`;
@@ -758,7 +1071,7 @@ function usageTable(id, title, note, rows, keys, maxPct) {
     <td class="mono">${g.runs}${g.running ? ' ' + chip('running', g.running + ' live') : ''}</td>
     <td class="small">${g.executors.map(e => chip(exClass(e), e)).join(' ')}</td>
     <td class="mono">${mTok(g.cache_read)}</td><td class="mono">${mTok(g.cache_create)}</td><td class="mono">${mTok(g.input)}</td><td class="mono">${mTok(g.output)}</td>
-    <td style="width:16%">${fin(g.pct) ? `<span class="mono">${pct2(g.pct)}</span>${bar(g.pct, maxPct)}` : dash}</td>
+    <td style="width:16%">${fin(g.pct) ? `<span class="mono">${pct2(g.pct)}</span>${meter(g.pct, maxPct)}` : dash}</td>
     <td class="mono">${g.codex ? mTok(g.codex) : dash}</td><td class="mono">${g.provider ? mTok(g.provider) : dash}</td></tr>`).join('')
     || `<tr><td colspan="${keys.length + 9}" class="mute">No runs in the window.</td></tr>`;
   return `<div class="tablecard" id="${esc(id)}"><h3>${esc(title)} <span class="mute small">${esc(note)}</span></h3><table><thead><tr>${head}<th>runs</th><th>agent CLIs</th>
@@ -795,6 +1108,9 @@ function usagePart(p, ctx) {
        <div class="mute">other token types count by price, in cache reads: 1 input = ${k.weights.input}, 1 output = ${k.weights.output}, 1 cache write = ${k.weights.cache_create_1h} (kept 1 h) / ${k.weights.cache_create_5m} (kept 5 min)${fin(k.mix) ? ` · this window: 1 token = ${k.mix.toFixed(3)} cache reads on average` : ''}</div></div>
      <span class="mute small">counted</span><div class="small mute">${plural(p.cost.runs, 'run')} in ${p.cost.ms.toFixed(1)} ms · ${mTok(p.cost.bytesRead)} bytes of session files read</div></div></section>
    <section class="card" id="usage-checkins"><h2>Check-ins <span class="mute small">the short agent turns that review finished runs and start the next (norn tick, or the scheduler every 15 min)</span></h2>${ck}</section></div>
+   ${adviceStrip(p.advice, ctx)}
+   ${classCard(p.classes, p.advice)}
+   ${replayCard(p.replay)}
    ${weekCard(p.week)}
    ${usageTable('usage-lane', 'By lane', 'each line of work (its own branch), in this window', usageGroup(rows, ['lane']), ['lane'], maxPct)}
    ${usageTable('usage-stage', 'By lane and stage', 'each step of a lane', usageGroup(rows, ['lane', 'stage']), ['lane', 'stage'], maxPct)}
@@ -814,6 +1130,81 @@ function weekCard(w) {
   return `<div class="tablecard" id="usage-week"><h3>Where the tokens went <span class="mute small">${w.window === 'week' ? 'since the weekly reset' : 'last 7 days'} · ${plural(w.totals.runs, 'run')} · ${fin(w.totals.pct) ? pcA(w.totals.pct) + ' of your weekly Claude limit' : '% of your weekly Claude limit not known'} · ${w.totals.merged} merged into main · the four token types are counted apart, never added up</span></h3>
    <table><thead><tr><th>lane</th><th>stage</th><th>runs</th><th>input</th><th>cache write</th><th>cache read</th><th>output</th><th>~% of week</th><th>how the runs ended</th><th>merged</th><th>tokens per merged branch</th></tr></thead><tbody>${body}</tbody></table>
    <h3 style="margin-top:10px">Top 5 spenders <span class="mute small">the runs that used the most; why = turns x average context size (every turn re-reads the whole context)</span></h3><ol id="usage-top" class="small">${top || '<li class="mute">none</li>'}</ol></div>`;
+}
+// META-TEND P2 (REPORT 4.3): what each kind of work costs - per FINISHED task (a stage that reached DONE; its resumes, hand-offs and
+// fix rounds counted in), by kind of work, by model, and the full class x executor x model x effort grid; the week's Fable runs (Q4).
+// On the shared widgets (META-TEND P6, REPORT 5.3): per kind and per model = `bars`, the grid's cells = `meter`. cost = weighted tokens in cache-read units.
+const rate = x => (fin(x) ? Math.round(100 * x) + ' %' : '-');
+const srcChip = r => (r.src === 'inferred' ? ' ' + chip('idle', 'inferred') : '');
+function classCard(c, adv = null) {
+  const advOn = cls => guardChip((adv?.cards || []).filter(x => x.id === cls && !x.decided).map(x => ({ severity: x.severity, why: x.title })), { tab: 'usage', jump: 'usage-advice' });   // META-TEND P6: the chip in place
+  if (!c) return '';
+  if (c.error) return `<div class="tablecard" id="usage-class"><h3>What each kind of work costs</h3><div class="small mute">${esc(c.error)}</div></div>`;
+  const maxCost = Math.max(1, ...c.byClass.map(r => r.cost_per_done ?? 0), ...c.byClassModel.map(r => r.cost_per_done ?? 0));
+  const ended = r => `${r.done} of ${r.stages} done · ${rate(r.stop_rate)} stopped · ${rate(r.merged_rate)} merged`;
+  const none = n => `<tr><td colspan="${n}" class="mute">No finished stage in the window.</td></tr>`;
+  const noneP = '<p class="small mute" style="padding:0 12px">No finished stage in the window.</p>';
+  const kind = c.byClass.length ? bars(c.byClass.map(r => ({ label: r.label, value: r.cost_per_done ?? 0,
+    note: `${ended(r)} · ${fin(r.runs_per_done) ? r.runs_per_done.toFixed(1) : '-'} runs per finished task${srcChip(r)}${advOn(r.class)}` })), { id: 'usage-class-kind', max: maxCost, fmt: v => v ? mTok(v) : '-' }) : noneP;
+  const model = c.byClassModel.length ? bars(c.byClassModel.map(r => ({ label: `${r.label} · ${r.model}`, value: r.cost_per_done ?? 0, note: `${ended(r)}${srcChip(r)}` })),
+    { id: 'usage-class-model', max: maxCost, fmt: v => v ? mTok(v) : '-' }) : noneP;
+  const maxCr = Math.max(1, ...c.rows.map(r => r.cache_read.p90 ?? 0));
+  const grid = c.rows.map(r => `<tr><td><b>${esc(r.label)}</b>${srcChip(r)}</td><td>${esc(r.executor)}</td><td>${esc(r.model)}</td><td>${esc(r.effort)}</td>
+    <td class="mono">${r.stages}</td><td class="mono">${r.runs}</td><td class="mono">${rate(r.done_rate)}</td><td class="mono">${rate(r.stop_rate)}</td><td class="mono">${rate(r.merged_rate)}</td>
+    <td style="width:14%">${fin(r.cache_read.median) ? `<span class="mono">${mTok(r.cache_read.median)} / ${mTok(r.cache_read.p90)}</span>${meter(r.cache_read.median, maxCr, r.cache_read.p90)}` : dash}</td>
+    <td class="mono">${fin(r.output.median) ? mTok(r.output.median) : dash}</td><td class="mono">${fin(r.cost_per_done) ? mTok(r.cost_per_done) : dash}</td>
+    <td class="small mute">${esc(r.basis.join(', '))}</td></tr>`).join('') || none(13);
+  const f = c.fable || { count: 0, runs: [] };
+  const fable = `<div class="small" id="usage-fable" style="padding:6px 12px">${chip(f.count ? 'warn' : 'idle', plural(f.count, 'Fable run'))} this window <span class="mute">- Fable is the cost class: the hardest long work only${f.count ? ': ' + f.runs.map(esc).join(', ') : ''}</span></div>`;
+  return `<div class="tablecard" id="usage-class"><h3>What each kind of work costs <span class="mute small">per finished task</span></h3>
+   <div class="small mute" style="padding:0 12px">A finished task = a stage that reached DONE, its resumes, hand-offs and fix rounds counted in. Cost = weighted tokens in cache-read units (all its stages, finished or not, / finished ones). ${plural(c.open, 'stage')} still open left out.${c.inferred_runs ? ` ${plural(c.inferred_runs, 'run')} from before the class stamp: class inferred, kept in their own rows.` : ''}</div>
+   ${fable}
+   <h3 style="margin-top:6px">Per kind of work <span class="mute small">cost per finished task</span></h3>${kind}
+   <h3 style="margin-top:10px">By model <span class="mute small">cost per finished task</span></h3>${model}
+   <h3 style="margin-top:10px">Class x agent x model x effort <span class="mute small">cache reads per finished task: median / p90 (the bar's tick)</span></h3>
+   <table id="usage-class-grid"><thead><tr><th>kind of work</th><th>agent</th><th>model</th><th>effort</th><th>stages</th><th>runs</th><th>done</th><th>stopped</th><th>merged</th><th>cache read</th><th>output</th><th>cost</th><th>class from</th></tr></thead><tbody>${grid}</tbody></table></div>`;
+}
+// META-TEND P4: the Advice strip - the open cards (the Inbox shows the same), the vendor sources with the day each was read
+function adviceStrip(a, ctx) {
+  if (!a) return '';
+  if (a.error) return `<section class="card" id="usage-advice"><h2>Advice</h2><div class="small mute">${esc(a.error)}</div></section>`;
+  const srcs = [...new Map((a.sources || []).map(s => [s.ref + s.read, s])).values()];
+  const dated = srcs.map(s => `${esc(s.ref)} ${esc(s.read)}${s.stale ? ' ' + chip('warn', 'stale') : ''}`).join(' · ');
+  const cards = (a.cards || []).map(c => adviceRow({ ...c, project: a.project }, { ...ctx, project: a.project })).join('');
+  return `<section class="card" id="usage-advice"><h2>Advice <span class="mute small">${plural((a.cards || []).length, 'open card')}${a.decided ? ` · ${a.decided} decided` : ''} · what the vendors say vs what the work cost here</span></h2>
+   ${cards || `<div class="small">${chip('ok', 'all clear')} <span class="mute">No advice: no class sits above the vendor's starting effort or on a pricier model than its work needs.</span></div>`}
+   <div class="small mute" id="usage-advice-sources" style="margin-top:6px">Vendor guidance (engine/presets/advice/models.json), read: ${dated || '-'}${a.stale?.length ? ` - ${plural(a.stale.length, 'source')} past the re-read date` : ''}</div></section>`;
+}
+// META-TEND P4 (owner Q2): the replay test - recorded check-in rulings vs cheaper models on the same frozen inputs (norn eval report)
+const VERDICT = { agree: 'ok', harmless: 'idle', refused: 'refused', recoverable: 'warn', harmful: 'bad', error: 'bad' };
+// META-CHECKIN-GUARDS R1: a tick's verdicts as one split bar (the shared stack widget; refused = a guard refused the move in code)
+const VERDICT_PARTS = [['agree', 'agree'], ['harmless', 'harmless'], ['refused', 'refused by a guard'], ['recoverable', 'recoverable'], ['harmful', 'harmful'], ['errors', 'error']];
+const verdictStack = (t, id) => stack(VERDICT_PARTS.map(([k, label]) => ({ key: 'v-' + k, label, value: t[k] ?? 0 })), { id });
+function guardsBlock(r, short) {
+  if (!r.before) return '';
+  const g = r.guard_history, rows = r.arms.map((a, i) => { const b = r.before.arms_total.find(t => t.arm === a), t = r.arms_total.find(x => x.arm === a);
+    return `<tr><td><b>${esc(short(a))}</b></td><td data-label="before">${b ? verdictStack(b, `usage-replay-before-${i}`) : dash}</td><td data-label="after">${t ? verdictStack(t, `usage-replay-after-${i}`) : dash}</td></tr>`; }).join('');
+  return `<h3 style="margin-top:8px">Before / after the check-in guards <span class="mute small">the same stored moves graded again: a move a guard refuses in code never happens (exit 6 lane busy, exit 2 owner-only ask)</span></h3>
+   <table id="usage-replay-guards"><thead><tr><th>model</th><th>before</th><th>after</th></tr></thead><tbody>${rows}</tbody></table>
+   ${g ? `<div class="small mute" id="usage-replay-history">Guard check on the recorded history: ${g.dispatches} check-in dispatches, ${g.busy.length} refused by "lane busy"${g.dup.length ? ` (${g.dup.length} more meet the older duplicate check first)` : ''}; ${g.rulings} check-in rulings of a question, ${g.owner_only.length} refused by "owner-only ask".</div>` : ''}`;
+}
+function replayCard(r) {
+  if (!r || !r.arms?.length) return '';
+  const short = a => a.replace(/^claude:claude-/, '').replace(/:/g, ' ');
+  const tot = bars(r.arms_total.map(t => ({ label: `${short(t.arm)} (${t.ticks} ticks)`, value: t.agree, note: `${t.harmless} harmless · ${t.refused ?? 0} refused · ${t.recoverable} recoverable · ${t.harmful} harmful · ${t.errors} errors · ${mTok(t.tokens)} tokens` })),
+    { id: 'usage-replay-arms', max: Math.max(1, ...r.arms_total.map(t => t.ticks)), fmt: v => `${v} agree` });
+  const clsNames = [...new Set(r.classes.map(c => c.cls))];
+  const per = clsNames.map(k => `<tr><td><b>${esc(k)}</b></td>${r.arms.map(a => { const c = r.classes.find(x => x.arm === a && x.cls === k);
+    const off = c ? ['refused', 'harmful'].filter(x => c[x]).map(x => `${c[x]} ${x}`).join(' · ') : '';
+    return `<td style="width:30%">${c ? `<span class="mono">${c.agree} of ${c.recorded}</span>${meter(c.agree, Math.max(1, c.recorded))}${off ? `<div class="small mute">${esc(off)}</div>` : ''}` : dash}</td>`; }).join('')}</tr>`).join('');
+  const cell = x => (x ? `${chip(VERDICT[x.verdict] || 'idle', x.verdict)}<div class="small">${x.cand.map(esc).join('<br>')}</div>${x.verdict !== 'agree' && x.why?.length ? `<div class="small mute">${x.why.slice(0, 4).map(esc).join('<br>')}${x.why.length > 4 ? `<br>+${x.why.length - 4} more` : ''}</div>` : ''}` : dash);
+  const side = r.ticks.map(t => `<tr><td class="id">${esc(t.tick)}</td><td class="small">${esc(t.stratum)}</td><td data-label="recorded" class="small">${t.recorded.length ? t.recorded.map(esc).join('<br>') : '<span class="mute">nothing</span>'}</td>${r.arms.map(a => `<td data-label="${esc(short(a))}">${cell(t.arms[a])}</td>`).join('')}</tr>`).join('');
+  return `<div class="tablecard" id="usage-replay"><h3>Cheaper check-ins: the replay test <span class="mute small">recorded check-ins re-run offline on the same inputs · ${esc(r.project ?? '')} · ${esc(String(r.at ?? '').slice(0, 16))}</span></h3>
+   <h3 style="margin-top:4px">Ticks that agree, per model</h3>${tot}
+   ${guardsBlock(r, short)}
+   <h3 style="margin-top:8px">Agreement per class of ruling</h3><table id="usage-replay-class"><thead><tr><th>ruling</th>${r.arms.map(a => `<th>${esc(short(a))}</th>`).join('')}</tr></thead><tbody>${per}</tbody></table>
+   <h3 style="margin-top:8px">Side by side <span class="mute small">the recorded ruling vs each cheaper model; ${plural(r.choices?.length ?? 0, 'same-lane ruling')} with a different choice</span></h3>
+   <table id="usage-replay-side"><thead><tr><th>tick</th><th>class</th><th>recorded</th>${r.arms.map(a => `<th>${esc(short(a))}</th>`).join('')}</tr></thead><tbody>${side}</tbody></table></div>`;
 }
 function usage(d, ctx) {
   const parts = d.parts || [];

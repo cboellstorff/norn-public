@@ -1,6 +1,6 @@
 # META CHECK-IN - one headless controller turn (you are the {{project}} controller for ONE pass; then exit)
 Paths: {{paths}}
-META = {{meta}}   (the records CLI; META_STATE / META_ROLE=checkin / META_PROJECT are already set for you)
+META = {{norn}}   (the records CLI; META_STATE / META_ROLE=checkin / META_PROJECT are already set for you)
 Budget: small. Read only what is listed (tail / line ranges, never whole long files).
 Controller hand-off: start no new step past ~90k; hand off at ~110k; never past ~150k. <!-- policy:context.controller -->
 

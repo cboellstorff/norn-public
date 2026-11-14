@@ -16,7 +16,7 @@ import { checkinGate, noteCheckin, noteSkip, notePaused, noteDebounce, readGate,
 import { handleRoutineEnds, checkinPolicy, laneLevel, debounceOf } from './checkins.mjs';
 import { watchProbe } from './watch.mjs';
 import { MACHINE_DEFAULTS, HARNESS_EXECUTORS, capText } from './policy.mjs';
-import { profileOf } from './standing.mjs';
+import { profileOf, memoryOf, memoryEnv } from './launchpolicy.mjs';
 import { BUILTIN } from './executors.mjs';
 import { ledgerStep } from './ledger.mjs';
 import { tickMergeq, mqProbe } from './mergeq.mjs';
@@ -44,7 +44,8 @@ export function policyLine(B = {}) {
 /** Fill engine/prompts/CHECKIN.md (or o.template: CHECKIN-MINOR.md) + the project's checkin_extra -> state/<NAME>.rendered.md; returns that path. */
 export function renderCheckin(p, { budgetFile, budget = {}, statusFile = path.join(p.state, 'STATUS.md'), metaRoot = path.join(ENGINE, '..'), template = CHECKIN_PROMPT, wake = '(not given)', cv = '' } = {}) {
   const v = {
-    project: p.name, meta: `node "${fwd(META_CMD)}"`, meta_root: fwd(metaRoot), status: fwd(statusFile), budget: fwd(budgetFile || '(none)'),
+    project: p.name, norn: `node "${fwd(META_CMD)}"`, meta: `node "${fwd(META_CMD)}"`,   // meta = the old name (META-NAME-W3)
+    meta_root: fwd(metaRoot), status: fwd(statusFile), budget: fwd(budgetFile || '(none)'),
     ledger: fwd(p.ledger || '(none)'), briefs_dir: fwd(p.briefs_dir || p.root), policy: policyLine(budget),
     rules: (p.rules_read_whole || []).map(fwd).join(', ') || '(none)', wake,
     paths: [['ROOT', p.root], ['STATE', p.state], ['BRIEFS', p.briefs_dir], ['LEDGER', p.ledger]].filter(([, x]) => x).map(([k, x]) => `${k}=${fwd(x)}`).join('  '),
@@ -200,8 +201,9 @@ function tickPass(o, g = {}) {
       brief: ck, worktree: p.checkin?.cwd || p.root, addDirs: p.checkin?.add_dirs || [], model, effort, exe: cx.exe,
       ...(cx.trial ? { trial: cx.trial, writable_roots: cx.writable_roots, fallback: cx.fallback, ...(cx.mcp ? { mcp: cx.mcp } : {}) } : {}),
       promptText: `Read ${fwd(ck)} and do exactly that. BUDGET file for this check-in: ${fwd(o.budgetFile || '(none)')}`,
-      env: { ...(p.executors?.claude?.env || {}), VIRTUAL_ENV: null, META_STATE: state, META_ROLE: 'checkin', ...(p.file ? { META_PROJECT: p.file } : {}),
-        ...(o.dry && o.fakeMs ? { FAKE_MS: String(o.fakeMs) } : {}) },
+      env: memoryEnv({ ...(p.executors?.claude?.env || {}), VIRTUAL_ENV: null, META_STATE: state, META_ROLE: 'checkin', ...(p.file ? { META_PROJECT: p.file } : {}),
+        ...(o.dry && o.fakeMs ? { FAKE_MS: String(o.fakeMs) } : {}) }, memoryOf(p.policy, 'checkin')),   // META-PRACTICE-P1
+      ...(memoryOf(p.policy, 'checkin') === 'off' ? { memory: 'off' } : {}),
       profile: profileOf(p.policy, 'checkin'),   // META-STANDING-CONTEXT R1: policy.launch.roles.checkin (full = today's launch)
       policy: { auto_resume_handoff: false, trigger_on_exit: false }, tick: null, budget: B, paused, ...(o.ledger ? { git_ledger: o.ledger } : {}), projectsDir: machine.claude?.projects_dir,
       ...(o.hbMs ? { hbMs: o.hbMs } : {}), staleMs,

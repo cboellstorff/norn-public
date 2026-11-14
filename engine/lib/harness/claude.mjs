@@ -38,7 +38,7 @@ function mergeArgs(own, extra) {
   }
   return out;
 }
-// META-STANDING-CONTEXT R1: a launch profile's switches (standing.mjs PROFILE_DEFAULTS; data in policy.launch) -> Claude Code 2.1.3xx
+// META-STANDING-CONTEXT R1: a launch profile's switches (launchpolicy.mjs PROFILE_DEFAULTS; data in policy.launch) -> Claude Code 2.1.3xx
 // flags. "full" (no switch) adds nothing: today's launch, byte-same. Never --bare: it never reads the OAuth login (a subscription).
 export function profileArgs(p) {
   if (!p) return [];
@@ -128,11 +128,12 @@ export function chatEvents(line) {
   if (!j) return [];
   if (j.type === 'system' && j.subtype === 'init')
     return [{ kind: 'session', session_id: j.session_id ?? null, model: j.model ?? null, permission_mode: j.permissionMode ?? null,
-      mcp: (j.mcp_servers || []).map(s => ({ name: s.name, status: s.status })) }];
+      mcp: (j.mcp_servers || []).map(s => ({ name: s.name, status: s.status })), ...(Array.isArray(j.slash_commands) ? { commands: j.slash_commands.map(String) } : {}) }];
   if (j.type === 'assistant' && Array.isArray(m?.content)) {
     const out = m.content.flatMap(b => b?.type === 'text' && String(b.text ?? '').trim() ? [{ kind: 'text', text: b.text }]
       : b?.type === 'tool_use' ? [{ kind: 'tool', name: String(b.name ?? 'tool'), id: b.id ?? null, input: b.input ?? {} }] : []);
-    if (m.usage) out.push({ kind: 'usage', ctx: usageCtx(m.usage) });
+    // R1: a local command's reply (/context ...) is a synthetic line with all-zero usage - no model call, so no context reading
+    if (m.usage && usageCtx(m.usage) > 0) out.push({ kind: 'usage', ctx: usageCtx(m.usage) });
     return out;
   }
   if (j.type === 'user' && Array.isArray(m?.content)) {
@@ -192,7 +193,8 @@ function feed(run, cursor, env = {}) {
 // .claude/CLAUDE.md at the session root every session, nested ones when the session reads files under them (on demand), the user's
 // <config dir>/CLAUDE.md every session; a `@path` line imports that file into the importer's load. --agent <role> loads one agent file.
 export const instructions = { family: 'claude', label: 'Claude Code', repo: ['CLAUDE.md', 'CLAUDE.local.md', '.claude/CLAUDE.md'],
-  user: ['${claude_config}/CLAUDE.md'], imports: true, agents: '.claude/agents', skills: '.claude/skills' };
+  user: ['${claude_config}/CLAUDE.md'], imports: true, agents: '.claude/agents', skills: '.claude/skills',
+  verified: { version: '2.1.314', date: '2026-11-14', source: 'code.claude.com/docs memory (META-PRACTICE-P1 check 23: re-check on a CLI update)' } };
 
 export default {
   family: 'claude', caps, instructions, mailHook: true, command, profileArgs, probe, parse, endData, feed, chatCommand, chatEvents,

@@ -155,3 +155,30 @@ test('the Norn tab bar (META-NAV R2, owner Q-16 A + C): each Norn group framed i
   n(':root.norn nav .ng', /flex-wrap\s*:\s*wrap/); n(':root.norn nav .ng', /max-width\s*:\s*100%/);
   assert.equal(renderNav('records', {}, 'classic'), renderNav('records', {}), 'classic bar unchanged');
 });
+
+// META-TEND P6: SloppaChoppa's vendored art (norn-art-orc/out, ORC-1 round 5 + 6) under the asset map's names: each file its exact
+// size, palette-indexed (colour type 3), binary alpha, and every colour its pixels use on palette.hex
+test('the orc art: every orc asset present at its size, indexed, binary alpha, on the palette', () => {
+  const orc = Object.values(ASSETS).filter(a => a.file.startsWith('orc-'));
+  assert.equal(orc.length, 10);
+  for (const a of orc) {
+    const b = fs.readFileSync(path.join(N, 'art', a.file));
+    assert.deepEqual([b.readUInt32BE(16), b.readUInt32BE(20), b[24], b[25]], [a.w, a.h, 8, 3], a.file);
+    const chunk = t => { for (let i = 8; i < b.length;) { const n = b.readUInt32BE(i); if (b.toString('latin1', i + 4, i + 8) === t) return b.subarray(i + 8, i + 8 + n); i += 12 + n; } return null; };
+    const plte = chunk('PLTE'), trns = chunk('tRNS') ?? Buffer.alloc(0);
+    assert.ok([...trns].every(v => v === 0 || v === 255), `${a.file}: binary alpha`);
+    for (const i of pngIndices(b)) {
+      if (trns[i] === 0) continue;
+      const hex = plte.subarray(3 * i, 3 * i + 3).toString('hex');
+      assert.ok(PAL.has('#' + hex), `${a.file}: #${hex} is not on palette.hex`);
+    }
+  }
+});
+
+// META-TEND P6 shots: the phone header's 16 axe sits in a 44 px touch target - on the UI scale (--px, whole device pixels, ~2x),
+// not at 16 device pixels (a speck at 8 css px on a 2x phone)
+// (look.mjs assetImg: k 'ui' = calc(w * var(--px)), else var(--d1))
+test('the phone header orc-16 is drawn on the UI scale', () => {
+  assert.equal(ASSETS['orc-16'].k, 'ui');
+  assert.equal(ASSETS['orc-32'].k, 1, 'the desktop 32 stays at its native size');
+});

@@ -36,8 +36,8 @@ export function createFeeds({ pollMs = 2000, lingerMs = 10000, max = 4 } = {}) {
     });
     for (const e of fresh) c.cursor = advance(c.cursor, e.at);
   }
-  const noteCtx = (t, events) => { for (const e of events) if (e.kind === 'usage') { t.ctx = e.ctx; if (Number.isFinite(e.window)) t.window = e.window; } };
-  const headOf = t => { try { return t.source.head({ ctx: t.ctx ?? null, window: t.window ?? null }); } catch { return null; } };
+  const noteCtx = (t, events) => { for (const e of events) if (e.kind === 'usage') { t.ctx = e.ctx; t.peak = Math.max(t.peak ?? 0, e.ctx ?? 0) || null; if (Number.isFinite(e.window)) t.window = e.window; } };
+  const headOf = t => { try { return t.source.head({ ctx: t.ctx ?? null, peak: t.peak ?? null, window: t.window ?? null }); } catch { return null; } };
   function sendHead(t, only) {
     const h = headOf(t); if (!h) return;
     const s = JSON.stringify(h);

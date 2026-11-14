@@ -286,7 +286,7 @@ function machine({ setup = true } = {}) {
   const g = (...a) => assert.equal(spawnSync('git', ['-C', d.repo, '-c', 'user.name=t', '-c', 'user.email=t@t.test', '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8' }).status, 0);
   g('init', '-q', '-b', 'main'); g('add', '-A'); g('commit', '-q', '-m', 'init');
   const projects = () => JSON.parse(fs.readFileSync(path.join(d.root, 'local', 'machine.json'), 'utf8')).projects;
-  const config = () => projects()[0].config.replace('${meta}', d.root);
+  const config = () => projects()[0].config.replace('${norn}', d.root);
   return { ...d, env, projects, config };
 }
 

@@ -125,3 +125,20 @@ test('suiteEnv: the temp repos of the suite skip git auto maintenance (a gc / ma
   const k = suiteEnv({ GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.x', GIT_CONFIG_VALUE_0: 'y' });
   assert.equal(k.GIT_CONFIG_COUNT, '3'); assert.equal(k.GIT_CONFIG_KEY_0, 'core.x'); assert.equal(k.GIT_CONFIG_KEY_2, 'gc.auto');
 });
+
+// META-TEND TESTS: --measure writes per test file its wall ms and per test its ms; --coverage adds the engine lines each file covered
+test('ci-suite --measure OUT --coverage: per file the tests (subtest before parent) with ms, and the engine lines it covered', () => {
+  const out = path.join(mkTmp('meta-measure-'), 'm.json');
+  const r = spawnSync(process.execPath, [CI, '--measure', out, '--coverage', 'tests/fixtures/measure/*.test.mjs'], { cwd: REPO, encoding: 'utf8', env: suiteEnv(process.env) });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const m = JSON.parse(fs.readFileSync(out, 'utf8'));
+  assert.equal(m.coverage, true); assert.ok(m.suite_ms > 0);
+  const [f] = m.files;
+  assert.equal(f.file, 'tests/fixtures/measure/m.test.mjs'); assert.ok(f.ms > 0);
+  assert.deepEqual(f.tests.map(t => [t.name, t.nesting, t.ok]), [['inner names RUN-1', 1, true], ['outer', 0, true]]);
+  assert.ok(f.cov['engine/lib/names.mjs'].length > 0 && f.totals['engine/lib/names.mjs'] > 0, 'names.mjs lines covered');
+  assert.ok(!Object.keys(f.cov).some(k => k.startsWith('tests/') || k.includes('/vendor/')), 'only engine/, no vendor');
+  const bad = spawnSync(process.execPath, [CI, '--coverage', 'tests/fixtures/measure/*.test.mjs'], { cwd: REPO, encoding: 'utf8' });
+  assert.equal(bad.status, 2); assert.match(bad.stderr, /--coverage needs --measure/);
+  cleanTmp();
+});

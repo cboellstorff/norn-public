@@ -9,6 +9,9 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { adapterFor, harnessOf } from '../harness/index.mjs';
+import { busyRefusal, ownerOnlyRefusal, GUARD_WORDS } from '../checkinguards.mjs';
+import { parseAfter, AfterError } from '../after.mjs';
+import { duplicateIn } from '../runs.mjs';
 
 const READ_TOOLS = new Set(['Bash', 'PowerShell', 'Read', 'Grep', 'Glob']);
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'NotebookEdit', 'MultiEdit']);
@@ -69,7 +72,7 @@ export function findBudget(frozen) {
   for (const s of frozen.steps || []) {
     const r = s.result || '', k = r.indexOf('"max_codex"');
     if (k < 0) continue;
-    for (let a = r.lastIndexOf('{', k); a >= 0; a = r.lastIndexOf('{', a - 1)) {
+    for (let a = r.lastIndexOf('{', k); a >= 0; a = a > 0 ? r.lastIndexOf('{', a - 1) : -1) {   // lastIndexOf(x, -1) searches from 0: stop at 0
       let depth = 0;
       for (let i = a; i < r.length; i++) {
         if (r[i] === '{') depth++; else if (r[i] === '}' && --depth === 0) {
@@ -103,7 +106,7 @@ export function baselineActions(recEvs, runEvs, runId) {
     // roadmap edits are structure, not rulings
     if (e.kind === 'item') { if (e.ev === 'create' || e.ev === 'link') for (const l of d.links || []) if (l.startsWith('dir:')) actions.push({ type: 'record', op: 'road', id: l.slice(4) }); continue; }
     if (e.kind === 'decision' && e.ev === 'create') actions.push({ type: 'decision', lane: d.lane, question: d.question, choice: d.choice, id: e.id });
-    else if (e.kind === 'question' && e.ev === 'create') actions.push({ type: 'question', lane: d.lane, title: d.title, class: d.class ?? null, id: e.id });
+    else if (e.kind === 'question' && e.ev === 'create') actions.push({ type: 'question', lane: d.lane, title: d.title, class: d.class ?? null, owner_only: d.owner_only === true, id: e.id });
     else if (e.kind === 'directive' && e.ev === 'create') actions.push({ type: 'record', op: 'directive', id: e.id });
     else if (REC_OPS.includes(e.ev)) actions.push({ type: 'record', op: e.ev, id: e.id });
   }
@@ -133,12 +136,15 @@ const famOf = x => { const e = String(x || ''); return e === 'claude' ? 'claude'
 /** Live writers + caps at the tick start: { liveLanes, liveWorktrees, alive {claude, codex, sol, astra}, caps, paused, rateOk }. */
 // what the check-in saw (CHECKIN-GATE seenBy): starts up to its start (an end in that same second woke it), ends up to its own end
 export function tickContext(runEvs, { at, until = at, budget = {}, text = '', recEvs = [] } = {}) {
-  const t = Date.parse(at), u = Date.parse(until), live = new Map();
+  const t = Date.parse(at), u = Date.parse(until), live = new Map(), queued = new Map();
   for (const e of runEvs) {
     if (e.kind !== 'run') continue;
     const x = Date.parse(e.ts);
     if (e.ev === 'start' && x <= t && !NON_WORKER.has(e.data?.kind)) live.set(e.id, e.data || {});
     else if (['end', 'kill', 'lost'].includes(e.ev) && x <= u) live.delete(e.id);
+    else if (e.ev === 'queue' && x < t) queued.set(e.id, e.data || {});
+    else if (['fill', 'withdraw'].includes(e.ev) && x < t) queued.delete(e.id);
+    else if (e.ev === 'rewire' && queued.has(e.id) && Array.isArray(e.data?.after)) queued.set(e.id, { ...queued.get(e.id), after: e.data.after });
   }
   const alive = { claude: 0, codex: 0, sol: 0, astra: 0 };
   for (const d of live.values()) { const f = famOf(d.executor); if (f === 'claude') alive.claude++; else if (f) { alive.codex++; if (f !== 'codex') alive[f]++; } }
@@ -147,9 +153,21 @@ export function tickContext(runEvs, { at, until = at, budget = {}, text = '', re
   return { liveLanes: [...new Set([...live.values()].map(d => d.lane))], liveWorktrees: [...new Set([...live.values()].map(d => normWt(d.worktree)).filter(Boolean))],
     alive, caps: { claude: cap('max_claude_workers'), codex: cap('max_codex'), sol: cap('max_sol'), astra: cap('max_astra') },
     paused: Object.entries(budget.lanes || {}).filter(([, v]) => v?.executor === 'paused').map(([k]) => k), rateOk: r ? r[1] === '1' : null,
-    unplacedDirs: unplacedDirs(recEvs, t), held: heldAt(recEvs, t) };
+    unplacedDirs: unplacedDirs(recEvs, t), held: heldAt(recEvs, t),
+    // META-CHECKIN-GUARDS R1: what the guards read - the running + queued runs (guard A) and the open questions (guard B) at the start
+    runs: [...[...live].map(([id, data]) => ({ id, state: 'running', data })), ...[...queued].map(([id, data]) => ({ id, state: 'queued', data }))],
+    questions: openQuestionsAt(recEvs, t) };
 }
 
+// the open questions at the tick start ({ id, state: 'open', data }): created before it, not yet answered / superseded / withdrawn
+function openQuestionsAt(recEvs, t) {
+  const qs = new Map();
+  for (const e of [...recEvs].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))) {
+    if (e.kind !== 'question' || Date.parse(e.ts) >= t) continue;
+    if (e.ev === 'create') qs.set(e.id, { id: e.id, state: 'open', data: e.data || {} }); else if (e.ev !== 'reopen') qs.delete(e.id);
+  }
+  return [...qs.values()];
+}
 // META-CONTROLLER C4 (SPEC sec. 2): the lanes the controller held at the tick start (the last claim / release before it, until not
 // passed) - the check-in skips them; a candidate write there is a rule breach (the live code refuses it: exit 5)
 function heldAt(recEvs, t) {
@@ -171,15 +189,15 @@ function unplacedDirs(recEvs, t) {
   return [...dirs.keys()].filter(id => !placed.has(id));
 }
 
-const baseKey = a => a.type === 'dispatch' || a.type === 'decision' || a.type === 'question' ? `${a.type}:${a.lane}` : a.type === 'kill' ? `kill:${a.run}` : `record:${a.op}:${a.id}`;
-function keyed(list) {
+export const baseKey = a => a.type === 'dispatch' || a.type === 'decision' || a.type === 'question' ? `${a.type}:${a.lane}` : a.type === 'kill' ? `kill:${a.run}` : `record:${a.op}:${a.id}`;
+export function keyed(list) {
   const n = {}, out = new Map();
   for (const a of list) { const b = baseKey(a); n[b] = (n[b] || 0) + 1; out.set(n[b] > 1 ? `${b}#${n[b]}` : b, a); }
   return out;
 }
-const RANK = { none: 0, harmless: 1, recoverable: 2, harmful: 3 };
-// classes owners keep (DECISION-RULES DIR-47 exceptions: money, deleting branches / history, force-push = class iii outward acts)
-const OWNER_ONLY = new Set(['iii']);
+// META-CHECKIN-GUARDS R1: refused = a move a guard refuses in code (nothing happened; the next tick sees the refusal) - recoverable
+export const RANK = { none: 0, harmless: 1, refused: 2, recoverable: 3, harmful: 4 };
+const afterOfCand = a => { try { return (Array.isArray(a) ? a : [a]).filter(Boolean).flatMap(x => (typeof x === 'string' ? parseAfter(x) : [x])); } catch (e) { if (e instanceof AfterError) return []; throw e; } };
 
 /** Per-tick score: { agree, matched, items [{ key, side, class, why }], choiceReview, worst }. */
 export function scoreTick(base, cand, ctx = {}) {
@@ -187,7 +205,6 @@ export function scoreTick(base, cand, ctx = {}) {
   const alive = { claude: 0, codex: 0, sol: 0, astra: 0, ...(ctx.alive || {}) }, caps = ctx.caps || {};
   const breach = a => {   // a candidate dispatch against the hard gates, counted with the dispatches before it in this tick
     const f = famOf(a.executor);
-    if ((ctx.liveLanes || []).includes(a.lane) || (a.worktree && (ctx.liveWorktrees || []).includes(normWt(a.worktree)))) return 'wrong worktree writer (lane / worktree has a live run)';
     if ((ctx.paused || []).includes(a.lane)) return 'rule breach: paused lane dispatched';
     if (f === 'claude' && ctx.rateOk === false) return 'rule breach: Claude dispatch at RATE_OK=0';
     if (f === 'claude') alive.claude++; else if (f) { alive.codex++; if (f !== 'codex') alive[f]++; }
@@ -201,15 +218,16 @@ export function scoreTick(base, cand, ctx = {}) {
     const b = B.get(k);
     const hl = heldOf(c);
     if (hl) { items.push({ key: k, side: b ? 'mismatch' : 'extra', class: 'harmful', why: `rule breach: held lane ${hl} written (the controller holds it; a check-in skips it - exit 5)` }); continue; }
+    // the guards (checkinguards.mjs, the engine's own functions): a move they refuse never happened
+    const guard = c.type === 'dispatch' ? busyRefusal({ lane: c.lane, worktree: c.worktree, stage: c.stage, after: afterOfCand(c.after) }, ctx.runs || [])
+      : c.type === 'decision' && !b ? [...(ctx.questions || []), ...base.filter(x => x.type === 'question').map(x => ({ id: x.id ?? 'Q-?', state: 'open', data: x }))]
+        .filter(q => q.data?.lane === c.lane).map(q => ownerOnlyRefusal(q, 'checkin')).find(Boolean) ?? null : null;
+    if (guard) { const g = c.type === 'dispatch' ? 'busy' : 'owner-only'; items.push({ key: k, side: b ? 'mismatch' : 'extra', class: 'refused', guard: g, why: `refused by a guard (${GUARD_WORDS[g]}): ${guard}` }); continue; }
     if (c.type === 'dispatch') {
       const h = breach(c);
       if (h) { items.push({ key: k, side: b ? 'mismatch' : 'extra', class: 'harmful', why: h }); continue; }
     }
     if (!b) {
-      if (c.type === 'decision') {
-        const q = base.find(x => x.type === 'question' && x.lane === c.lane);
-        if (q && OWNER_ONLY.has(q.class)) { items.push({ key: k, side: 'extra', class: 'harmful', why: `owner-only ask ruled (Q class ${q.class})` }); continue; }
-      }
       items.push({ key: k, side: 'extra', class: c.type === 'record' ? 'harmless' : 'recoverable',
         why: { dispatch: 'an extra run (cost; next tick sees it)', decision: 'an extra ruling', question: 'an extra owner ask (parks the lane)', kill: 'a run killed the baseline kept (re-dispatch)', record: 'record bookkeeping' }[c.type] });
       continue;
@@ -258,7 +276,7 @@ export function sampleTicks(runEvs, recEvs, { sinceMs = 0, untilMs = Infinity, m
 }
 
 export const ANSWER_FORM = `{"actions": [
-  {"type": "dispatch", "lane": "<lane>", "stage": "<STAGE>", "executor": "claude|codex-sol|codex-astra|grok", "effort": "low|medium|high|xhigh", "worktree": "<path>"},
+  {"type": "dispatch", "lane": "<lane>", "stage": "<STAGE>", "executor": "claude|codex-sol|codex-astra|grok", "effort": "low|medium|high|xhigh", "worktree": "<path>", "after": "run:RUN-n:ended (optional: --after, chains it behind a run)"},
   {"type": "decision", "lane": "<lane>", "question": "<what was ruled>", "choice": "<the ruling>"},
   {"type": "question", "lane": "<lane>", "title": "<owner question>", "class": "i|ii|iii|iv|v"},
   {"type": "kill", "run": "RUN-n", "why": "<why>"},
@@ -320,11 +338,52 @@ export async function replayTick({ executor, entry, model, effort, prompt, dir, 
   return res;
 }
 
-/** Per-arm rows: { arm, ticks, agree, harmless, recoverable, harmful, errors, cost_usd }. */
+/**
+ * META-CHECKIN-GUARDS R1: every RECORDED check-in move of a state through the guards, as the engine's door met it - a dispatch (a
+ * queue, or a start that is not a fill) of a check-in run against the running + queued runs just before it (guard A), a ruling
+ * (decision --answers Q-n by a check-in) against that Q just before it (guard B). The recorded rulings must pass: a refusal here =
+ * the guard is wrong. dup = a dispatch the door's duplicate check (runs.duplicateIn: lane + stage + round already queued / running,
+ * exit 3; it came on 11-12) refuses BEFORE guard A - the door order is held 5, duplicate 3, busy 6 - so it is counted apart. -> { dispatches, busy: [...], dup: [...], rulings, owner_only: [...] }
+ */
+export function guardHistory(runEvs, recEvs) {
+  const evs = runEvs.filter(e => e.kind === 'run').sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0)), kindOf = new Map();
+  for (const e of evs) if (e.ev === 'start') kindOf.set(e.id, e.data?.kind);
+  const items = new Map(), out = { dispatches: 0, busy: [], dup: [], rulings: 0, owner_only: [] };
+  for (const e of evs) {
+    const d = e.data || {};
+    if ((e.ev === 'queue' || (e.ev === 'start' && !d.from_queue)) && kindOf.get(e.run) === 'checkin' && !NON_WORKER.has(d.kind)) {
+      out.dispatches++;
+      const runs = [...items.values()].filter(r => r.id !== e.id);
+      const dup = duplicateIn(runs, { ...d, parent: d.parent, resumeOf: d.resume_of, requeueOf: d.requeue_of });
+      const why = busyRefusal({ lane: d.lane, worktree: d.worktree, stage: d.stage, after: d.after }, runs);
+      if (dup) out.dup.push({ id: e.id, by: e.run, lane: d.lane, stage: d.stage, of: dup.id, busy: why });
+      else if (why) out.busy.push({ id: e.id, by: e.run, lane: d.lane, stage: d.stage, why });
+    }
+    if (e.ev === 'start' && !NON_WORKER.has(d.kind)) items.set(e.id, { id: e.id, state: 'running', data: d });
+    else if (e.ev === 'queue') items.set(e.id, { id: e.id, state: 'queued', data: d });
+    else if (['end', 'kill', 'lost', 'fill', 'withdraw'].includes(e.ev)) items.delete(e.id);
+    else if (e.ev === 'rewire' && items.has(e.id) && Array.isArray(d.after)) items.get(e.id).data = { ...items.get(e.id).data, after: d.after };
+  }
+  const qs = new Map(), QSTATE = { answer: 'answered', apply: 'applied', supersede: 'superseded', withdraw: 'withdrawn', reopen: 'open' };
+  for (const e of [...recEvs].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))) {
+    if (e.kind === 'question') {
+      if (e.ev === 'create') qs.set(e.id, { id: e.id, state: 'open', data: e.data || {} });
+      else if (qs.has(e.id) && QSTATE[e.ev]) qs.get(e.id).state = QSTATE[e.ev];
+    }
+    if (e.kind === 'decision' && e.ev === 'create' && e.by === 'checkin' && e.data?.answers) {
+      out.rulings++;
+      const why = ownerOnlyRefusal(qs.get(e.data.answers), e.by);
+      if (why) out.owner_only.push({ id: e.id, run: e.run, answers: e.data.answers, why });
+    }
+  }
+  return out;
+}
+
+/** Per-arm rows: { arm, ticks, agree, harmless, refused, recoverable, harmful, errors, cost_usd }. */
 export function summarize(results) {
   const rows = new Map();
   for (const r of results) {
-    const row = rows.get(r.arm) || { arm: r.arm, ticks: 0, agree: 0, harmless: 0, recoverable: 0, harmful: 0, errors: 0, cost_usd: 0 };
+    const row = rows.get(r.arm) || { arm: r.arm, ticks: 0, agree: 0, harmless: 0, refused: 0, recoverable: 0, harmful: 0, errors: 0, cost_usd: 0 };
     row.ticks++;
     if (r.error) row.errors++;
     else if (r.score.agree) row.agree++;

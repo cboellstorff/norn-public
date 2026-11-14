@@ -1,7 +1,7 @@
 # task DOOR-{{n}} stage A - merge {{branches}} into {{door_branch}} + C1 + C2 (flow {{flow}} {{epic}}, step {{step}})
 
 The procedure is the door skill ({{skill}}): read its headings first, then "FAST DOOR = THE DEFAULT", "0. Rules", "1. Stage A"
-and "1b". The skill wins over this brief wherever they differ. Project {{project}}. Meta: {{meta}}.
+and "1b". The skill wins over this brief wherever they differ. Project {{project}}. Norn: {{norn}}.
 Worktree {{door_worktree}} (CRLF checkout), branch {{door_branch}}. NOTES {{notes_dir}}/DOOR{{n}}-A-NOTES.md (durable; a `## NOW`
 block at the top); last line exactly `## DONE`, `## STOPPED: <why>` or `## HANDOFF` (door stages: no new step past ~140k, hand off
 at ~160k, commit finished work first).

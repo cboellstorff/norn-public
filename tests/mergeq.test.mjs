@@ -60,11 +60,11 @@ test('merge brief --sha: merges THAT commit in the main checkout and never touch
   assert.doesNotMatch(txt, /rebase origin|force-with-lease|-C \/h\/dev\/sdd-codex-vis (fetch|rebase|push|merge)/, 'nothing runs in the lane worktree');
   assert.match(txt, /NEVER touch the lane worktree \/h\/dev\/sdd-codex-vis/);
   for (const s of ['git -C /h/dev/sdd-codex revert -m 1', 'norn.mjs" smoke', '## DONE', 'MERGE-NOTES.md', 'SHOTS AFTER']) assert.ok(txt.includes(s), s);
-  assert.deepEqual(briefMarker(txt), { mode: 'staged', lane: 'meta-vis', branch: 'feat/vis', worktree: '/h/dev/sdd-codex-vis', sha, main: '/h/dev/sdd-codex' });
+  assert.deepEqual(briefMarker(txt), { mode: 'staged', lane: 'meta-vis', branch: 'feat/vis', worktree: '/h/dev/sdd-codex-vis', sha, main: '/h/dev/sdd-codex', notes: '/h/r/meta-vis/MERGE-NOTES.md' });
   // the rebase brief keeps its text and names the lane worktree it rebases in
   const rb = renderMergeBrief(P, O);
   assert.match(rb, /rebase origin\/main/);
-  assert.deepEqual(briefMarker(rb), { mode: 'rebase', lane: 'meta-vis', branch: 'feat/vis', worktree: '/h/dev/sdd-codex-vis', main: '/h/dev/sdd-codex' });
+  assert.deepEqual(briefMarker(rb), { mode: 'rebase', lane: 'meta-vis', branch: 'feat/vis', worktree: '/h/dev/sdd-codex-vis', main: '/h/dev/sdd-codex', notes: '/h/r/meta-vis/MERGE-NOTES.md' });
   assert.equal(briefMarker('# a hand-written brief'), null);
   assert.throws(() => renderMergeBrief(P, { ...O, sha: 'nothex' }), /sha/);
 });

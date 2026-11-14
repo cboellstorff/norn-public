@@ -76,7 +76,8 @@ test('each tab has a data endpoint from records / runs / transcripts', async () 
     assert.equal(by.render.executor, 'codex-sol'); assert.match(by.render.text, /^running codex-sol .*\/ budget 90$/);
     assert.equal(by.gen.text, 'parked by Q-1'); assert.equal(by.seabed.text, 'exited: STOPPED: red test');
     const inbox = (await f.get('/api/inbox')).data.items;
-    assert.deepEqual(inbox.map(i => `${i.type} ${i.id}`).sort(), ['parked L:gen', 'question Q-1', 'unreviewed RUN-1']);
+    // META-TEND P4: + one model-advice card - the engine default planning effort (xhigh) is above the vendor's start (high)
+    assert.deepEqual(inbox.map(i => i.type === 'advice' ? `advice ${i.cls} ${i.check}` : `${i.type} ${i.id}`).sort(), ['advice planning effort-above-start', 'parked L:gen', 'question Q-1', 'unreviewed RUN-1']);
     const tree = (await f.get('/api/agents')).data.tree;
     const w = tree.find(n => n.id === 'RUN-1'), c = tree.find(n => n.id === 'RUN-2');
     assert.equal(w.ctx, 4 + 33810 + 31513); assert.equal(w.children[0].agentType, 'kestrel-implementer'); assert.equal(w.ctx_limit, 110000);
@@ -112,7 +113,7 @@ test('project switcher: two projects, ?project= scopes every tab, all sums the o
   const f = await fixture();
   try {
     assert.deepEqual((await f.get('/api/projects')).data.projects, [{ name: 'kestrel', title: 'KESTREL', needs: 3 }, { name: 'other', title: 'OTHER', needs: 1 }]);
-    const b = (await f.get('/api/inbox?project=other')).data.items;
+    const b = (await f.get('/api/inbox?project=other')).data.items.filter(i => i.type !== 'advice');   // META-TEND P4: advice is advisory, not a need
     assert.deepEqual(b.map(i => i.title), ['other project question']);
     assert.equal((await f.get('/api/lanes?project=other')).data.lanes.length, 0);
     const all = (await f.get('/api/overview?project=all')).data;
@@ -187,7 +188,7 @@ test('GET / serves the UI shell and injects the token (tab / panel ids: tests/ui
   const f = await fixture();
   try {
     const r = await fetch(f.url + '/'), html = await r.text(); assert.equal(r.status, 200);
-    assert.deepEqual(TABS, ['home', 'overview', 'inbox', 'lanes', 'agents', 'map', 'roadmap', 'plan', 'records', 'usage', 'docs', 'instructions', 'ledger', 'settings']);
+    assert.deepEqual(TABS, ['home', 'overview', 'inbox', 'lanes', 'agents', 'map', 'roadmap', 'plan', 'records', 'usage', 'tests', 'docs', 'instructions', 'guard', 'ledger', 'settings']);
     for (const id of ['tabs', 'main', 'project', 'theme']) assert.ok(html.includes(`id="${id}"`), id);
     assert.ok(html.includes(f.app.token)); assert.ok(!/api\/phone|qrSvg/.test(html));
   } finally { await f.done(); }

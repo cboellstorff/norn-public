@@ -1,6 +1,6 @@
 # META MINOR CHECK-IN - one REDUCED headless controller turn ({{project}}; one pass, then exit)
 Paths: {{paths}}
-META = {{meta}}   (the records CLI; META_STATE / META_ROLE=checkin / META_PROJECT are already set for you)
+META = {{norn}}   (the records CLI; META_STATE / META_ROLE=checkin / META_PROJECT are already set for you)
 Woken by (the gate; MINOR facts only): {{wake}}
 Budget: tiny. Read ONLY what is listed below: no rules file, no NOTES, no code, no logs, no other section of STATUS.
 

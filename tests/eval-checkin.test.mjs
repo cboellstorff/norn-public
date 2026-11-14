@@ -82,15 +82,14 @@ test('scoreTick classes: missing dispatch recoverable, effort-only mismatch harm
   assert.equal(s.worst, 'recoverable');
 });
 
-test('scoreTick harmful: wrong worktree writer, paused lane, RATE_OK=0 claude, past the cap, owner-only ask ruled', () => {
+// META-CHECKIN-GUARDS R1: a busy worktree and an owner_only ask are the guards' now - refused, not harmful (tests/checkin-guards.test.mjs)
+test('scoreTick harmful: paused lane, RATE_OK=0 claude, past the cap; a class iii ask ruled (DIR-47) is not harmful', () => {
   const one = (cand, base = [], c = ctx) => scoreTick(base, cand, c).items.filter(i => i.class === 'harmful').map(i => i.why);
-  assert.match(one([{ type: 'dispatch', lane: 'busy', executor: 'codex-sol' }]).join(), /worktree writer/);
-  assert.match(one([{ type: 'dispatch', lane: 'n', executor: 'codex-sol', worktree: 'C:\\m-busy' }]).join(), /worktree writer/);
   assert.match(one([{ type: 'dispatch', lane: 'frozen', executor: 'codex-sol' }]).join(), /paused/);
   assert.match(one([{ type: 'dispatch', lane: 'n', executor: 'claude' }], [], { ...ctx, rateOk: false }).join(), /RATE_OK/);
   assert.match(one([{ type: 'dispatch', lane: 'n', executor: 'codex-astra' }]).join(), /cap/);
   assert.match(one([{ type: 'dispatch', lane: 'n', executor: 'codex-sol' }, { type: 'dispatch', lane: 'm', executor: 'codex-sol' }]).join(), /cap/);
-  assert.match(one([{ type: 'decision', lane: 'door', choice: 'merge it' }], [{ type: 'question', lane: 'door', class: 'iii' }]).join(), /owner-only/);
+  assert.deepEqual(one([{ type: 'decision', lane: 'door', choice: 'merge it' }], [{ type: 'question', lane: 'door', class: 'iii' }]), []);
   assert.deepEqual(one([{ type: 'decision', lane: 'door' }], [{ type: 'question', lane: 'door', class: 'ii' }]), [], 'a DIR-47 delegated class is ruled, not asked');
   assert.deepEqual(one([{ type: 'dispatch', lane: 'n', executor: 'codex-sol' }]), [], 'one sol slot is free');
 });
@@ -213,4 +212,9 @@ test('eval: new DIR -> roadmap item the same tick (road writes are actions, the 
   assert.match(miss.items[0].why, /roadmap the same tick/);
   assert.equal(scoreTick([], [], c).items[0]?.side, 'duty', 'a baseline that missed it too is still a duty miss');
   assert.match(ANSWER_FORM, /"op": "[^"]*road/);
+});
+
+test('findBudget ends when the brace scan reaches the first character (a result that starts with "{" and holds no budget object)', () => {
+  assert.equal(findBudget({ steps: [{ result: '{"note": "max_codex"' }] }), null);
+  assert.equal(findBudget({ steps: [{ result: '{"x": 1} then "max_codex" without an object' }, { result: 'budget {"max_codex": 5}' }] }).max_codex, 5);
 });

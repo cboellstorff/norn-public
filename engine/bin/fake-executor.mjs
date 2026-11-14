@@ -9,7 +9,8 @@ import { spawn, spawnSync } from 'node:child_process';
 
 const arg = n => { const i = process.argv.indexOf('--' + n); return i > 0 ? process.argv[i + 1] : undefined; };
 const brief = Object.fromEntries(fs.readFileSync(arg('brief'), 'utf8').split(/\r?\n/).map(l => l.match(/^(\w+):\s*(.*)$/)).filter(Boolean).map(m => [m[1], m[2].trim()]));
-const notes = arg('notes');
+// writes: F = the worker writes its NOTES to F, the file its brief names, whatever --notes the launcher read (META-MERGE-MARKER)
+const notes = brief.writes || arg('notes');
 const resumes = Number(arg('resumes') || 0);
 // a nudge (META-GTP-MAIL): --resume <sid> --prompt <mail> = the same session resumed; it follows brief.resumed_mode (default done), no until
 const resumeSid = arg('resume'), resumePrompt = arg('prompt');
@@ -33,6 +34,15 @@ if (mode === 'sleep' && brief.pids) {
 if (process.env.ANTHROPIC_BASE_URL) process.stderr.write(`fake: provider base_url=${process.env.ANTHROPIC_BASE_URL} model=${process.env.ANTHROPIC_MODEL ?? '-'} token=${process.env.ANTHROPIC_AUTH_TOKEN ? 'set' : 'unset'}\n`);
 
 if (brief.say) process.stderr.write(brief.say + '\n');   // a log line (e.g. a usage-limit message)
+// META-CTX-ENFORCE R1: ctx_dir + ctx_steps (contexts, comma-separated) [+ ctx_ms]: a claude-shaped transcript <ctx_dir>/<META_SESSION_ID>.jsonl
+// gains one assistant request per step, every ctx_ms (default 100) - its context = input + cache read + cache creation of that request
+if (brief.ctx_dir && brief.ctx_steps && process.env.META_SESSION_ID) {
+  const file = `${brief.ctx_dir}/${process.env.META_SESSION_ID}.jsonl`, steps = brief.ctx_steps.split(',').map(Number);
+  fs.mkdirSync(brief.ctx_dir, { recursive: true });
+  steps.forEach((c, i) => setTimeout(() => fs.appendFileSync(file, JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), requestId: `fake-${i}`,
+    message: { id: `fake-msg-${i}`, model: 'fake', role: 'assistant', content: [{ type: 'text', text: 'step' }],
+      usage: { input_tokens: 4, cache_read_input_tokens: c - 1004, cache_creation_input_tokens: 1000, output_tokens: 5 } } }) + '\n'), (i + 1) * Number(brief.ctx_ms || 100)));
+}
 // env: NAME,.. = log those env vars as the run saw them (OOTB-R2 N-16: what the supervisor hands the agent)
 for (const k of (brief.env || '').split(',').map(x => x.trim()).filter(Boolean)) process.stderr.write(`fake env ${k}=${process.env[k] ?? ''}\n`);
 const finishRun = () => {

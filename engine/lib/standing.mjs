@@ -16,6 +16,8 @@ import { HEADLESS_CORE } from './harness/common.mjs';
 import { harnessOf } from './harness/index.mjs';
 import { loadState } from './records.mjs';
 import { threadFile } from './chat.mjs';
+import { profileOf, PROFILE_ROLES } from './launchpolicy.mjs';
+// the launch profiles / memory switch live in launchpolicy.mjs (no import cycle with runs.mjs: META-QUEUE-SPEC R1)
 
 export const STANDING_METHOD = 'standing context = the first API call of a session (input + cache create + cache read, from its transcript); '
   + 'the parts share that measured total out by their characters in the first request the harness recorded (Claude Code: api-request-shape '
@@ -349,26 +351,6 @@ export function standingSummary(runs) {
   return { method: STANDING_METHOD, roles, days: dayRows, parts };
 }
 
-// ---------- lean launch profiles (policy.launch: { roles: { worker | merge | checkin | chat: name }, profiles: { name: overrides } }) ----------
-// harness-agnostic switches; each adapter maps them to its flags (profileArgs) or states a gap (profileGap)
-//   mcp: 'all' (default) | 'norn' (only Norn's own server) | 'none';  user_setup: false = the user-level settings (plugins, their hooks
-//   and skills; ~/.claude/skills stay) not loaded;  skills: false = no skills;  dynamic_prompt: false = cwd / git status out of the system
-//   prompt (cache reuse across runs);  tools / disallowed_tools: [names].  Never bare (it never reads the OAuth login).
-// lean = the calibration's best (NOTES, 2026-11-13, haiku, Claude Code 2.1.314: 46.6k -> 20.5k turn 1): skills KEPT - switching them off
-// grows the Artifact / Workflow tool schemas by ~10k (48.1k) - and the harness tools no Norn role uses dropped.
-export const LEAN_DROP_TOOLS = ['Artifact', 'Workflow', 'ScheduleWakeup', 'ReportFindings'];
-export const PROFILE_DEFAULTS = {
-  full: {},
-  lean: { mcp: 'norn', user_setup: false, dynamic_prompt: false, disallowed_tools: LEAN_DROP_TOOLS },
-};
-export const PROFILE_ROLES = ['worker', 'merge', 'checkin', 'chat'];
-/** the launch profile of a role under a project's policy: { name, ...switches } ("full" = today's launch) */
-export function profileOf(policy, role) {
-  const L = policy?.launch || {}, name = L.roles?.[role] ?? L.default ?? 'full';
-  return { name, ...(PROFILE_DEFAULTS[name] || {}), ...(L.profiles?.[name] || {}) };
-}
-/** the role of a run spec / launch: checkin | merge | worker */
-export const roleOfSpec = o => (o.kind === 'checkin' ? 'checkin' : /merge|door/i.test(String(o.lane || '')) ? 'merge' : 'worker');
 
 /**
  * What a profile drops that a role's files name: [{ what: skill | mcp | tool, name, file, why }] (the doctor's rows).
@@ -407,25 +389,4 @@ export function profileDoctorLines(p, { home = '', claudeDir = null } = {}) {
     for (const d of profileDrops(pr, { role, files, skills })) { const k = `${d.what}:${d.name}`; if (seen.has(k)) continue; seen.add(k); out.push(`${p.name}: ${d.why}`); }
   }
   return out;
-}
-
-/** an agent file (frontmatter + body) -> the --agents definition { description, prompt, tools?, model? } (Claude Code), or null */
-export function agentDef(file) {
-  let t; try { t = fs.readFileSync(file, 'utf8'); } catch { return null; }
-  const m = t.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!m) return null;
-  const fm = {};
-  for (const l of m[1].split(/\r?\n/)) { const k = l.match(/^([\w-]+):\s*(.*)$/); if (k) fm[k[1]] = k[2].trim(); }
-  return { description: fm.description || fm.name || path.basename(file, '.md'), prompt: m[2], ...(fm.tools ? { tools: fm.tools.split(/\s*,\s*/).filter(Boolean) } : {}), ...(fm.model ? { model: fm.model } : {}) };
-}
-/**
- * A profile without the user setup (user_setup: false) also loses the user-level agents (~/.claude/agents; calibration: "--agent not
- * found"). The run's agent from the user config dir is then passed inline (profile.agents -> --agents); a project agent
- * (<worktree>/.claude/agents) still loads with the project source. o: { claudeDir, worktree } -> the profile (+ agents)
- */
-export function inlineAgent(profile, agent, { claudeDir, worktree } = {}) {
-  if (!profile || profile.user_setup !== false || !agent) return profile;
-  if (worktree && fs.existsSync(path.join(worktree, '.claude', 'agents', `${agent}.md`))) return profile;
-  const def = claudeDir ? agentDef(path.join(claudeDir, 'agents', `${agent}.md`)) : null;
-  return def ? { ...profile, agents: { [agent]: def } } : profile;
 }

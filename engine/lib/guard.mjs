@@ -10,6 +10,7 @@
 import { loadState, record, readEvents, recordsFile, fold, RecordError } from './records.mjs';
 import { measureRun, roleOfRun, familyOf, runTranscript, scan, transcriptTrace } from './standing.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
+import { ctxRole, ctxLimits } from './ctxlimit.mjs';
 
 export const GUARD_DEFAULTS = POLICY_DEFAULTS.guard;   // policy.guard (policy.mjs: the defaults + settings rows)
 export const GUARD_CLASSES = ['runaway', 'over-handoff', 'tool-spam'];
@@ -44,12 +45,8 @@ export function contextSources(t) {
     max: t?.max ? { ...t.max, tokens: Math.round(t.max.chars / 4) } : null, tool_share: share(tool), last_ctx: n ? ctx[n - 1] : null, ctx };
 }
 
-/** the hand-off line of a run's role (policy.context: controller for check-ins / the chat, planner / runner by agent, else implementer) */
-export function handoffK(r, policy) {
-  const d = r.data || {}, a = String(d.agent || '');
-  const role = d.kind === 'checkin' || d.kind === 'chat' ? 'controller' : /planner/.test(a) ? 'planner' : /runner/.test(a) ? 'runner' : 'implementer';
-  return policy?.context?.[role]?.handoff_k ?? POLICY_DEFAULTS.context[role].handoff_k;
-}
+/** the hand-off line of a run's role (policy.context: ctxlimit.mjs ctxRole - check-ins their own row, the chat the controller's) */
+export const handoffK = (r, policy) => ctxLimits(policy, ctxRole(r.data || {})).handoff_k;   // META-CTX-ENFORCE R1: the one role mapping
 const peerKey = r => [roleOfRun(r), r.data?.agent || '-', r.data?.effort || '-'].join(' / ');
 
 /**

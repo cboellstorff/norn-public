@@ -6,7 +6,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { record, readEvents, fold, recordsFile, RecordError, holdOf, holdMessage, HELD_EXIT } from './records.mjs';
+import { record, readEvents, fold, recordsFile, RecordError, holdOf, holdMessage, HELD_EXIT, noteRefusal } from './records.mjs';
+import { busyRefusal, BUSY_EXIT } from './checkinguards.mjs';
 import { BUILTIN, isApi, capDefault, capsOfRun, executorInfo, providerEnv } from './executors.mjs';
 import { adapterFor, harnessOf } from './harness/index.mjs';
 import { makeEval, evalAll, checkRefs, AfterError, readyWords } from './after.mjs';
@@ -21,6 +22,8 @@ import { openEpic, joinEpic, EpicError } from './epics.mjs';
 import { PRIORITIES } from './records.mjs';
 import { hookCommand } from './mail.mjs';
 import { unserved, osLabel, fedOf, fetchClaims, claimKey, claimRun, releaseClaim, leaseExpired, writeOffers, importForeign, importNotes } from './fed.mjs';
+import { workClass, isFable } from './workclass.mjs';
+import { resolveAtFill } from './launchpolicy.mjs';
 
 const fwd = p => String(p).replace(/\\/g, '/');
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -72,7 +75,7 @@ export function buildCommand(o) {
 }
 
 // ---------- worktree lock: state/locks/<sha1(worktree)>.json {run, pid, ts} ----------
-const normWt = wt => { let a = path.resolve(wt).replace(/\\/g, '/').replace(/\/+$/, ''); return process.platform === 'win32' ? a.toLowerCase() : a; };
+export const normWt = wt => { let a = path.resolve(wt).replace(/\\/g, '/').replace(/\/+$/, ''); return process.platform === 'win32' ? a.toLowerCase() : a; };
 export const lockPath = (locksDir, wt) => path.join(locksDir, crypto.createHash('sha1').update(normWt(wt)).digest('hex') + '.json');
 const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 // Windows: rename over a file another process has open fails EPERM / EACCES for a moment - retry (graceful-fs's rename practice)
@@ -138,6 +141,7 @@ export function acquireLock(locksDir, wt, { run, pid = process.pid, staleMs = ST
 // executor) also the main checkout - from the brief's meta-merge marker (`main`), else the project's (spec main_checkout). Every
 // lock holder (startRun, the supervisor's beat + exit, norn stop, the fill's wait) takes the list from here.
 export function writeTrees(o) {
+  if (o.kind === 'audit') return [];   // META-TEND P5: a read-only audit writes no tree - it never holds the main checkout's lock
   const own = o.worktree ? [o.worktree] : [];
   if (!isMergeStage(o.stage)) return own;
   let m = null;
@@ -280,11 +284,15 @@ export function notesWarnings(o) {
 const startFields = (o, info) => ({
   kind: o.kind || info.kind, executor: o.executor, project: o.project, lane: o.lane, stage: o.stage, round: o.round,
   agent: o.agent, model: o.model, effort: o.effort, worktree: o.worktree, brief: o.brief, notes: o.notes });
-const runTail = o => ({ budget_min: o.budgetMin, resumes: o.resumes || 0, resume_of: o.resumeOf, parent: o.parent, via: o.via, role: o.role, class: o.cls, q: o.q, tick_class: o.tickClass, trial: o.trial, fallback_of: o.fallbackOf,
+const runTail = o => ({ budget_min: o.budgetMin, resumes: o.resumes || 0, resume_of: o.resumeOf, parent: o.parent, via: o.via, role: o.role, ...classStamp(o), q: o.q, tick_class: o.tickClass, trial: o.trial, fallback_of: o.fallbackOf,
   from_queue: o.fromQueue, requeue_of: o.requeueOf, after: o.after?.length ? o.after : undefined, inputs: o.inputs?.length ? o.inputs : undefined,
   epic: o.epic, priority: o.priority, nudge: o.nudge, flow: o.flow, slop_of: o.slopOf,   // flow: META-GTP-FLOW piece 2 ({ name, step, vars }); slop_of: META-SLOP-A (the run-end slop resume)
   labels: o.labels?.length ? o.labels : undefined, claim_of: o.claim_of, replaces: o.replaces,
-  launch_profile: o.profile && o.profile.name !== 'full' ? o.profile.name : undefined });   // META-STANDING-CONTEXT R1: a lean launch (standing.mjs profileOf)   // replaces: META-AUTONOMY R1 (norn requeue)   // claim_of: META-GTP-FED piece 3 ({ home, project, run, node } on a node)   // META-GTP-FED piece 1: the machines that may run it (none = home)
+  launch_profile: o.profile && o.profile.name !== 'full' ? o.profile.name : undefined, memory: o.memory === 'off' ? 'off' : undefined, at_fill: o.atFill });   // memory: META-PRACTICE-P1 (auto memory off for this launch)   // META-STANDING-CONTEXT R1: a lean launch (launchpolicy.mjs profileOf)   // replaces: META-AUTONOMY R1 (norn requeue)   // claim_of: META-GTP-FED piece 3 ({ home, project, run, node } on a node)   // META-GTP-FED piece 1: the machines that may run it (none = home)
+// META-TEND P2: the work class on EVERY run (workclass.mjs: class + how it was decided; o.workPolicy = the project's policy table)
+const classStamp = o => { const w = workClass(o, o.workPolicy); return { class: w.class, class_basis: w.basis }; };
+// owner Q4: Fable is the cost class - a run on it carries a notice (printed at launch, shown on the Usage tab with the week's count)
+const fableNotice = o => (isFable(o) ? [`Fable (${o.model || o.executor}) is the cost class: use it for the hardest long work only (the Usage tab counts the week's Fable runs)`] : []);
 // META-GTP-DAG piece 2: a NEW run (not a fill / resume / re-queue of one) named --epic joins that open epic; no --priority = the epic's
 const isNew = o => !o.fromQueue && !o.resumeOf && !o.requeueOf && !o.replaces;
 function withEpic(o) {
@@ -316,12 +324,26 @@ export function heldRefusal(state, lane, caller, now = Date.now()) {
   const h = holdOf(fold(readEvents(recordsFile(state, 'lane'))).items['L:' + lane], now);
   if (h) throw new RunRefused(holdMessage(h), HELD_EXIT);
 }
+// META-CHECKIN-GUARDS R1 guard A (checkinguards.busyRefusal, the replay grader's too): a check-in's new run (start or --queue) on a
+// worktree with a live writer is refused (exit 6) unless chained behind that worktree's runs (--after run:RUN-n:...); noted on the
+// check-in's run. A fill of a queued run is the launcher's, not the check-in's.
+export function busyDoor(o) {
+  if (o.caller !== 'checkin' || o.fromQueue) return;
+  const here = path.resolve(o.state);
+  const runs = [...liveRuns(o.state, { staleMs: o.staleMs ?? STALE_MS }).filter(r => r.state_dir === here), ...runsOf(o.state).filter(r => r.state === 'queued')];
+  const why = busyRefusal({ lane: o.lane, worktree: o.worktree, stage: o.stage, after: o.after }, runs);
+  if (!why) return;
+  noteRefusal(o.state, why, { guard: 'busy', lane: o.lane ?? null, stage: o.stage ?? null });
+  throw new RunRefused(why, BUSY_EXIT);
+}
 // the caller's role is checked once, at the door: it never rides into a queue / run spec (a supervisor resume or re-queue is the launcher's)
 const noCaller = ({ caller: _c, ...o }) => o;
 export function startRun(o) {
   if (!o.fromQueue) heldRefusal(o.state, o.lane, o.caller);
+  const caller = o.caller;
   o = withEpic(noCaller(o));
   duplicateCheck(o);
+  busyDoor({ ...o, caller });
   if (o.after?.length && !o.fromQueue) {   // NORN-WATCH S4: a run with `after:` conditions always queues; fillPass starts it once all are met
     const { queue: _q, ...rest } = o;
     return { ...queueRun(rest), queued: true, why: 'waits for its after: conditions' };
@@ -362,7 +384,7 @@ export function startRun(o) {
     // META-GTP-MAIL piece 3: a nudge resumes the SAME session (claude --resume <sid> keeps its id unless --fork-session)
     const session_id = o.resumeSid || (info.harness === 'claude' || info.harness === 'fake' ? crypto.randomUUID() : null);
     const resumes = o.resumes || 0;
-    const warnings = notesWarnings(o);
+    const warnings = [...notesWarnings(o), ...fableNotice(o)];
     const ev = record(o.state, { kind: 'run', ev: 'start', by: 'launcher', data: drop({ ...startFields(o, info), log, final, session_id, ...runTail(o), warnings: warnings.length ? warnings : undefined }) });
     const run = ev.id;
     if (o.epic && isNew(o)) joinEpic(o.state, o.epic, run);
@@ -370,7 +392,9 @@ export function startRun(o) {
     fs.mkdirSync(path.join(o.state, 'hb'), { recursive: true });
     fs.mkdirSync(path.join(o.state, 'logs'), { recursive: true });
     writeAtomic(hbPath(o.state, run), { run, pid: null, supervisor_pid: null, ts: new Date().toISOString() });
-    const spec = { ...o, run, log, final, session_id, resumes, hbMs, staleMs, lockFile: lock.file, lockFiles: lock.files, mail_hook: o.mail_hook ?? mailHookOf(o) };
+    const { atFill: _af, ...ro } = o;   // META-QUEUE-SPEC R1: at_fill belongs to this start record only (a resume of the spec is no fill)
+    const spec = { ...ro, run, log, final, session_id, resumes, hbMs, staleMs, lockFile: lock.file, lockFiles: lock.files, mail_hook: o.mail_hook ?? mailHookOf(o),
+      ctx_from: o.ctx_from ?? o.refill?.project_file ?? o.env?.META_PROJECT };   // META-CTX-ENFORCE R1: the project.json whose CURRENT policy.context binds the run (ctxlimit.mjs)
     const specFile = path.join(o.state, 'runs', run + '.spec.json');
     fs.mkdirSync(path.dirname(specFile), { recursive: true });
     fs.writeFileSync(specFile, JSON.stringify(spec, null, 1));
@@ -392,10 +416,12 @@ export function startRun(o) {
 // second QUEUED / RUNNING run of the same project (state dir) + lane + stage + round refuses (exit 3) - unless it continues that run: it
 // names it as --parent (a resume), or is its fill / resume / re-queue / fallback / norn requeue. A run with no stage is never a duplicate.
 const CONTINUES = ['parent', 'fromQueue', 'resumeOf', 'requeueOf', 'fallbackOf', 'replaces'];
-export function duplicateOf(o) {
-  if (!o.state || !o.lane || !o.stage || o.kind === 'checkin' || o.role === 'helper' || o.claim_of) return null;
+export function duplicateOf(o) { return o.state ? duplicateIn(runsOf(o.state), o) : null; }
+/** the same check on a list of run items (pure: the replay's history check walks recorded moves through it) */
+export function duplicateIn(runs, o) {
+  if (!o.lane || !o.stage || o.kind === 'checkin' || o.role === 'helper' || o.claim_of) return null;
   const mine = new Set(CONTINUES.map(k => o[k]).filter(Boolean));
-  return runsOf(o.state).find(r => ['queued', 'running', 'claimed'].includes(r.state) && !mine.has(r.id) && r.data.kind !== 'checkin' && r.data.role !== 'helper'
+  return runs.find(r => ['queued', 'running', 'claimed'].includes(r.state) && !mine.has(r.id) && r.data.kind !== 'checkin' && r.data.role !== 'helper'
     && r.data.lane === o.lane && r.data.stage === o.stage && (r.data.round ?? null) === (o.round ?? null)) ?? null;
 }
 function duplicateCheck(o) {
@@ -414,14 +440,16 @@ export const queueSpecPath = (state, run) => path.join(state, 'runs', run + '.qu
  */
 export function queueRun(o) {
   if (!o.fromQueue) heldRefusal(o.state, o.lane, o.caller);
+  const caller = o.caller;
   o = withEpic(noCaller(o));
   duplicateCheck(o);
+  busyDoor({ ...o, caller });
   const info = launchable(o);
   if (o.after?.length || o.inputs?.length) {
     try { checkRefs(o.state, o.after, o.inputs); } catch (e) { if (e instanceof AfterError) throw new RunError(e.message); throw e; }
   }
   const { queue: _q, notBefore, run: _r, log: _l, final: _f, session_id: _s, lockFile: _k, lockFiles: _ks, fromQueue: _fq, now: _n, ...spec } = o;
-  const ev = record(o.state, { kind: 'run', ev: 'queue', by: 'launcher', data: drop({ ...startFields(o, info), ...runTail(spec), not_before: notBefore }) });
+  const ev = record(o.state, { kind: 'run', ev: 'queue', by: 'launcher', data: drop({ ...startFields(o, info), ...runTail(spec), not_before: notBefore, warnings: fableNotice(o).length ? fableNotice(o) : undefined }) });
   if (o.epic && isNew(o)) joinEpic(o.state, o.epic, ev.id);
   const file = queueSpecPath(o.state, ev.id);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -512,6 +540,13 @@ export function fillQueue(state, { now, resources = sampleResources, onPass, aut
     if (!flagged()) return started;
   }
 }
+// META-QUEUE-SPEC R1: a queued run launches with the policy of NOW (launchpolicy.mjs); the start record names what was resolved (at_fill).
+// A project.json that no longer loads keeps the run queued (refused, exit 3), never a launch on the old spec.
+function atFill(spec) {
+  let r;
+  try { r = resolveAtFill(spec); } catch (e) { throw new RunRefused(`policy at fill: ${e.message}`, 3); }
+  return r.at_fill ? { ...r.spec, atFill: r.at_fill } : r.spec;
+}
 function fillPass(state, now, resources, authProbe) {
   const started = [];
   const withdraw = (id, why) => { try { record(state, { kind: 'run', ev: 'withdraw', id, by: 'launcher', data: { why } }); } catch (e) { if (!(e instanceof RecordError)) throw e; } };
@@ -526,7 +561,7 @@ function fillPass(state, now, resources, authProbe) {
   walkQueue(state, { now, resources, authProbe, act: {
     withdraw,
     hold,
-    start: (q, spec) => { homeClaim(state, q, spec); return startRun({ ...spec, fromQueue: q.id }).run; },
+    start: (q, spec) => { homeClaim(state, q, spec); return startRun({ ...atFill(spec), fromQueue: q.id }).run; },
     started(q, next) {
       record(state, { kind: 'run', ev: 'fill', id: q.id, by: 'launcher', data: { next } });
       started.push({ queued: q.id, next });

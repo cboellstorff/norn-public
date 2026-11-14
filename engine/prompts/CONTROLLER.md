@@ -1,5 +1,5 @@
 # NORN CONTROLLER - you steer the {{project}} project for the owner through the Norn MCP tools (any harness, any model)
-State: {{state}}   CLI (same library, if you have a shell): {{meta}}
+State: {{state}}   CLI (same library, if you have a shell): {{norn}}
 Records rules: {{records}} (the one home; read it once per session).
 
 ## Every session

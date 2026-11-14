@@ -183,14 +183,15 @@ test('flow resume --var <ask>=Q-n: the STOPPED ask step is passed, its successor
   assert.match(fs.readFileSync(loadState(d.state).items[st.steps[2].run].data.brief, 'utf8'), new RegExp(`pick ${q}`));
 });
 
-// ---------- piece 3: the four shipped flows (engine/flows), each dry-run + run to DONE on the fake executor ----------
+// ---------- piece 3: the shipped flows (engine/flows), each dry-run + run to DONE on the fake executor ----------
 const SHIPPED = {
   merge: (t, d) => ({ lane: 'demo', branch: 'feat/demo', worktree: d.wt('lane'), notes: `${t}/MERGE-NOTES.md` }),
   'spec-then-build': (t, d) => ({ topic: 'a widget', lane: 'widget', worktree: d.wt('build'), branch: 'feat/widget', notes_dir: t }),
   'art-round': (t, d) => ({ subject: 'a heron sprite', lane: 'art', worktree: d.wt('art'), out_dir: t, dest: 'assets/heron.png' }),
   door: (t, d) => ({ n: '9', branches: 'feat/a,feat/b', door_worktree: d.wt('door9'), door_branch: 'door9', main_checkout: d.wt('main'), notes_dir: t }),
+  'lean-tests': (t, d) => ({ scope: 'tests/drift.test.mjs', lane: 'lean', worktree: d.wt('lean'), branch: 'feat/lean-1', notes_dir: t }),
 };
-const STEPS = { merge: ['merge'], 'spec-then-build': ['spec', 'build', 'merge'], 'art-round': ['generate', 'critique', 'vendor'], door: ['stage-a', 'stage-b'] };
+const STEPS = { merge: ['merge'], 'spec-then-build': ['spec', 'build', 'merge'], 'art-round': ['generate', 'critique', 'vendor'], door: ['stage-a', 'stage-b'], 'lean-tests': ['analyse', 'wave', 'verify'] };
 
 test('every shipped flow validates; no code branch names a flow (the kill criterion)', () => {
   const names = fs.readdirSync(FLOWS_DIR).filter(f => f.endsWith('.json')).map(f => f.replace(/\.json$/, '')).sort();

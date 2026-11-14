@@ -271,3 +271,9 @@ with the last project. It keeps the project's state unless you pass `--purge-sta
 - Start a browser by hand for a screenshot (a fresh Edge profile can sign itself into the human's account). Use `norn shot`.
 - Edit an installed agent or skill file in the Claude config dir. Edit its source next to the project.json, then run
   `norn gen`.
+
+## Beta feedback
+
+Norn is in beta. When the human is done (or stuck), point them at this repository's **Issues** tab: **New issue**, then
+**Beta feedback** (what they tried, what went wrong or felt confusing, their OS, keep SloppaChoppa or not, and why). If
+SloppaChoppa bothers them, Settings, Guard voice, SloppaChoppa: off turns him off for that project.

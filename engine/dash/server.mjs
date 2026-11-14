@@ -11,7 +11,7 @@ import { spawn, execFile } from 'node:child_process';
 import { createSessions } from './sessions.mjs';
 import { createFeeds, decodeCursor } from './feed.mjs';
 import { createStreams } from './stream.mjs';
-import { createChat, readThread, threadState, chatCost, CONTEXT_DEFAULT } from '../lib/chat.mjs';
+import { createChat, readThread, threadState, chatCost, chatPick, chatCommands, NORN_COMMANDS, CONTEXT_DEFAULT } from '../lib/chat.mjs';
 import { ActError, showRoots } from '../lib/chatact.mjs';
 import { genAfterPolicy } from '../lib/setup.mjs';
 import { profileChoices } from '../lib/profiles.mjs';
@@ -24,6 +24,7 @@ import { writeViews, renderQuestions, renderDirectives } from '../lib/views.mjs'
 import { hbPath, stopRun, requeueRun, queueOf, STALE_MS } from '../lib/runs.mjs';
 import { lanesView } from '../lib/lanes.mjs';
 import { agentsTree, shownRunIds } from '../lib/agents.mjs';
+import { ctxView } from '../lib/ctxlimit.mjs';
 import { mapGraph } from '../lib/map.mjs';
 import { LOCK_STALE_MIN, quietFlag } from '../lib/tick.mjs';
 import { homeDir } from '../lib/config.mjs';
@@ -44,8 +45,19 @@ import { ART_FILES } from './norn/assets.mjs';
 import { homeEvents } from './home.mjs';
 import { parseLedgerLine } from './ledger.mjs';
 import { instructionsView } from '../lib/instructions.mjs';
+import { openCards } from '../lib/rules.mjs';
+import { auditsView, acceptText } from '../lib/audit.mjs';
+import { paraMarks } from '../lib/readev.mjs';
+import { testsView } from '../lib/testscli.mjs';
 import { guardChips } from '../lib/guard.mjs';
 import { usageWeek } from '../lib/usageweek.mjs';
+import { classCost } from '../lib/classcost.mjs';
+import { advise, decidedKeys, writeAdviceCache } from '../lib/advice.mjs';
+import { replayReportFile } from '../lib/eval/report.mjs';
+import { GUARD_WORDS } from '../lib/checkinguards.mjs';
+import { guardRows, guardView } from '../lib/guardview.mjs';
+import { crossings } from '../lib/advisory.mjs';
+import { slopHolds, openBlocks } from '../lib/slop/host.mjs';
 
 const DASH = path.dirname(fileURLToPath(import.meta.url));
 const META_CLI = path.join(DASH, '..', 'bin', 'norn.mjs');
@@ -54,10 +66,10 @@ const MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5'];
 const VENDOR = ['marked.esm.js', 'purify.es.mjs', 'highlight.min.js', 'three.module.js', 'three.core.js', 'silkscreen-latin-400-normal.woff2', 'silkscreen-latin-700-normal.woff2'];
 // the Norn look (META-VISUAL-B): its modules + stylesheet, served from norn/ by allowlist; art files only by the asset map
 const NORN = ['palette.mjs', 'pixel.mjs', 'assets.mjs', 'motion.mjs', 'look.mjs', 'norn.css',
-  'live.mjs', 'stage.mjs', 'weave.mjs', 'mapview.mjs', 'well.mjs', 'tapestry.mjs'];   // S2: the Map (the Well / the Tapestry)
+  'live.mjs', 'stage.mjs', 'weave.mjs', 'mapview.mjs', 'well.mjs', 'tapestry.mjs', 'orc.mjs'];   // META-TEND P6: SloppaChoppa's stage   // S2: the Map (the Well / the Tapestry)
 const TYPES = { js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', woff2: 'font/woff2', png: 'image/png' };
 const typeOf = f => TYPES[f.split('.').pop()];
-export const TABS = ['home', 'overview', 'inbox', 'lanes', 'agents', 'map', 'roadmap', 'plan', 'records', 'usage', 'docs', 'instructions', 'ledger', 'settings'];
+export const TABS = ['home', 'overview', 'inbox', 'lanes', 'agents', 'map', 'roadmap', 'plan', 'records', 'usage', 'tests', 'docs', 'instructions', 'guard', 'ledger', 'settings'];
 const hash = s => createHash('sha256').update(s).digest('hex');
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const plain = o => o !== null && typeof o === 'object' && !Array.isArray(o);
@@ -222,7 +234,9 @@ export function createDashboard(o) {
 
   // ---------- tab data ----------
   // META-HOME-POLISH R1: what needs you in one project (the Home opens on the first that has some); a broken project counts 0
-  const needsOf = p => { try { return inbox(p).filter(i => i.type !== 'answered').length; } catch { return 0; } };
+  // META-TEND P4: what NEEDS you = every Inbox row but answered Qs and model advice (advisory: it blocks nothing, it waits for a tap)
+  const isNeed = i => i.type !== 'answered' && i.type !== 'advice';
+  const needsOf = p => { try { return inbox(p).filter(isNeed).length; } catch { return 0; } };
   function inbox(p) {
     const s = st(p), items = Object.values(s.items), out = [];
     // META-ADOPT A3: ONE needs-you row while a drafted setup has parts to review (not one per missing thing)
@@ -238,8 +252,16 @@ export function createDashboard(o) {
     const pa = new Map(possibleAnswers(items).map(x => [x.q, x]));   // META-Q-RECONCILE R1: the hint "already answered in DEC-m"
     for (const q of items.filter(i => i.kind === 'question' && i.state === 'open')) out.push({ type: 'question', id: q.id, project: p.name, lane: q.data.lane, title: q.data.title, body: q.data.body ?? null, options: q.data.options ?? [], recommend: q.data.recommend ?? null, class: q.data.class ?? null, created: q.created,
       ...(pa.has(q.id) ? { answered_by: { id: pa.get(q.id).dec, words: pa.get(q.id).words, why: pa.get(q.id).why } } : {}) });
+    // META-TEND P3: the repeat detector's approval cards (one per cluster, ranked): approve = a directive the check-in turns into a brief
+    for (const c of openCards(p.state, s.items)) out.push({ type: 'enforce', id: c.id, project: p.name, title: c.why, card: c, approve: c.approve, created: null });
+    // META-TEND P5: the vendor audit's hunks - one card each (accept = a decision + a directive: the check-in applies it; decline = a decision)
+    for (const c of auditsView(p, s.items).cards) out.push({ type: 'audit', id: c.id, project: p.name, title: c.why, card: c, created: null });
     for (const q of items.filter(i => i.kind === 'question' && i.state === 'answered')) out.push({ type: 'answered', id: q.id, project: p.name, lane: q.data.lane, title: q.data.title, answer: q.answer, updated: q.updated });
     for (const l of items.filter(i => i.kind === 'lane' && i.state === 'parked')) out.push({ type: 'parked', id: l.id, project: p.name, why: l.park?.why ?? null, q: l.park?.q ?? null });
+    // META-TEND P4: model advice = one card each, one tap applies the Settings change or keeps it (both a decision record)
+    let adv = [];
+    try { adv = adviceOf(p).cards; } catch { adv = []; }
+    for (const c of adv) out.push({ type: 'advice', id: c.key, project: p.name, check: c.check, cls: c.id, title: c.title, severity: c.severity, text: c.text, fix: c.fix, change: c.change, source: c.source, trial: c.trial, created: null });
     for (const r of runsOf(s).filter(r => ['exited', 'lost', 'killed'].includes(r.state) && !r.review && r.data.role !== 'helper' && (r.state !== 'exited' || r.end?.outcome === 'stopped')))
       out.push({ type: 'unreviewed', id: r.id, name: runName(r), project: p.name, lane: r.data.lane ?? null, state: r.state, outcome: r.end?.outcome ?? r.state, why: r.end?.why ?? r.lost?.why ?? r.kill?.why ?? null });
     return out;
@@ -249,8 +271,11 @@ export function createDashboard(o) {
     const s = settingsState(p), m = withDefaults(s.view);
     const talk = (await sessions.list()).filter(r => !r.project || r.project === p.name);
     const gc = guardChips(p.state);   // META-GUARD R1: the open / ruled usage alarms of a run = chips on its node
-    return agentsTree(runsOf(st(p)), { projectsDir, codexDir, cache, ctxLimit: (m.policy.context?.implementer?.handoff_k ?? 110) * 1000, sessions: talk })
-      .map(n => ({ ...n, project: p.name, ...(gc.has(n.id) ? { guard: gc.get(n.id) } : {}) }));
+    const runs = runsOf(st(p)), byId = new Map(runs.map(r => [r.id, r]));
+    // META-CHECKIN-GUARDS R1: the moves a guard refused this run (its run `refuse` events) - a plain row each on the tab
+    const refused = id => (byId.get(id)?.history || []).filter(h => h.ev === 'refuse').map(h => ({ ts: h.ts, guard: h.data.guard, words: GUARD_WORDS[h.data.guard] ?? h.data.guard, why: h.data.why, lane: h.data.lane ?? null, stage: h.data.stage ?? null, answers: h.data.answers ?? null }));
+    return agentsTree(runs, { projectsDir, codexDir, cache, policy: m.policy, sessions: talk })
+      .map(n => { const rf = refused(n.id); return { ...n, project: p.name, ...(gc.has(n.id) ? { guard: gc.get(n.id) } : {}), ...(rf.length ? { refused: rf } : {}) }; });
   }
   // the Ledger tab (LEDGER-UX R1): `count` lines (default 100, max 2000) ending `offset` lines before the end ("show older" pages);
   // runs = the run ids the Agents tab lists, so the tab links only those
@@ -338,7 +363,7 @@ export function createDashboard(o) {
   async function overview(ps) {
     const m = withDefaults(settingsState(ps[0]).view);
     let needs = [], running = [], tree = [];
-    for (const p of ps) { needs.push(...inbox(p).filter(i => i.type !== 'answered')); running.push(...lanes(p, false).filter(l => l.run_state === 'running' && l.text.startsWith('running'))); tree.push(...await agents(p)); }
+    for (const p of ps) { needs.push(...inbox(p).filter(isNeed)); running.push(...lanes(p, false).filter(l => l.run_state === 'running' && l.text.startsWith('running'))); tree.push(...await agents(p)); }
     const live = tree.filter(n => n.state === 'running');
     const isCodex = n => String(n.executor).startsWith('codex'), isClaude = n => n.kind === 'worker' || n.kind === 'fake';
     const codex = live.filter(isCodex).length, claude = live.filter(isClaude).length;
@@ -394,6 +419,28 @@ export function createDashboard(o) {
     const age = acct.data ? Date.now() - Date.parse(acct.data.at) : Infinity;
     if (!acct.running && age > ACCOUNT_REFRESH_MS && o.accountRefresh !== false) accountRefresh();
   }
+  const dlvFacts = p => (deliverablesOf(p).rows || []).map(r => ({ id: r.id, runs: [r.run, ...(r.runs || [])].filter(Boolean), merged_at: ['merged', 'installed'].includes(r.state) ? 'merged' : null }));
+  function classesFor(p, now, since) {
+    const pol = withDefaults(merged({}, p.policy)).policy;
+    return classCost([{ project: p.name, items: runsOf(stCached(p)), dlvs: dlvFacts(p), policy: { executors: pol.executors, critical_lanes: pol.critical_lanes } }],
+      { now, since: since ?? now - 7 * 86400000, projectsDir, codexDir, cache: costTail, memo: costMemo });
+  }
+  // META-TEND P4: the open advice of a project = advise() over its class table and its effective settings; a decided card (a decision
+  // with data.advice = its key) is hidden. Cached per project for the Inbox (ADVICE_TTL_MS); the last count goes to <state>/advice.json
+  // for the digest line. Never writes a policy: POST /api/advice does, on a tap.
+  const adviceMemo = new Map(), ADVICE_TTL_MS = o.adviceTtlMs ?? 300000;
+  function adviceFor(p, classes, now = Date.now()) {
+    const a = advise(classes, withDefaults(settingsState(p).view), { project: p.name, now, decided: decidedKeys(Object.values(st(p).items)) });
+    writeAdviceCache(p.state, a);
+    adviceMemo.set(p.name, { at: Date.now(), a });
+    return a;
+  }
+  function adviceOf(p, fresh = false) {
+    const hit = adviceMemo.get(p.name);
+    if (!fresh && hit && Date.now() - hit.at < ADVICE_TTL_MS) return hit.a;
+    const now = Date.now(), resetMs = Date.parse(parseReset(withDefaults(settingsState(p).view).reset) ?? '');
+    return adviceFor(p, classesFor(p, now, Number.isFinite(resetMs) ? weekStart(resetMs, now) : null), now);
+  }
   function usageView(ps, url) {
     const days = Math.min(30, Math.max(1, Math.round(Number(url.searchParams.get('days')) || 7)));
     const key = ps.map(p => p.name).join(',') + '|' + days, hit = costViews.get(key);
@@ -406,9 +453,16 @@ export function createDashboard(o) {
     const parts = ps.map(p => costRollup(runsOf(stCached(p)), { project: p.name, now, days, resetAt, cacheRPerPct: perPct, projectsDir, codexDir, cache: costTail, memo: costMemo, account }));
     // META-GUARD R1 item 2: where the week's tokens went (outcomes, merged = the cached deliverables rows, top 5 spenders)
     ps.forEach((p, i) => { try {
-      const dl = (deliverablesOf(p).rows || []).map(r => ({ id: r.id, runs: [r.run, ...(r.runs || [])].filter(Boolean), merged_at: ['merged', 'installed'].includes(r.state) ? 'merged' : null }));
+      const dl = dlvFacts(p);
       parts[i].week = usageWeek([{ project: p.name, items: runsOf(stCached(p)), dlvs: dl }], { now, week: !!resetAt, resetAt, cacheRPerPct: perPct, projectsDir, codexDir, cache: costTail, memo: costMemo, smemo: weekMemo });
     } catch (e) { parts[i].week = { error: String(e.message).slice(0, 200) }; } });
+    // META-TEND P2: what each kind of work costs - per completed stage by class x executor x model x effort, same window; the Fable count
+    ps.forEach((p, i) => { try { parts[i].classes = classesFor(p, now, since); } catch (e) { parts[i].classes = { error: String(e.message).slice(0, 200) }; } });
+    // META-TEND P4: the advice cards over that table (the Inbox shows the same cards) + the replay test report, when one was written
+    ps.forEach((p, i) => {
+      try { parts[i].advice = parts[i].classes.error ? { error: parts[i].classes.error } : adviceFor(p, parts[i].classes, now); } catch (e) { parts[i].advice = { error: String(e.message).slice(0, 200) }; }
+      try { parts[i].replay = JSON.parse(fs.readFileSync(replayReportFile(p.state), 'utf8')); } catch { parts[i].replay = null; }
+    });
     const v = { parts, ms: Number(process.hrtime.bigint() - t0) / 1e6, account_refresh: { running: !!acct.running, started: acct.started, last: acct.last, cache: accountCacheFile } };
     costViews.set(key, { at: Date.now(), v });
     return { ...v, cached: false };
@@ -419,10 +473,47 @@ export function createDashboard(o) {
   const insOf = p => {
     const c = insViews.get(p.name);
     if (c && Date.now() - c.at < 60000) return c.v;
-    const v = instructionsView(p, { machine: machine.claude ? machine : null, home });
+    const v = instructionsView(p, { machine: machine.claude ? machine : null, home, remember: true });   // META-PRACTICE-P1: findings fixed since the last scan
     insViews.set(p.name, { at: Date.now(), v });
     return v;
   };
+  // META-TEND P6: the Guard overview = a query over the advisory records of every phase + SloppaChoppa's open BLOCK findings (it owns
+  // no data; first_seen / new come from the one seen store, advisory.mjs crossings). A part that fails names itself and the rest shows.
+  // The instructions part is the slow one (a big project: ~18 s cold): the Guard reads the Instructions tab's fresh view when there is one, else
+  // a worker thread's scan (lib/guard-scan.mjs, this server's own home + machine), cached o.guardTtlMs (60 s; stale while it refreshes;
+  // pending before the first answer). A changed finding set reaches the page as the stream's derived event (its hash is in the sig).
+  const insGuard = new Map();
+  function insForGuard(p) {
+    const hit = insViews.get(p.name);
+    if (hit && Date.now() - hit.at < 60000) return { v: hit.v, pending: false };
+    let c = insGuard.get(p.name);
+    if (!c) { c = { at: 0, val: null, busy: false, hash: '-' }; insGuard.set(p.name, c); }
+    if (!c.busy && Date.now() - c.at > (o.guardTtlMs ?? 60000)) {
+      c.busy = true;
+      const fin = r => { if (!c.busy) return; c.busy = false; c.at = Date.now(); c.val = r.ok ? r.v : { error: 'instructions: ' + String(r.error).slice(0, 300) };
+        c.hash = hash(JSON.stringify([(c.val.findings || []).map(f => f.id), (c.val.rules?.advisories || []).map(f => f.id), c.val.error ?? null])); };
+      let w;
+      try { w = new Worker(new URL('../lib/guard-scan.mjs', import.meta.url), { workerData: { project: JSON.parse(JSON.stringify(p)), machine: machine.claude ? JSON.parse(JSON.stringify(machine)) : null, home } }); }
+      catch (e) { fin({ ok: false, error: e?.message || e }); }
+      if (w) { w.unref(); w.once('message', fin); w.once('error', e => fin({ ok: false, error: e?.message || e })); w.once('exit', code => fin({ ok: false, error: 'worker exit ' + code })); }
+    }
+    return { v: c.val ?? hit?.v ?? null, pending: !c.val && !hit };
+  }
+  function guardOf(p) {
+    const errors = [], part = (name, f, dflt) => { try { return f(); } catch (e) { errors.push(`${name}: ${String(e.message).slice(0, 200)}`); return dflt; } };
+    const ig = insForGuard(p), ins = ig.v?.error ? (errors.push(ig.v.error), null) : ig.v, tests = part('tests', () => testsView(p.state), null), advice = part('models', () => adviceOf(p), null);
+    // META-BETA-PREP (DIR-52): the project's one SloppaChoppa switch (Settings) - off = no slop rows; his recorded holds stay on disk
+    const pol = withDefaults(settingsState(p).view).policy, slop = pol.slop.enabled;
+    const holds = !slop ? [] : part('code', () => Object.entries(slopHolds(p.state)).map(([branch, h]) => ({ branch, run: h.run, lane: h.lane, blocks: openBlocks(p.state, branch) })), []);
+    // the first Guard scan of a project is its baseline (<state>/advisory/guard-baseline.json, one timestamp): what was open then is
+    // not NEW to anyone, on that scan or later - only a crossing after it warns. It is written once the instruction scan has landed.
+    const bf = path.join(p.state, 'advisory', 'guard-baseline.json');
+    let at = null; try { at = Date.parse(JSON.parse(fs.readFileSync(bf, 'utf8')).at); } catch { at = null; }
+    const crossed = crossings(p.state, guardRows({ ins, tests, advice, holds, docs: docsList(p) }));
+    if (!Number.isFinite(at) && !ig.pending) { at = Date.now(); try { fs.mkdirSync(path.dirname(bf), { recursive: true }); fs.writeFileSync(bf, JSON.stringify({ at: new Date(at).toISOString() })); } catch { /* read-only state: no baseline */ } }
+    const rows = crossed.map(r => (r.new && !(Number.isFinite(at) && Date.parse(r.first_seen) > at) ? { ...r, new: false } : r));   // no baseline yet (the scan is pending): nothing is new
+    return { project: p.name, ...guardView(rows, { rules: ins?.rules?.counts ?? null, slop }), pending: ig.pending, slop, voice: pol.voice, errors };
+  }
   function lockFresh(p) { try { return Date.now() - fs.statSync(path.join(p.state, 'tick.lock')).mtimeMs < LOCK_STALE_MIN * 60000; } catch { return false; } }
 
   // ---------- live feed (LANE-MAP-DESIGN 2-3): SSE per run through the run's harness adapter feed() ----------
@@ -459,16 +550,16 @@ export function createDashboard(o) {
   }
   function feedSource(p, id, adapter) {
     const env = { projectsDir, codexDir, memo: new Map() }, now = () => stCached(p).items[id];
-    const handoff = (withDefaults(settingsState(p).view).policy.context?.implementer?.handoff_k ?? 110) * 1000;
+    const policy = () => withDefaults(settingsState(p).view).policy;   // META-CTX-ENFORCE R1: the run role's lines, read live
     return {
       poll: cur => adapter.feed(now(), cur, env),
       ended: () => now()?.state !== 'running',
-      head: ({ ctx, window }) => {
+      head: ({ ctx, peak, window }) => {
         const r = now(), d = r.data || {}, end = r.end || {}, t1 = r.state === 'running' ? Date.now() : Date.parse(r.updated);
         return { run: r.id, name: runName(r), project: p.name, lane: d.lane ?? null, kind: d.kind ?? null, role: d.role ?? null, executor: d.executor ?? null,
           model: end.model ?? d.model ?? null, effort: end.effort ?? d.effort ?? null, state: r.state, outcome: end.outcome ?? null, started: r.created,
-          elapsed_min: Math.max(0, Math.round((t1 - Date.parse(r.created)) / 60000)), budget_min: d.budget_min ?? null, ctx,
-          ctx_limit: window ?? (['worker', 'fake'].includes(d.kind) ? handoff : null), commit: lastCommit(d.worktree), marker: notesMarker(d.notes, Date.parse(r.created)) };
+          elapsed_min: Math.max(0, Math.round((t1 - Date.parse(r.created)) / 60000)), budget_min: d.budget_min ?? null, ctx, ctx_peak: peak ?? null,
+          ...(d.kind === 'interactive' ? { ctx_limit: null, ctx_hard: null } : (({ ctx_limit, ctx_hard }) => ({ ctx_limit, ctx_hard }))(ctxView(d, policy()))), ctx_window: window ?? null, commit: lastCommit(d.worktree), marker: notesMarker(d.notes, Date.parse(r.created)) };
       },
     };
   }
@@ -490,8 +581,8 @@ export function createDashboard(o) {
     // what the tabs show besides records: the ledger, STATUS.md (burn), live usage, the docs, and the async caches (git-derived
     // deliverables, account usage) - one stat per file + two timestamps per poll; kick() keeps the caches fresh while watched
     sig: () => [p.ledger, path.join(p.state, 'STATUS.md'), o.liveUsage, ...(p.docs || []).map(d => d.path)].map(f => { try { const s = f && fs.statSync(f); return s ? s.mtimeMs + ':' + s.size : '-'; } catch { return '-'; } })
-      .concat([dlv.get(p.name)?.sig ?? '-', acct.sig ?? '-', rm.get(p.name)?.hash ?? '-', plans.get(p.name)?.hash ?? '-']).join('|'),   // cache CONTENT hashes: an unchanged refresh is no event
-    kick: () => { deliverablesOf(p); accountKick(); roadmapOf(p, { kick: true }); if (plans.has(p.name)) planOf(p); } });   // the roadmap / plan only once a page asked
+      .concat([dlv.get(p.name)?.sig ?? '-', acct.sig ?? '-', rm.get(p.name)?.hash ?? '-', plans.get(p.name)?.hash ?? '-', insGuard.get(p.name)?.hash ?? '-']).join('|'),   // cache CONTENT hashes: an unchanged refresh is no event
+    kick: () => { deliverablesOf(p); accountKick(); roadmapOf(p, { kick: true }); if (plans.has(p.name)) planOf(p); if (insGuard.has(p.name)) insForGuard(p); } });   // the roadmap / plan only once a page asked
   function openStream(req, res, url) {
     const ps = pick(url, { all: true }), from = decodeCursor(req.headers['last-event-id'] ?? '');
     if (!streams.join(ps.map(p => p.name).join('|'), ps.map(streamSource), res, from)) throw fail(429, `Too many dashboard tabs open (max ${o.streamMax ?? 16})`);
@@ -540,7 +631,9 @@ export function createDashboard(o) {
     if (!MODELS.includes(model) || !EFFORTS.includes(effort)) throw fail(400, 'Invalid chat model or effort in the machine budget');
     return { executor: b.chat_executor, exe: o.claudeExe ?? machine.claude?.exe ?? 'claude', model, effort,
       idleMs: o.chatIdleMs ?? (Number.isInteger(b.chat_idle_min) && b.chat_idle_min > 0 ? b.chat_idle_min * 60000 : undefined),
-      rawShell: ['off', 'ask', 'on'].includes(b.chat_raw_shell) ? b.chat_raw_shell : 'off', context: { ...CONTEXT_DEFAULT, ...(b.policy?.context?.controller || {}) } };
+      rawShell: ['off', 'ask', 'on'].includes(b.chat_raw_shell) ? b.chat_raw_shell : 'off', context: { ...CONTEXT_DEFAULT, ...(b.policy?.context?.controller || {}) },
+      // META-CHAT-CONTROLS R1: what the picker / /model / /effort may choose (the Settings rows' own lists), the usage estimate for /cost
+      choices: { models: MODELS, efforts: EFFORTS, alias: { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5' } }, perPct: b.cacheR_per_pct || null };
   }
   function chatOf(p) {
     let c = chats.get(p.name);
@@ -584,13 +677,15 @@ export function createDashboard(o) {
     drainChat(p);
     const s = st(p), runs = runsOf(s), lines = readThread(p.state).items, seg = threadState(lines).seg;
     // an unreviewed run / a parked lane sits in the thread at its record's last event (the inbox row has no created time)
-    const needs = inbox(p).filter(i => i.type !== 'answered').map(n => (n.created ? n : { ...n, created: s.items[n.id]?.updated ?? null }));
+    const needs = inbox(p).filter(isNeed).map(n => (n.created ? n : { ...n, created: s.items[n.id]?.updated ?? null }));
     const events = homeEvents({ thread: lines, runs, items: Object.values(s.items), ledger: p.ledger ? tail(p.ledger, 400).map(parseLedgerLine) : [], needs });
     const m = withDefaults(settingsState(p).view), usageLine = [...lines].reverse().find(l => l.kind === 'usage' && (!seg || l.seg === seg.n));
     // C5: model / effort / raw shell as the NEXT start will use them (Settings, live); the context meter amber past no_new_step_k; the cost line
     const live = (() => { try { return chatConfig(p); } catch { return null; } })(), cc = m.policy?.context?.controller ?? {}, day = new Date(); day.setHours(0, 0, 0, 0);
-    const status = { ...chatStatus(p), executor: live?.executor ?? seg?.executor ?? m.chat_executor ?? 'claude', model: live?.model ?? seg?.model ?? m.checkin_model ?? null,
-      effort: live?.effort ?? seg?.effort ?? m.checkin_effort ?? null, raw_shell: live?.rawShell ?? 'off',
+    // META-CHAT-CONTROLS R1: the chat's pick (picker, /model, /effort) over the Settings rows; both shown; the session's own commands for the "/" menu
+    const pick = chatPick(lines), dm = live?.model ?? seg?.model ?? m.checkin_model ?? null, de = live?.effort ?? seg?.effort ?? m.checkin_effort ?? null;
+    const status = { ...chatStatus(p), executor: live?.executor ?? seg?.executor ?? m.chat_executor ?? 'claude', model: pick?.model ?? dm,
+      effort: pick?.effort ?? de, pick, defaults: { model: dm, effort: de }, choices: live?.choices ?? null, commands: chatCommands(lines), norn_commands: NORN_COMMANDS, raw_shell: live?.rawShell ?? 'off',
       ctx: usageLine?.ctx ?? null, handoff_k: cc.handoff_k ?? null, no_new_step_k: cc.no_new_step_k ?? null,
       cost: chatCost(lines, { since: day.getTime(), perPct: m.cacheR_per_pct || null }) };
     const nodes = new Map((await agents(p)).map(n => [n.id, n])), today = new Date().toDateString(), byNew = (a, b) => String(b.created).localeCompare(String(a.created));
@@ -902,16 +997,38 @@ data: ${JSON.stringify(l)}
       try { const ev = stopRun({ state: p.state, locksDir: o.locksDir ?? path.join(path.dirname(path.resolve(p.state)), 'locks'), run: r.id, by: 'dashboard', why: data.why ? line(data.why) : 'stopped from the dashboard' }); return { ok: true, seq: ev.seq }; }
       catch (e) { if (e instanceof RecordError) throw fail(409, e.message); throw e; }
     }
-    if (route === '/api/settings') {
-      const s = settingsState(p);
-      if (data.version !== s.version) throw fail(409, 'Settings changed elsewhere. Reload and review the diff again.');
-      const updated = applySettings(s.view, data.changes, exExtra(p)), parts = split(updated), written = [];
-      const was = withDefaults(s.view).policy.cadence.checkin_interval_min, now = updated.policy.cadence.checkin_interval_min;
-      if (writeBudget(o.budgetFile, s.budget, updated)) written.push(o.budgetFile);
-      if (JSON.stringify(parts.policy) !== JSON.stringify(s.proj.policy)) { atomic(p.file, JSON.stringify({ ...s.proj, policy: parts.policy }, null, 2) + '\n'); written.push(p.file); }
-      return { ok: true, written, regenerated: regenerate(p, updated), gen: genAfterPolicy(p), interval: now !== was ? now : null };   // DEC-362: sources, then norn gen
+    if (route === '/api/settings') return saveSettings(p, data.changes, data.version);
+    if (route === '/api/audit') {   // META-TEND P5: an audit hunk card's tap - accept (a decision + the directive the check-in applies) or decline (a decision)
+      if (!['accept', 'decline'].includes(data.verdict)) throw fail(400, 'verdict must be accept or decline');
+      const c = auditsView(p, loadState(p.state).items).cards.find(x => x.id === data.id);
+      if (!c) throw fail(409, 'That hunk is no longer open (decided already). Reload.');
+      const r = rec(p, { kind: 'decision', ev: 'create', by: 'dashboard', data: { lane: 'audit', advisory: c.id, question: `audit hunk ${c.id} (${c.run}): ${c.path}:${c.line}`,
+        choice: data.verdict === 'accept' ? 'accepted: apply the hunk' : 'declined: keep the text', why: c.why } });
+      const d = data.verdict === 'accept' ? rec(p, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text: acceptText(c).slice(0, 4000), via: 'dashboard' } }) : null;
+      return { ...r, directive: d?.id ?? null };
+    }
+    if (route === '/api/advice') {   // META-TEND P4: the advice card's one tap - apply its Settings change, or keep the setting; both recorded
+      if (!['apply', 'keep'].includes(data.verdict)) throw fail(400, 'verdict must be apply or keep');
+      const c = adviceOf(p, true).cards.find(x => x.key === data.key);
+      if (!c) throw fail(409, 'That advice is no longer open (decided, or the numbers changed). Reload.');
+      const saved = data.verdict === 'apply' ? saveSettings(p, c.change, settingsState(p).version) : null;
+      const r = rec(p, { kind: 'decision', ev: 'create', by: 'dashboard', data: { lane: 'advice', question: `${c.title} (${c.check})`, advice: c.key,
+        choice: data.verdict === 'apply' ? `applied: ${Object.entries(c.change).map(([k, v]) => `${k} = ${v}`).join(', ')}` : 'kept the setting as it is',
+        why: `${c.text} Source: ${c.source?.ref ?? '-'} read ${c.source?.read ?? '-'}. ${c.trial}.` } });
+      adviceMemo.delete(p.name); costViews.clear();
+      return { ...r, settings: saved };
     }
     throw fail(404, 'Not found');
+  }
+  // the Settings save path (the Settings tab, and the advice card's one tap with the version it read just now)
+  function saveSettings(p, changes, version) {
+    const s = settingsState(p);
+    if (version !== s.version) throw fail(409, 'Settings changed elsewhere. Reload and review the diff again.');
+    const updated = applySettings(s.view, changes, exExtra(p)), parts = split(updated), written = [];
+    const was = withDefaults(s.view).policy.cadence.checkin_interval_min, now = updated.policy.cadence.checkin_interval_min;
+    if (writeBudget(o.budgetFile, s.budget, updated)) written.push(o.budgetFile);
+    if (JSON.stringify(parts.policy) !== JSON.stringify(s.proj.policy)) { atomic(p.file, JSON.stringify({ ...s.proj, policy: parts.policy }, null, 2) + '\n'); written.push(p.file); }
+    return { ok: true, written, regenerated: regenerate(p, updated), gen: genAfterPolicy(p), interval: now !== was ? now : null };   // DEC-362: sources, then norn gen
   }
 
   // a remote device's request runs inside writeOrigin (records stamp via remote:<device>); cleared when it ends (no stamp leaks into
@@ -950,7 +1067,7 @@ data: ${JSON.stringify(l)}
       if (req.method === 'GET') {
         if (route === '/') return send(200, read(path.join(DASH, 'index.html')).replace('__TOKEN__', JSON.stringify(token)).replace('__REMOTE__', JSON.stringify(who.device ? { device: who.device.id, name: who.device.name } : null)), 'text/html; charset=utf-8');
         if (route === '/api/remote' && remote) return send(200, remoteView(who));
-        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs') return send(200, read(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
+        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs') return send(200, read(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
         const vm = route.match(/^\/vendor\/([a-z0-9.-]+)$/);   // pinned browser libraries + font (vendor/VENDOR.md), allowlist only
         if (vm && VENDOR.includes(vm[1])) return send(200, fs.readFileSync(path.join(DASH, 'vendor', vm[1])), typeOf(vm[1]));
         const nm = route.match(/^\/norn\/([a-z.]+)$/);   // the Norn look's modules + stylesheet, allowlist only
@@ -978,8 +1095,10 @@ data: ${JSON.stringify(l)}
         const dm = route.match(/^\/api\/docs\/(\d+)$/);
         if (dm) { const d = docsList(one(url))[Number(dm[1])]; if (!d) throw fail(404, 'No such doc'); return send(200, { ...d, text: read(d.path, null) }); }
         if (route === '/api/instructions') return send(200, insOf(one(url)));
+        if (route === '/api/guard') return send(200, guardOf(one(url)));   // META-TEND P6
+        if (route === '/api/tests') { const p = one(url); return send(200, { project: p.name, ...testsView(p.state) }); }   // META-TEND TESTS
         const im = route.match(/^\/api\/instructions\/([\w-]+)$/);
-        if (im) { const v = insOf(one(url)), r = v.rows.find(x => x.id === im[1] && x.exists); if (!r) throw fail(404, 'No such instruction file'); return send(200, { ...r, text: read(r.path, null), paras: v.paras?.get(r.id) || null }); }
+        if (im) { const v = insOf(one(url)), r = v.rows.find(x => x.id === im[1] && x.exists); if (!r) throw fail(404, 'No such instruction file'); const ev = v.evidence?.files?.[r.id] ?? null; return send(200, { ...r, text: read(r.path, null), paras: v.paras?.get(r.id)?.map(x => ({ ...x, ...paraMarks(x, ev) })) || null, evidence: ev, read_days: v.evidence?.window_days ?? null }); }   // META-TEND P5: read / cite marks per paragraph
         if (route === '/api/ledger') return send(200, ledgerPage(one(url), url));
         if (route === '/api/settings') return send(200, settingsInfo(one(url)));
         if (route === '/api/feed') return openFeed(req, res, url);
@@ -1023,6 +1142,17 @@ data: ${JSON.stringify(l)}
         try { return send(200, { ok: true, ...chatOf(projectOf(data)).decide(data.id, data.verdict, { via: store?.via }) }); } catch (e) { throw actFail(e); }
       }
       if (route === '/api/chat/undo') return send(200, chatUndo(projectOf(data), data.line));
+      // META-CHAT-CONTROLS R1: the picker - this chat's model / effort from the next turn (null = back to the Settings row) ...
+      if (route === '/api/chat/pick') {
+        const v = {}; for (const k of ['model', 'effort']) if (data[k] !== undefined) { if (data[k] !== null && typeof data[k] !== 'string') throw fail(400, `${k} must be a string or null`); v[k] = data[k]; }
+        try { return send(200, { ok: true, status: chatOf(projectOf(data)).pick(v) }); } catch (e) { if (e.status) throw fail(e.status, e.message); throw e; }
+      }
+      // ... and "make this the default": the pick becomes the Settings rows chat_model / chat_effort (one source of truth), the pick is cleared
+      if (route === '/api/chat/default') {
+        const p = projectOf(data), c = chatOf(p), st0 = c.status();
+        const r = saveSettings(p, { chat_model: st0.model, chat_effort: st0.effort }, settingsState(p).version);
+        return send(200, { ...r, status: c.pick({ model: null, effort: null }) });
+      }
       if (route === '/api/chat/send') {
         if (typeof data.text !== 'string' || !data.text.trim() || data.text.length > 8000) throw fail(400, 'text is required (maximum 8000 characters)');
         return send(200, chatOf(projectOf(data)).send(data.text, { via: store?.via }));

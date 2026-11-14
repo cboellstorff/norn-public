@@ -7,6 +7,8 @@
 //   session { session_id, model, permission_mode, mcp }   the vendor's init, once per process (it repeats it every turn: C0 finding 2)
 //   text / tool / result / usage / turn              the adapter's chatEvents (harness/claude.mjs)
 //   approval / verdict / done / show / undone        C3: the MCP chat profile's outbox (chatact.mjs), drained here; a tap; an undo
+//   pick { model, effort }   META-CHAT-CONTROLS R1: the chat's own model / effort (null = the Settings row), from the picker or /model, /effort
+//   norn { text, cmd }       R1: Norn's own answer to a slash command (no model turn); the owner line of a typed command carries cmd
 // Lazy start: the process starts on a message. Idle stop: idleMs after the last turn its stdin is closed (exit 0; a hard kill exits
 // 1 - C0 finding 3), a kill only if it has not gone after graceMs. The next message resumes the segment's session by id (C0 fact 1).
 // Harness-agnostic: the executor's adapter supplies chatCommand + chatEvents (caps.chat); nothing here knows a CLI's flags.
@@ -19,10 +21,11 @@ import { adapterFor, capsOf, harnessOf } from './harness/index.mjs';
 import { drain as drainOutbox, decide as decideApproval, approvalsDir, readVerdict, readRequest } from './chatact.mjs';
 import { readEvents, recordsFile, fold, loadState, heldLanes, holdWho, hhmm } from './records.mjs';
 import { POLICY_DEFAULTS } from './policy.mjs';
+import { HANDOFF_PROMPT, ctxLevel } from './ctxlimit.mjs';
 import { tryDigest } from './digest.mjs';
 import { renderDigest } from './views.mjs';
 import { checkMail } from './mail.mjs';
-import { profileOf } from './standing.mjs';
+import { profileOf } from './launchpolicy.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CHAT_PROMPT = path.join(HERE, '..', 'prompts', 'CHAT.md');
@@ -51,6 +54,28 @@ export function threadState(lines) {
   }
   return { seg, begun };
 }
+
+/** R1: the chat's picked model / effort (the last pick line; a null field = the Settings row) - null when nothing is picked. */
+export function chatPick(lines) {
+  let p = null;
+  for (const l of lines) if (l.kind === 'pick') p = l.model || l.effort ? { model: l.model ?? null, effort: l.effort ?? null } : null;
+  return p;
+}
+/** R1: the commands the vendor session listed at its last init (claude: system/init slash_commands) - null before any. */
+export function chatCommands(lines) {
+  for (let i = lines.length - 1; i >= 0; i--) if (lines[i].kind === 'session' && Array.isArray(lines[i].commands)) return lines[i].commands;
+  return null;
+}
+/**
+ * R1 (owner DIR-58): Norn's own chat commands - answered by Norn, never sent to the model. Any other "/name" passes through to the
+ * CLI only when the session lists it (stream-json input dispatches a listed command: code.claude.com/docs agent-sdk slash-commands,
+ * read 2026-11-14; proven by a real call, see the R1 NOTES); an unlisted one is refused in plain words, never sent as text.
+ */
+export const NORN_COMMANDS = { model: 'the chat model from the next turn (/model alone shows it; /model default = the Settings row)',
+  effort: 'the chat effort from the next turn (/effort default = the Settings row)', clear: 'a fresh session: a new segment (the records stay)',
+  compact: 'a hand-off now: the controller writes its hand-off, a fresh session carries it over', cost: "the chat's usage today (Norn's count)",
+  usage: 'the same as /cost', help: 'this list' };
+const CMD = /^\/([A-Za-z][\w:.-]*)(?:\s+([\s\S]*))?$/;
 
 /** The chat role pack: CHAT.md (project filled in) + the project's own roles/controller.md when it has one. */
 export function rolePack(p) {
@@ -149,19 +174,8 @@ const killTree = child => {
 export const CONTEXT_DEFAULT = { ...POLICY_DEFAULTS.context.controller };   // 90 / 110 / 150k: no new step / hand-off / hard max
 const HANDOFF_MS = 10 * 60000;   // a hand-off turn that has not ended by then is cut: the forced hand-off takes over
 const TURNS_CARRIED = 10, TURN_CLIP = 2000;
-/** The fixed hand-off turn ({ctx} / {limit} filled in). Its reply goes to chat/handoff-<n>.md, not into the thread. */
-export const HANDOFF_PROMPT = `NORN HAND-OFF (from Norn, not the owner): this session's context is {ctx}, past the hand-off point ({limit}). After this turn Norn ends
-this session and continues the thread in a fresh one that starts from what you write now.
-Reply with the hand-off ONLY - no tool calls, no other text - in markdown with exactly these four headings:
-## Open threads
-- one line per thing the owner asked for that is not finished (with record ids: DIR- / DEC- / Q- / RUN-), or "- none"
-## Promises to the owner
-- what you said you would do or report, or "- none"
-## Holds
-- the lanes you hold and why (Norn lists the live holds itself too), or "- none"
-## Next step
-- the one next thing to do
-The records are the memory: name their ids, do not restate them.`;
+// the fixed hand-off turn ({ctx} / {limit} filled in): ONE copy with the run orders (ctxlimit.mjs, META-CTX-ENFORCE R1)
+export { HANDOFF_PROMPT };
 const kTok = n => `${Math.round(n / 1000)}k`;
 /** the "- x" lines under "## Open threads" ("- none" is none) */
 export function openThreads(md) {
@@ -221,10 +235,14 @@ export function chatCost(lines, { day = null, since = null, perPct = null } = {}
  */
 export function createChat(o) {
   const p = o.project, spawnFn = o.spawnFn ?? spawn, graceMs = o.graceMs ?? 30000;
+  let picked;   // R1: the chat's pick (chatPick of the thread), read once, then kept by pick()
   function cfgOf() {
     const c = o.config ? o.config() : {};
-    return { executor: c.executor ?? o.executor, exe: c.exe ?? o.exe, model: c.model ?? o.model, effort: c.effort ?? o.effort, idleMs: c.idleMs ?? o.idleMs ?? IDLE_MS,
-      rawShell: c.rawShell ?? o.rawShell ?? 'off', context: { ...CONTEXT_DEFAULT, ...(o.context || {}), ...(c.context || {}) } };
+    const b = { executor: c.executor ?? o.executor, exe: c.exe ?? o.exe, model: c.model ?? o.model, effort: c.effort ?? o.effort, idleMs: c.idleMs ?? o.idleMs ?? IDLE_MS,
+      rawShell: c.rawShell ?? o.rawShell ?? 'off', context: { ...CONTEXT_DEFAULT, ...(o.context || {}), ...(c.context || {}) },
+      choices: c.choices ?? o.choices ?? null, perPct: c.perPct ?? o.perPct ?? null };
+    if (picked === undefined) picked = chatPick(readThread(p.state).items);
+    return { ...b, model: picked?.model ?? b.model, effort: picked?.effort ?? b.effort, defaults: { model: b.model, effort: b.effort } };
   }
   const chatCapable = cfg => {
     const fam = harnessOf(cfg.executor);
@@ -234,7 +252,7 @@ export function createChat(o) {
   chatCapable(cfgOf());
   takeLease(p);
   const subs = new Set();
-  let proc = null, seg = null, count = null, outbox = null, segCtx = null, rolling = null, closing = false;
+  let proc = null, seg = null, count = null, outbox = null, segCtx = null, rolling = null, closing = false, rollAfter = false;
   const outq = [];   // owner messages that wait in Norn while the process rolls over (a hand-off, a Settings restart)
   const live = me => { try { return cfgOf(); } catch { return me?.cfg ?? null; } };   // a Settings file being written: the last good one
 
@@ -287,7 +305,7 @@ export function createChat(o) {
         if (ev.session_id && ev.session_id !== seg.session_id) { newSegment(ev.session_id, 'vendor', me.cfg); me.inited = true; continue; }
         if (me.inited) continue;   // the init every turn repeats: same process, same session
         me.inited = true;
-        append('session', { session_id: ev.session_id, model: ev.model, permission_mode: ev.permission_mode, mcp: ev.mcp });
+        append('session', { session_id: ev.session_id, model: ev.model, permission_mode: ev.permission_mode, mcp: ev.mcp, ...(ev.commands ? { commands: ev.commands } : {}) });
         continue;
       }
       const { kind, ...data } = ev;
@@ -298,6 +316,7 @@ export function createChat(o) {
       if (kind === 'turn') {
         me.pending = Math.max(0, me.pending - 1);
         if (me.handoff && !me.handoff.file) handoffTurnDone(me, data);
+        else if (!me.pending && rollAfter && !me.handoff) { rollAfter = false; rolling = 'settings'; stop('settings'); }   // R1: a pick made mid-turn applies from the next turn
         else if (!me.pending && !me.handoff && !checkContext(me)) arm(me);
       }
     }
@@ -305,7 +324,7 @@ export function createChat(o) {
   // between turns: at handoff_k the hand-off turn, at hard_max_k the forced hand-off (SPEC sec. 4)
   function checkContext(me) {
     const c = (live(me) ?? me.cfg).context;
-    if (closing || !Number.isFinite(segCtx) || segCtx < c.handoff_k * 1000) return false;
+    if (closing || !['handoff', 'hard_max'].includes(ctxLevel(segCtx, c))) return false;
     beginHandoff(me, segCtx, c);
     return true;
   }
@@ -314,7 +333,7 @@ export function createChat(o) {
     me.handoff = { n, ctx, from_seg: seg.n, forced: false, text: [], file: null };
     rolling = 'handoff';
     clearTimeout(me.idle);
-    if (ctx >= c.hard_max_k * 1000) { writeHandoff(me, null, `the context (${kTok(ctx)}) is past the hard max (${c.hard_max_k}k)`); stop('handoff'); return; }
+    if (ctxLevel(ctx, c) === 'hard_max') { writeHandoff(me, null, `the context (${kTok(ctx)}) is past the hard max (${c.hard_max_k}k)`); stop('handoff'); return; }
     append('handoff', { phase: 'turn', n, ctx });
     me.pending++;
     me.child.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text',
@@ -374,7 +393,8 @@ export function createChat(o) {
     if (proc === me) { proc = null; clearInterval(outbox); drain(); }
     append('stop', { why, code, ...(err ? { err } : {}) });
     if (me.handoff) return completeHandoff(me, why, code);
-    if (rolling === 'settings') { rolling = null; if (!closing) flush(); }
+    if (rolling === 'clear') newSegment(randomUUID(), 'clear', live(me) ?? me.cfg);   // R1: /clear - the next message starts a fresh session
+    if (rolling === 'settings' || rolling === 'clear') { rolling = null; if (!closing) flush(); }
   }
   function arm(me) {
     clearTimeout(me.idle);
@@ -385,10 +405,10 @@ export function createChat(o) {
   function flush() {
     const q = outq.splice(0);
     if (!q.length) return;
-    try { const cfg = cfgOf(); for (const t of q) deliver(t, cfg, false); }
+    try { const cfg = cfgOf(); for (const t of q) deliver(t.text, cfg, false, {}, t.raw); }
     catch (e) { append('stop', { why: 'spawn', code: null, err: clip(e.message, 500) }); }
   }
-  function deliver(text, cfg, ownerLine, stamp = {}) {
+  function deliver(text, cfg, ownerLine, stamp = {}, raw = false) {
     // C2 finding: spawn BEFORE the owner line - a start that throws leaves no orphan owner line; the start line follows it
     const resume = proc ? null : prepare(cfg), fresh = !proc, me = proc ?? start(resume, cfg);
     if (ownerLine) append('owner', { text, ...stamp });
@@ -400,8 +420,10 @@ export function createChat(o) {
     try { news = newsBlock(p.state); } catch { /* the records unreadable: the message goes without news */ }
     // C5: the first message of a segment born of a hand-off carries it over
     const carry = fresh && !resume && seg.handoff ? carryOver() : '';
-    const body = carry || news ? `${[carry, news].filter(Boolean).join('\n\n')}\n\nThe owner's message:\n${text}` : text;
-    me.child.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: body }] } }) + '\n');
+    const userLine = t => me.child.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: t }] } }) + '\n');
+    // R1: a passed-through command goes verbatim (the CLI dispatches only a message that IS the command); a carry-over goes first, on its own
+    if (raw) { if (carry) { me.pending++; userLine(carry); } userLine(text); return { ok: true, seg: seg.n, session_id: seg.session_id, sent: true }; }
+    userLine(carry || news ? `${[carry, news].filter(Boolean).join('\n\n')}\n\nThe owner's message:\n${text}` : text);
     return { ok: true, seg: seg.n, session_id: seg.session_id };
   }
   const SETTING_KEYS = ['executor', 'exe', 'model', 'effort', 'rawShell'];
@@ -411,12 +433,75 @@ export function createChat(o) {
     text = text.trim();
     const cfg = cfgOf();
     chatCapable(cfg);
-    const stamp = o.via ? { via: o.via } : {};
-    const wait = () => { append('owner', { text, ...stamp }); outq.push(text); return { ok: true, queued: true, seg: seg?.n ?? null, session_id: seg?.session_id ?? null }; };
+    const m = text.match(CMD), name = m?.[1] ?? null, raw = !!m;
+    const stamp = { ...(m ? { cmd: name } : {}), ...(o.via ? { via: o.via } : {}) };
+    if (m && NORN_COMMANDS[name.toLowerCase()]) return command(name.toLowerCase(), (m[2] ?? '').trim(), text, stamp, cfg);
+    if (m) { const why = refusal(name, chatCommands(readThread(p.state).items)); if (why) { append('owner', { text, ...stamp }); return say(name, why); } }
+    const wait = () => { append('owner', { text, ...stamp }); outq.push({ text, raw }); return { ok: true, queued: true, seg: seg?.n ?? null, session_id: seg?.session_id ?? null, ...(raw ? { sent: true } : {}) }; };
     if (rolling || outq.length) return wait();
-    // C5: Settings obeyed live - an idle process started with other settings is ended; the message goes to a fresh one (the session resumes)
-    if (proc && !proc.pending && SETTING_KEYS.some(k => proc.cfg[k] !== cfg[k])) { const r = wait(); rolling = 'settings'; stop('settings'); return r; }
-    return deliver(text, cfg, true, stamp);
+    // C5: Settings obeyed live - an idle process started with other settings is ended; the message goes to a fresh one (the session resumes).
+    // R1: a busy one first finishes its turn (rollAfter), then the same - a pick applies from the next turn
+    if (proc && SETTING_KEYS.some(k => proc.cfg[k] !== cfg[k])) { const r = wait(); if (proc.pending) rollAfter = true; else { rolling = 'settings'; stop('settings'); } return r; }
+    return deliver(text, cfg, true, stamp, raw);
+  }
+  const say = (cmd, text) => { append('norn', { text, cmd }); return { ok: true, command: cmd, sent: false, text }; };
+  function refusal(name, list) {
+    const norn = Object.keys(NORN_COMMANDS).map(k => '/' + k).join(' ');
+    if (!list) return `/${name}: this chat's own commands are not known yet - the CLI lists them when the chat process starts. Send a message first, then try again. Not sent.`;
+    if (list.includes(name)) return null;
+    return `/${name} is not a command of this chat. Norn's: ${norn}; this session lists ${list.length} more (type / for the menu). Not sent - a command is never passed on as plain text.`;
+  }
+  /** R1: the picker and /model, /effort: { model?, effort? } (a value, or null = back to the Settings row; absent = unchanged); applies from the next turn */
+  function pick(v = {}) {
+    const cfg = cfgOf(), ch = cfg.choices ?? {}, next = { model: picked?.model ?? null, effort: picked?.effort ?? null };
+    for (const k of ['model', 'effort']) {
+      if (v[k] === undefined) continue;
+      if (v[k] !== null && !((k === 'model' ? ch.models : ch.efforts) ?? []).includes(v[k])) throw Object.assign(new Error(`${v[k]} is not a ${k} of this chat`), { status: 400 });
+      next[k] = v[k];
+    }
+    picked = next.model || next.effort ? next : null;
+    append('pick', next);
+    return status();
+  }
+  function command(name, arg, text, stamp, cfg) {
+    append('owner', { text, ...stamp });
+    const items = () => readThread(p.state).items, ch = cfg.choices ?? {}, busy = !!proc?.pending || !!rolling;
+    if (name === 'model' || name === 'effort') {
+      const list = (name === 'model' ? ch.models : ch.efforts) ?? [], def = cfg.defaults[name], cur = cfg[name], mine = picked?.[name];
+      if (!arg) return say(name, `${name} in use: ${cur}${mine ? ` (picked for this chat; the Settings default is ${def})` : ' (the Settings default)'}. Choose: /${name} ${[...list, 'default'].join(' | ')}`);
+      const a = arg.toLowerCase(), v = a === 'default' ? null
+        : list.find(x => x.toLowerCase() === a) ?? (name === 'model' ? ch.alias?.[a] ?? list.find(x => x.toLowerCase().includes(a)) : undefined);
+      if (v === undefined) return say(name, `${arg} is not a ${name} of this chat (choose ${list.join(', ')} or default) - nothing changed.`);
+      pick({ [name]: v });
+      return say(name, v === null ? `${name} -> the Settings default (${def}) from the next turn.` : `${name} -> ${v} from the next turn (this chat only; "make default" in the picker writes the Settings row).`);
+    }
+    if (name === 'clear') {
+      if (busy) return say(name, 'a turn is running - /clear once it has ended. Nothing changed.');
+      if (!seg) seg = threadState(items()).seg;
+      const r = say(name, `new session: the next message starts a fresh conversation (segment ${(seg?.n ?? 0) + 1}). The records (DIR / DEC / Q, runs, lanes) stay; the controller reads them with norn_boot.`);
+      if (proc) { rolling = 'clear'; stop('clear'); } else newSegment(randomUUID(), 'clear', cfg);
+      return r;
+    }
+    if (name === 'compact') {
+      if (busy) return say(name, 'a turn is running - /compact once it has ended. Nothing changed.');
+      const t = threadState(items());
+      if (!t.seg || !t.begun) return say(name, 'nothing to hand off yet: this session has had no turn.');
+      let me = proc;
+      if (!me) { const resume = prepare(cfg); me = start(resume, cfg); append('start', { resume, pid: me.child.pid ?? null, model: cfg.model, effort: cfg.effort }); }
+      const ctx = segCtx ?? lastCtx(items(), seg.n) ?? 0;
+      const r = say(name, `hand-off now (Norn's /compact): the controller writes its hand-off, then a fresh session (segment ${seg.n + 1}) carries it over. The records stay the memory.`);
+      beginHandoff(me, ctx, cfg.context);
+      return r;
+    }
+    if (name === 'cost' || name === 'usage') {
+      const all = items(), c = chatCost(all, { perPct: cfg.perPct }), ctx = segCtx ?? (seg ? lastCtx(all, seg.n) : null);
+      const tok = c.tokens >= 1e6 ? (c.tokens / 1e6).toFixed(2) + 'M' : (c.tokens / 1000).toFixed(1) + 'k';
+      return say(name, `chat today: ${tok} tokens · ${c.turns} turn${c.turns === 1 ? '' : 's'}${Number.isFinite(c.weekly_pct) ? ` · ~${c.weekly_pct.toFixed(2)} % of the week (estimate)` : ''}`
+        + `${Number.isFinite(ctx) ? ` · this session's context ${kTok(ctx)} of the ${cfg.context.handoff_k}k hand-off` : ''}. Norn counts the chat per turn; workers and check-ins: the Agents tab and the Usage column.`);
+    }
+    const list = chatCommands(items());
+    return say(name, ['Norn chat commands (answered by Norn, no model turn):', ...Object.entries(NORN_COMMANDS).map(([k, w]) => `/${k} - ${w}`),
+      list ? `This session's own commands (${list.length}, passed to the CLI exactly as typed): type / for the menu.` : "This session's own commands are listed once the chat has started."].join('\n'));
   }
   /** close stdin (the CLI ends its turn and exits 0); kill the tree only if it is still there after graceMs */
   function stop(why = 'owner') {
@@ -443,7 +528,7 @@ export function createChat(o) {
     const items = seg ? null : readThread(p.state).items, t = seg ? { seg } : threadState(items);
     const cfg = live(proc) ?? {}, ctx = segCtx ?? (t.seg ? lastCtx(items ?? readThread(p.state).items, t.seg.n) : null);
     return { running: !!proc, busy: !!proc?.pending || !!rolling, segment: t.seg?.n ?? null, session_id: t.seg?.session_id ?? null, executor: cfg.executor, model: cfg.model,
-      effort: cfg.effort, raw_shell: cfg.rawShell, ctx, context: cfg.context, handing_off: rolling === 'handoff' };
+      effort: cfg.effort, raw_shell: cfg.rawShell, ctx, context: cfg.context, handing_off: rolling === 'handoff', pick: picked ?? null, defaults: cfg.defaults ?? null };
   }
   function subscribe(fn) { subs.add(fn); return () => subs.delete(fn); }
   /** C3: the MCP chat profile's outbox (approval cards, timeouts, done cards, shown files) into the thread - its one writer */
@@ -461,5 +546,5 @@ export function createChat(o) {
   }
   /** a line the dashboard writes for the owner (an undo) */
   function note(kind, data) { if (kind !== 'undone') throw new Error(`note: ${kind} is not a dashboard line`); return append(kind, data); }
-  return { send, stop, close, status, subscribe, drain, decide, note };
+  return { send, stop, close, status, subscribe, drain, decide, note, pick };
 }

@@ -76,9 +76,10 @@ export function listMail(state, { to, open } = {}) {
 export const formatMail = m => `${m.id} from ${m.data.from}${m.data.urgent ? ' URGENT' : ''}: ${m.data.subject}\n${String(m.text ?? bodyOf(m)).replace(/\s+$/, '')}\n(ack it: norn mail ack ${m.id}, or norn_mail ack)`;
 
 /** the PostToolUse hook's stdout: the delivered mail as additionalContext (Claude Code hook JSON); '' = nothing to say */
-export function injectJson(mails) {
-  if (!mails.length) return '';
-  const additionalContext = `MAIL for you (${mails.length}; delivered by meta between your tool calls):\n\n${mails.map(formatMail).join('\n\n')}`;
+export function injectJson(mails, order = '') {
+  if (!mails.length && !order) return '';
+  const mail = mails.length ? `MAIL for you (${mails.length}; delivered by meta between your tool calls):\n\n${mails.map(formatMail).join('\n\n')}` : '';
+  const additionalContext = [order, mail].filter(Boolean).join('\n\n');   // META-CTX-ENFORCE R1: a context order (ctxlimit.mjs) goes first
   return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext } });
 }
 

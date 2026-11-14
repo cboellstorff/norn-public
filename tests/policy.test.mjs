@@ -53,3 +53,13 @@ test('generated prompt lines come from the policy and rewrite only marked lines'
   assert.deepEqual(r.changed,['context.implementer']);assert.deepEqual(r.unknown,['unknown']);
   assert.equal(rewriteMarked('a\r\nb <!-- policy:iteration -->\r\n',lines).text.split('\r\n').length,3,'CRLF kept');
 });
+
+// META-TEND P2 (owner Q3): "raise effort" names its step - policy.iteration.escalation_effort (default xhigh), in the generated rule line
+test('escalation_effort: default xhigh, settable to an effort, named in the generated iteration line',()=>{
+  assert.equal(POLICY_DEFAULTS.iteration.escalation_effort,'xhigh');
+  const p=merged(budget(),structuredClone(POLICY_DEFAULTS));
+  assert.match(generatedLines(p)['iteration'],/first: raise effort to xhigh/);
+  const r=applySettings(p,{'policy.iteration.escalation_effort':'high'});
+  assert.equal(r.policy.iteration.escalation_effort,'high');
+  assert.throws(()=>applySettings(p,{'policy.iteration.escalation_effort':'max'}),e=>e.status===400);
+});

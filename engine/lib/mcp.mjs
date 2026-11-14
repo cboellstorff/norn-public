@@ -178,7 +178,7 @@ function pack(ctx, role) {
     const budget = fs.existsSync(budgetFile) ? JSON.parse(fs.readFileSync(budgetFile, 'utf8').replace(/^﻿/, '')) : {};
     return fs.readFileSync(renderCheckin(ctx.project, { budgetFile, budget }), 'utf8');
   }
-  const v = { project: ctx.project?.name || '(no project)', state: fwd(path.resolve(ctx.state)), meta: `node "${fwd(META_CLI)}"`, records: fwd(RECORDS_DOC) };
+  const v = { project: ctx.project?.name || '(no project)', state: fwd(path.resolve(ctx.state)), norn: `node "${fwd(META_CLI)}"`, meta: `node "${fwd(META_CLI)}"`, records: fwd(RECORDS_DOC) };
   return fs.readFileSync(CONTROLLER_PROMPT, 'utf8').replace(/\{\{(\w+)\}\}/g, (_, k) => v[k] ?? `{{${k}}}`);
 }
 function heartbeat(ctx) {
@@ -277,6 +277,7 @@ function startRunTool(a, ctx) {
   }
   if (!ex) bad('executor or class is required');
   const args = ['run', '--executor', ex, '--lane', a.lane, '--brief', a.brief, '--via', ctx.via];
+  if (a.class) args.push('--class', a.class);   // META-TEND P2: the class the run was routed by is stamped on it (basis given)
   for (const [k, f] of [['model', 'model'], ['effort', 'effort'], ['budget_min', 'budget-min'], ['parent', 'parent'], ['worktree', 'worktree'], ['notes', 'notes']]) if (a[k] !== undefined) args.push('--' + f, String(a[k]));
   const r = ctx.cliRun(args);
   if (r.code) throw new ToolError(r.code === 4 ? `cap: do it later (${r.out || r.err})` : (r.err || r.out), r.code);
@@ -390,7 +391,7 @@ function machineOf(ctx) {
   if (!fs.existsSync(file)) return null;
   const m = loadMachine(file, { meta, home: ctx.env.USERPROFILE || ctx.env.HOME || undefined });
   return { file, projects: m.projects.map(pr => {
-    const config = expandVars(pr.config, { meta, home: m.home });
+    const config = expandVars(pr.config, { norn: meta, meta, home: m.home });   // ${meta} = the old name (META-NAME-W3)
     try { return { name: pr.name, config, p: loadProject(config, { home: m.home, meta }), error: null }; } catch (e) { return { name: pr.name, config, p: null, error: e.message }; }
   }) };
 }

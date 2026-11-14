@@ -192,5 +192,6 @@ export function renderDigest(d, { level = 2 } = {}) {
   // META-GUARD R1: open usage alarms; the check-in rules each (let it run / mail it / stop it), Norn never kills a run by itself
   if (s.guard) sec('8 Usage guard', s.guard, r => (r.kind === 'drift' ? `- ${r.run} drift` : `- ${r.id} ${r.run} ${r.cls}`) + `${r.lane ? ' ' + r.lane : ''}: ${r.why}`);
   if (s.slop) sec('9 SloppaChoppa', s.slop, r => '- ' + r.line);
+  if (s.advice) sec('10 Model advice', s.advice, r => '- ' + r.line);   // META-TEND P4: one tap on the Inbox card applies or keeps each
   return L.join('\n') + '\n';
 }

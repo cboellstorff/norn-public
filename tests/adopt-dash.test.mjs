@@ -8,6 +8,7 @@ import path from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { mkTmp } from './helpers/tmp.mjs';
+import { runEnded, waitFor, stateBusy } from './helpers/wait.mjs';
 import { which } from '../engine/lib/paths.mjs';
 import { loadMachine, loadProject } from '../engine/lib/config.mjs';
 import { loadState } from '../engine/lib/records.mjs';
@@ -15,6 +16,7 @@ import { loadRoadmap } from '../engine/lib/roadmap.mjs';
 import { createDashboard } from '../engine/dash/server.mjs';
 import { renderTab, loadTab } from '../engine/dash/ui.mjs';
 import { renderAdopt, adoptStep, ADOPT_STEPS } from '../engine/dash/adopt.mjs';
+import { proposalOf } from '../engine/lib/adopt.mjs';
 
 const META = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'engine', 'bin', 'norn.mjs');
 const WIN = process.platform === 'win32';
@@ -206,11 +208,17 @@ test('the read from the dashboard: the explicit choice starts ONE read-only run 
     assert.equal(r.status, 200, JSON.stringify(r.data)); assert.match(r.data.run, /^RUN-\d+$/); assert.equal(r.data.id, 'ADP-1');
     let a = await d.get('/api/adopt?project=tide');
     assert.equal(a.read.id, r.data.run); assert.equal(a.read.executor, 'fake');
-    for (let i = 0; i < 300 && !a.proposal?.draft; i++) { await new Promise(res => setTimeout(res, 100)); a = await d.get('/api/adopt?project=tide'); }
+    // CI-RED-FDECF30: the fake answer is no JSON, so the read's end starts its ONE retry ('ADP-1 read 2') and the draft lands at the
+    // RETRY's end. Wait while a run of the state still lives (progress-based, never a fixed 30 s: the Windows NEW RED), then settle
+    // the run GET /api/adopt follows (the retry: its supervisor tail was the Linux LEAK RED, the first run had long settled).
+    await waitFor(() => proposalOf(stateOf(sb))?.draft, { producer: stateBusy(stateOf(sb)), what: 'the draft' });
+    a = await d.get('/api/adopt?project=tide');
     assert.ok(a.proposal.draft, 'the read was ingested (a fake answer that is no JSON: the facts-only fallback)');
     assert.equal(adoptStep(a), 'review');
     const run = loadState(stateOf(sb)).items[r.data.run];
     assert.equal(run.data.lane, 'adopt'); assert.equal(run.data.role, 'helper');
+    assert.ok(a.read.ingested, 'GET /api/adopt follows the read to the run whose end wrote the draft');
+    await runEnded(stateOf(sb), a.read.id);   // CI-RED-A0994AB: the draft lands before the supervisor's tail ends
   } finally { await d.close(); }
 });
 

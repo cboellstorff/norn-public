@@ -16,10 +16,12 @@ import path from 'node:path';
 import { guardRows } from './guard.mjs';
 import { runDrift } from './drift.mjs';
 import { digestRow } from './slop/daily.mjs';
+import { slopOn } from './policy.mjs';
+import { adviceDigestRow } from './advice.mjs';
 
 const H = 3600e3;
 export const WINDOW_H = 72;
-const NOT_WORK = ['checkin', 'talk', 'interactive', 'fake'];
+const NOT_WORK = ['checkin', 'talk', 'interactive', 'fake', 'audit'];
 const isWork = d => !NOT_WORK.includes(d.kind) && d.role !== 'helper' && !d.parent;
 const endOf = r => r.history.find(h => ['end', 'lost', 'kill'].includes(h.ev)) || null;
 const BAD_END = ['crash', 'no-marker'];
@@ -180,8 +182,11 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   const g = [...guardRows(stateDir), ...driftRows(runs, { now, git, main })];   // + item 3: the brief drift of an ended, unreviewed run
   if (g.length) sections.guard = g;
   // META-SLOP-A: ONE line - the last daily slop report + the branches slop holds now
-  const sl = digestRow(stateDir, now);
+  const sl = slopOn(project?.policy) ? digestRow(stateDir, now) : null;   // META-BETA-PREP: not while the one switch is off
   if (sl) sections.slop = [sl];
+  // META-TEND P4: ONE line - the open model-advice cards (advice.json, the last count the Usage tab / norn advise made)
+  const adv = adviceDigestRow(stateDir);
+  if (adv) sections.advice = [adv];
   const counts = Object.fromEntries(Object.entries(sections).map(([k, v]) => [k, v.length]));
   return { project: project?.name ?? null, at: new Date(now).toISOString(), window_h: WINDOW_H, sections, counts };
 }

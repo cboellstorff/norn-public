@@ -21,6 +21,8 @@ if (flag('--resume') && !load()) { process.stderr.write(`No conversation found w
 fs.mkdirSync(store, { recursive: true });
 if (!load()) fs.writeFileSync(file, JSON.stringify({ messages: [] }));
 
+// R1: as claude's init, the commands this session can dispatch (a sample of the real 2.1.314 list + one custom command)
+const SLASH = ['clear', 'compact', 'context', 'model', 'effort', 'usage', 'norn-ping'];
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let chain = Promise.resolve();
 readline.createInterface({ input: process.stdin }).on('line', line => { chain = chain.then(() => turn(line)); })
@@ -30,7 +32,7 @@ let spent = 0;
 async function turn(line) {
   let text;
   try { text = JSON.parse(line).message.content.map(c => c.text ?? '').join(''); } catch { return; }
-  out({ type: 'system', subtype: 'init', session_id: sid, model, permissionMode: 'default', mcp_servers: [] });
+  out({ type: 'system', subtype: 'init', session_id: sid, model, permissionMode: 'default', mcp_servers: [], slash_commands: SLASH });
   if (text === '!crash') process.exit(3);
   const slow = text.match(/^!slow (\d+)$/);
   if (slow) await sleep(Number(slow[1]));

@@ -2,7 +2,7 @@
   "schema": 1,
   "name": "example",
   "title": "Example project (norn smoke + quick start)",
-  "root": "${meta}/projects/example",
+  "root": "${norn}/projects/example",
   "ledger": "${state}/progress.md",
   "briefs_dir": "${state}/briefs",
   "views": {
@@ -24,6 +24,6 @@
       "modes": { "write": { "access": "write", "args": ["--allow-edits", "--allow-shell"] }, "ro": { "access": "read-only", "args": ["--read-only"] } },
       "enabled": false }
   },
-  "docs": [{ "tab": "Readme", "path": "${meta}/README.md" }],
+  "docs": [{ "tab": "Readme", "path": "${norn}/README.md" }],
   "policy": { "cadence": { "auto_resume_handoff": true, "auto_resume_max": 2, "trigger_on_exit": false } }
 }

@@ -12,7 +12,7 @@ test('Norn nav: every tab id in exactly one Norn group (Norn the thread = Home, 
   assert.deepEqual(NORN_GROUPS[4][3], ['roadmap'], 'META-ROADMAP S2: its own frame after Skuld (SPEC sec. 4)');
   const ids = NORN_GROUPS.flatMap(g => g[3]);
   assert.deepEqual([...ids].sort(), [...SERVER_TABS].sort(), 'each tab once');
-  assert.deepEqual(NORN_GROUPS[2][3], ['records', 'ledger', 'docs', 'instructions']);   // META-INSTRUCTIONS R1: next to Docs assert.ok(NORN_GROUPS[3][3].includes('inbox'));
+  assert.deepEqual(NORN_GROUPS[2][3], ['records', 'ledger', 'docs']); assert.deepEqual(NORN_GROUPS[1][3].slice(-4), ['usage', 'tests', 'instructions', 'guard']);   // META-TEND P1-VISUAL (REPORT 5.3): Instructions in Verdandi beside Usage; META-TEND P6: Guard (the open faults now = what is) last in Verdandi assert.ok(NORN_GROUPS[3][3].includes('inbox'));
   assert.ok(['overview', 'map', 'agents', 'lanes'].every(t => NORN_GROUPS[1][3].includes(t)));
   const nav = renderNav('inbox', { inbox: 3 }, 'norn');
   for (const [k, label] of TABS) { assert.ok(nav.includes(`id="tab-${k}" data-tab="${k}"`), k); assert.ok(nav.includes(`>${label}<`), label); }

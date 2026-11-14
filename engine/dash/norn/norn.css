@@ -11,11 +11,13 @@
 :root.norn[data-ground=dark] { --bg: #0b0e1a; --panel: #151c30; --ink: #d3e2ec; --mute: #93aec6; --line: #2e3f5f; --soft: #1f2b45;
   --accent: #e2683f; --accent-bg: #241a14; --ok: #94b44c; --ok-bg: #34431c; --run: #eec24a; --run-bg: #6e430f; --warn: #52b8a0; --warn-bg: #0e2b30;
   --bad: #e2683f; --bad-bg: #571a22; --codex: #a0569a; --codex-bg: #0b0e1a; --bar: #2e3f5f; --on-accent: #0b0e1a; --shadow: #0b0e1a; --zebra: #1f2b45;
-  --gold: #eec24a; --dim: #6380a0; }
+  --gold: #eec24a; --dim: #6380a0;
+  --k1: #93aec6; --k2: #a0569a; --k3: #e2683f; --k4: #eec24a; --k5: #52b8a0; --k6: #94b44c; --k7: #b8801e; --k8: #6380a0; --k9: #9c7048; --kgen: #a0569a; }   /* META-TEND P1-VISUAL: stack / bars series */
 :root.norn[data-ground=light] { --bg: #e9dcbc; --panel: #f7f0dc; --ink: #241a14; --mute: #433021; --line: #c9b48c; --soft: #e9dcbc;
   --accent: #a5302e; --accent-bg: #f7f0dc; --ok: #34431c; --ok-bg: #94b44c; --run: #6e430f; --run-bg: #fff0a8; --warn: #17504f; --warn-bg: #9eecc9;
   --bad: #a5302e; --bad-bg: #c9b48c; --codex: #a0569a; --codex-bg: #d3e2ec; --bar: #c9b48c; --on-accent: #f7f0dc; --shadow: #8c7656; --zebra: #e9dcbc;
-  --gold: #6e430f; --dim: #6b4a30; }
+  --gold: #6e430f; --dim: #6b4a30;
+  --k1: #425a7d; --k2: #a0569a; --k3: #a5302e; --k4: #6e430f; --k5: #17504f; --k6: #5a7a2c; --k7: #b8801e; --k8: #2e3f5f; --k9: #6b4a30; --kgen: #a0569a; }
 
 :root.norn img, :root.norn canvas, :root.norn .gl, :root.norn .tk { image-rendering: pixelated; image-rendering: crisp-edges; }
 /* headings in the pixel font at 8 art px (each font pixel on whole device px); body text stays the system UI font */
@@ -73,7 +75,6 @@
 :root.norn svg.map .band { opacity: 1; fill: var(--soft); }
 :root.norn svg.map .band.alt { opacity: 1; fill: var(--bg); }
 :root.norn .mn.faded { opacity: 1; }
-:root.norn .insseg.fixed, :root.norn .insdot.fixed { opacity: 1; }
 :root.norn .mn.faded .box { stroke: var(--line); } :root.norn .mn.faded text { fill: var(--mute); }
 :root.norn .me.e-dispatched, :root.norn .me.e-reviewed { opacity: 1; stroke: var(--line); }
 :root.norn .md h2.mk, :root.norn .md h3.mk, :root.norn #feed-now { border-radius: 0; }
@@ -288,3 +289,7 @@
 :root.norn .composer .send { background: var(--gold); border-color: var(--gold); color: var(--on-accent); }
 :root.norn .ev .acts .rec { background: var(--bg); border-color: var(--gold); color: var(--ink); } :root.norn .ev .acts .rec small { color: var(--gold); }
 :root.norn .bbar .count { border-radius: 0; }
+
+/* META-TEND P1-VISUAL: the stack widget and the file map square on the pixel grid (the series --k1..--k9 sit in the ground blocks above) */
+:root.norn .insbar, :root.norn .insdot, :root.norn .stkdot, :root.norn .fmblk { border-radius: 0; }
+:root.norn .fmblk { color: var(--panel); }

@@ -146,12 +146,15 @@ test('shot: killProfileProcs takes the profile processes AND their descendants (
 // META-OOTB-FIX HOME-TEARDOWN (RUN-575 FINDING): a browser process still holding the profile made a bare rmSync throw EPERM in a
 // test's finally - the throw replaced the body's result and skipped the fixture's done(), so the test process hung. A holder = a
 // process naming the profile on its command line with its cwd inside it (Windows: the dir cannot go while it lives).
-const holder = dir => spawn(process.execPath, ['-e', 'setInterval(() => {}, 1e6)', dir], { cwd: dir, stdio: 'ignore', windowsHide: true });
+// The holder says "ready" from its own code: Node's 'spawn' event fires once CreateProcess returns, BEFORE the Windows child has
+// opened its cwd handle (process init), so a bare rmSync right after 'spawn' often won the race and the dir was not held at all
+// (CI 43556561887 Windows; a toy: 27/30 bare rmSyncs succeed after 'spawn', 0/30 after the child's first stdout byte).
+const holder = dir => { const c = spawn(process.execPath, ['-e', 'process.stdout.write("ready"); setInterval(() => {}, 1e6)', dir], { cwd: dir, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }); c.ready = new Promise((r, j) => { c.stdout.once('data', r); c.once('error', j); }); c.stdout.resume(); return c; };
 const exited = c => c.exitCode !== null || c.signalCode !== null ? Promise.resolve() : new Promise(r => c.once('exit', r));
 test('shot: removeProfile waits for the process holding the profile to exit, then removes it (no EPERM out of the teardown)', async () => {
   const profile = path.join(mkTmp('meta-shot-'), 'prof'); fs.mkdirSync(profile); fs.writeFileSync(path.join(profile, 'Local State'), '{}');
   const h = holder(profile);
-  await new Promise(r => h.once('spawn', r));
+  await h.ready;
   // the test owns its holder: on Linux / macOS a cwd does not block rm, so removeProfile removes the dir at once and never kills
   // the holder - a bare `await exited(h)` then waited on a process that never ends (CI 43518267986: the Linux job hung 1 h here).
   // On Windows the dir cannot go while the holder lives, so "profile removed" below is the proof removeProfile ended it.
@@ -165,7 +168,7 @@ test('shot: removeProfile waits for the process holding the profile to exit, the
 test('shot: closeBrowser never throws - a holder that will not die comes back as { ok: false, why } naming it, for the caller to report after its body', async () => {
   const profile = path.join(mkTmp('meta-shot-'), 'prof'); fs.mkdirSync(profile);
   const h = holder(profile);
-  await new Promise(r => h.once('spawn', r));
+  await h.ready;
   try {
     const r = await closeBrowser(null, profile, { list: () => [{ pid: h.pid, ppid: 1, cmd: `node ${profile}` }], kill: () => {} });
     assert.equal(r.ok, process.platform !== 'win32', JSON.stringify(r));

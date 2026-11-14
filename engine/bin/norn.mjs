@@ -12,16 +12,18 @@ import { readSources, runMigration, migrateMachine, MigrationError } from '../li
 import { setup, doctor, projectAdd, projectNew, projectList, projectRemove, gen, SetupError, readLineSync } from '../lib/setup.mjs';
 import { ConfigError, loadProject, loadMachine, metaRoot, expandLate, MOVED_SLOTS } from '../lib/config.mjs';
 import { loadPlan, formatPlan } from '../lib/plan.mjs';
-import { profileOf, roleOfSpec, inlineAgent } from '../lib/standing.mjs';
-import { instructionsView, formatInstructions, formatSuggest, paragraphs, applySuggestion } from '../lib/instructions.mjs';
+import { instructionsView, formatInstructions, formatSuggest, paragraphs, applySuggestion, discover } from '../lib/instructions.mjs';
+import { auditScope, auditPrompt, auditStamp, writeStamp, auditsDir, auditsView, AUDIT_MODEL, AUDIT_EFFORT } from '../lib/audit.mjs';
+import { openCards } from '../lib/rules.mjs';
 import os from 'node:os';
-import { startRun, stopRun, requeueRun, fillQueue, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter } from '../lib/runs.mjs';
+import { startRun, stopRun, requeueRun, fillQueue, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt } from '../lib/runs.mjs';
 import { parseAfter, parseInputs, AfterError, makeEval, readyWords } from '../lib/after.mjs';
 import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../lib/epics.mjs';
 import { loadRoadmap, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError } from '../lib/roadmap.mjs';
 import { scan, importLegacy, renderImport, adoptStart, adoptDecide, adoptApply, adoptClose, proposalOf, renderProposal, AdoptError, interviewOf, laneNameOf, readExecutor, readStart, readWait, consentLine, ANSWER_KEYS } from '../lib/adopt.mjs';
 import { loadFlow, startFlow, flowStatus, resumeFlow, FlowError, FLOWS_DIR } from '../lib/flows.mjs';
-import { isTyped, providersOf, typedExe } from '../lib/executors.mjs';
+import { providersOf, typedExe } from '../lib/executors.mjs';
+import { launchParts, refillOf } from '../lib/launchpolicy.mjs';
 import { loginCommand } from '../lib/authguard.mjs';
 import { presetExe } from '../lib/presets.mjs';
 import { capsMatrix, formatCapsMatrix } from '../lib/harness/index.mjs';
@@ -32,7 +34,8 @@ import { weekStart, parseReset } from '../lib/cost.mjs';
 import { digest, tryDigest } from '../lib/digest.mjs';
 import { renderDigest } from '../lib/views.mjs';
 import { tick, quietFlag } from '../lib/tick.mjs';
-import { POLICY_DEFAULTS, withDefaults, applySettings, merged, split, writeBudget, capsMissing } from '../lib/policy.mjs';
+import { POLICY_DEFAULTS, withDefaults, applySettings, merged, split, writeBudget, capsMissing, slopOn } from '../lib/policy.mjs';
+import { CLASS_LABELS } from '../lib/workclass.mjs';
 import { adapterFor, schedState, liveName, oldTasks, schedApply } from '../lib/sched/index.mjs';
 import { serve, refusal } from '../lib/mcp.mjs';
 import { installPlan, applyPlan, FAMILIES } from '../lib/harness.mjs';
@@ -40,7 +43,8 @@ import { writeDash, clearDash, dashRestart, DashError } from '../lib/dashlive.mj
 import { remoteSetup, remoteOff } from '../lib/remote.mjs';
 import { fwd } from '../lib/config.mjs';
 import { newLane, lanePaths, LaneError } from '../lib/lanenew.mjs';
-import { renderMergeBrief, shotsMode } from '../lib/mergebrief.mjs';
+import { renderMergeBrief, shotsMode, briefMarker } from '../lib/mergebrief.mjs';
+import { isMergeStage } from '../lib/usageguard.mjs';
 import { delegateStart, delegateWait, ASK_MAX_S } from '../lib/delegate.mjs';
 import { askStart, askWait } from '../lib/ask.mjs';
 import { loadDeliverables, deliverablesView, backfillPlan, applyBackfill, formatBackfill, formatDeliverable, askDeliverable, resolveDeliverable, createResolveWorktree, liveResolve } from '../lib/deliverables.mjs';
@@ -50,6 +54,7 @@ import { evalCmd, EVAL_USAGE } from '../lib/eval/cli.mjs';
 import { ledgerConfig, ledgerStatus, ledgerLog, ledgerRestore } from '../lib/ledger.mjs';
 import { cv, cvPart, renderWindow, renderCv, writeCvView, CV_BY } from '../lib/cv.mjs';
 import { sendMail, checkMail, ackMail, listMail, formatMail, injectJson, mailRole } from '../lib/mail.mjs';
+import { ctxOrder } from '../lib/ctxlimit.mjs';
 import { isMain } from '../lib/paths.mjs';
 import { shot, parseShotArgs, ShotError, SHOT_USAGE } from '../lib/shot.mjs';
 import { parseLabels, servedLabels, FedError, fedOf, fetchForeign, hostName } from '../lib/fed.mjs';
@@ -58,6 +63,7 @@ import { guardScan, guardWatch, openGuards, formatGuard, contextSources, GUARD_A
 import { runTranscript, transcriptTrace } from '../lib/standing.mjs';
 import { usageWeek, formatUsageWeek } from '../lib/usageweek.mjs';
 import { slopCmd } from '../lib/slop/cli.mjs';
+import { testsCmd } from '../lib/testscli.mjs';
 import { openBlocks, findingLine } from '../lib/slop/host.mjs';
 
 const USAGE = {
@@ -304,14 +310,14 @@ function setupCmd(argv, env, out, err) {
 
 // ---------- S4: norn run / norn stop / norn hook session ----------
 const RUN_USAGE = {
-  run: 'norn run --executor claude|codex-sol|codex-astra|fake|<configured typed executor name> --lane L --brief F [--parent RUN-n] [--worktree W] [--notes F] [--stage S] [--round N] [--budget-min N] [--agent A] [--model M] [--effort E] [--project <name | project.json> | --state D] [--locks D] [--machine F] [--budget F] [--no-tick] [--queue] [--wait (block until the run ends; exit 0 = DONE)] [--after "q:Q-n[:answered|applied],dlv:DLV-n[:merged],run:RUN-n[:done|ended|merged],dir:DIR-n[:done]"] [--inputs DLV-n,..] [--epic EP-n] [--priority P0|P1|P2|P3 (default: the epic priority)] [--item RM-n (links the run to its roadmap item)] [--labels a,b (always QUEUED; started by a machine serving every label: machine.json fed.labels, default its OS)]    exit 3 = worktree held, 4 = worker cap (--queue: QUEUED instead, exit 0; --after: always QUEUED, started by the fill once every condition is met, held as "needs a ruling" when one can no longer be met; exit 3 also = a second queued / running run of the same lane + stage + round)',
+  run: 'norn run --executor claude|codex-sol|codex-astra|fake|<configured typed executor name> --lane L --brief F [--parent RUN-n] [--worktree W] [--notes F] [--stage S] [--round N] [--budget-min N] [--agent A] [--model M] [--effort E] [--class C (the work class stamped on the run; else derived: workclass.mjs)] [--project <name | project.json> | --state D] [--locks D] [--machine F] [--budget F] [--no-tick] [--queue] [--wait (block until the run ends; exit 0 = DONE)] [--after "q:Q-n[:answered|applied],dlv:DLV-n[:merged],run:RUN-n[:done|ended|merged],dir:DIR-n[:done]"] [--inputs DLV-n,..] [--epic EP-n] [--priority P0|P1|P2|P3 (default: the epic priority)] [--item RM-n (links the run to its roadmap item)] [--labels a,b (always QUEUED; started by a machine serving every label: machine.json fed.labels, default its OS)]    exit 3 = worktree held, 4 = worker cap (--queue: QUEUED instead, exit 0; --after: always QUEUED, started by the fill once every condition is met, held as "needs a ruling" when one can no longer be met; exit 3 also = a second queued / running run of the same lane + stage + round)',
   stop: 'norn stop RUN-n --as owner|dashboard|controller|checkin [--why W (required for checkin)] [--project project.json | --state D] [--locks D]    (a queued run is withdrawn; a check-in withdraws only a QUEUED run - a kill stays owner / controller)',
   requeue: 'norn requeue RUN-n --after "<conditions as norn run --after> | none" --why W --as owner|dashboard|controller|checkin [--project project.json | --state D]    (a QUEUED run re-queued with new conditions: same launch args; the old one withdrawn naming the new one; every queued run waiting on it rewired onto it; exit 3 = not queued)',
   hook: 'norn hook session --state D | --project project.json    (Claude Code SessionStart / SessionEnd hook; payload on stdin; always exits 0)',
 };
 // SHIP-READY minor: a misused `norn run` says the short form, never the full option list with its record-id syntax
 const RUN_SHORT = 'norn run --executor E --lane L --brief F [options]    (every option: norn run --help)';
-const RUN_FLAGS = ['executor', 'labels', 'after', 'inputs', 'epic', 'priority', 'parent', 'via', 'lane', 'brief', 'worktree', 'notes', 'stage', 'round', 'budget-min', 'agent', 'model', 'effort', 'project', 'state', 'locks', 'machine', 'budget', 'no-tick!', 'queue!', 'as', 'why', 'wait!', 'item'];
+const RUN_FLAGS = ['executor', 'labels', 'after', 'inputs', 'epic', 'priority', 'parent', 'via', 'lane', 'brief', 'worktree', 'notes', 'stage', 'round', 'budget-min', 'agent', 'model', 'effort', 'class', 'project', 'state', 'locks', 'machine', 'budget', 'no-tick!', 'queue!', 'as', 'why', 'wait!', 'item'];
 function runFlags(cmd, argv) {
   const flags = {}, pos = [];
   for (let i = 0; i < argv.length; i++) {
@@ -358,6 +364,17 @@ const labelsOf = s => { try { return parseLabels(s); } catch (e) { if (e instanc
 const afterOf = (s, parse = parseAfter) => { try { return parse(s); } catch (e) { if (e instanceof AfterError) throw new RunError(e.message); throw e; } };
 // OOTB-R2 N-2: a relative --brief / --notes is the caller's (cwd), not the lane worktree's the worker runs in ('-' = no brief file)
 const callerPath = f => (f && f !== '-' ? path.resolve(f) : f);
+// META-MERGE-MARKER (DEC-275 / DEC-285 / DEC-287): a MERGE run's notes = the NOTES file its brief names (its meta-merge marker, written
+// by norn merge-brief --notes) - the worker writes its end marker there; a --notes naming another file is refused (one home)
+function briefNotes(flags, brief) {
+  if (!isMergeStage(flags.stage) || !brief || brief === '-') return null;
+  let m = null;
+  try { m = briefMarker(fs.readFileSync(brief, 'utf8')); } catch { return null; }
+  if (!m?.notes) return null;
+  const own = path.resolve(m.notes), given = callerPath(flags.notes);
+  if (given && normWt(given) !== normWt(own)) throw new RunError(`--notes ${fwd(given)}: the MERGE brief ${fwd(brief)} names notes ${fwd(own)} (its worker writes its end marker there) - drop --notes or pass that file`);
+  return own;
+}
 // the launch spec of one run from the norn run flags (shared by norn run and norn flow; META-GTP-FLOW piece 2)
 function runSpec(flags, env, { project, state, locks }) {
   const ex = flags.executor;
@@ -369,31 +386,32 @@ function runSpec(flags, env, { project, state, locks }) {
   const bf = flags.budget || path.join(root, 'local', 'budget.json');
   const budget = flags.budget || fs.existsSync(bf) ? readJsonFile(bf) : {};
   const xc = project?.executors?.[ex] || {};
+  if (flags.class !== undefined && !Object.hasOwn(CLASS_LABELS, flags.class)) throw new RunError(`--class ${JSON.stringify(flags.class)}: want ${Object.keys(CLASS_LABELS).join(' | ')}`);
   if (xc.enabled === false) throw new RunError(`executor ${ex} is disabled in ${project.name}'s project.json`);
   const late = s => (s ? expandLate(s, { lane: flags.lane }) : undefined);
-  const DEF = { claude: [budget.claude_model || 'claude-opus-5-5', budget.claude_effort || 'medium'], 'codex-sol': ['gpt-6.1-sol', budget.codex_sol_effort || 'medium'],
-    'codex-astra': ['gpt-6-astra', budget.codex_astra_effort || 'medium'], fake: ['fake', '-'] }[ex] || [];
-  // a typed executor (claude-compatible / openai-compatible / cli): data only; its model / effort / exe come from the entry
-  const prov = isTyped(xc) ? xc : undefined;
-  if (prov) DEF.push(prov.model, prov.effort || 'medium');
+  // META-QUEUE-SPEC R1: the policy-derived parts (memory, profile, model / effort / agent, class table) - the fill resolves them again
+  const explicit = { model: flags.model, effort: flags.effort, agent: flags.agent, class: flags.class };
+  const claudeDir = machine?.claude?.config_dir || path.join(os.homedir(), '.claude'), wt = flags.worktree || late(project?.lane_defaults?.worktree);
+  const parts = launchParts({ project, budget, executor: ex, lane: flags.lane, explicit, claudeDir, worktree: wt }), prov = parts.provider;
   if (prov?.preset && !presetExe(prov, env)) throw new RunError(`executor ${ex}: preset ${prov.preset}: exe ${prov.exe} is not detected (not on PATH) - install it or set executors.${ex}.exe`);
   const exe = prov?.preset ? presetExe(prov, env) : prov ? typedExe(prov, machine) : { claude: machine?.claude?.exe, 'codex-sol': machine?.codex?.exe, 'codex-astra': machine?.codex?.exe }[ex];
   const cadence = project?.policy?.cadence || {};
   const o = {
     state, locksDir: locks, executor: ex, lane: flags.lane, brief: callerPath(flags.brief), project: project?.name,
     main_checkout: project ? (project.deliverables?.repo || project.root) : undefined,   // META-MERGELOCK: a MERGE run's main checkout lock (runs.writeTrees) when its brief has no marker
-    worktree: flags.worktree || late(project?.lane_defaults?.worktree), notes: callerPath(flags.notes) || late(project?.lane_defaults?.notes),
+    worktree: flags.worktree || late(project?.lane_defaults?.worktree), notes: briefNotes(flags, callerPath(flags.brief)) || callerPath(flags.notes) || late(project?.lane_defaults?.notes),
     after: afterOf(flags.after), inputs: afterOf(flags.inputs, parseInputs), epic: flags.epic, priority: flags.priority,
     labels: labelsOf(flags.labels), node_labels: servedLabels(machine),   // META-GTP-FED piece 1
     caller: flags.as || env.META_ROLE,   // META-CONTROLLER C4: a check-in's run on a held lane is refused (runs.heldRefusal)
     parent: flags.parent, via: flags.via, stage: flags.stage, round: flags.round === undefined ? undefined : Number(flags.round), budgetMin: flags['budget-min'] === undefined ? undefined : Number(flags['budget-min']),
-    profile: inlineAgent(profileOf(project?.policy, roleOfSpec({ lane: flags.lane })), flags.agent || xc.agent,   // META-STANDING-CONTEXT R1: policy.launch (full = today's launch)
-      { claudeDir: machine?.claude?.config_dir || path.join(os.homedir(), '.claude'), worktree: flags.worktree || late(project?.lane_defaults?.worktree) }),
-    agent: flags.agent || xc.agent, model: flags.model || xc.model || DEF[0], effort: flags.effort || xc.effort || DEF[1],
-    exe, headless: xc.headless ? fs.readFileSync(xc.headless, 'utf8') : undefined, env: xc.env, limit: prov ? undefined : xc.limit, writable_roots: (xc.writable_roots || []).map(late), provider: prov,
+    profile: parts.profile, cls: parts.cls, workPolicy: parts.workPolicy, agent: parts.agent, model: parts.model, effort: parts.effort,
+    exe, headless: xc.headless ? fs.readFileSync(xc.headless, 'utf8') : undefined, env: parts.env, memory: parts.memory,
+    refill: refillOf({ projectFile: project?.file, budgetFile: bf, meta: root, explicit, claudeDir }),
+    limit: prov ? undefined : xc.limit, writable_roots: (xc.writable_roots || []).map(late), provider: prov,
     policy: { auto_resume_handoff: cadence.auto_resume_handoff, auto_resume_max: cadence.auto_resume_max, trigger_on_exit: cadence.trigger_on_exit,
       fill: { ...FILL_DEFAULTS, ...(project?.policy?.fill || {}) },   // META-GTP-DAG piece 5: the resource gate of the fill
-      mail: { nudge_after_min: project?.policy?.mail?.nudge_after_min ?? POLICY_DEFAULTS.mail.nudge_after_min } },   // META-GTP-MAIL piece 3
+      mail: { nudge_after_min: project?.policy?.mail?.nudge_after_min ?? POLICY_DEFAULTS.mail.nudge_after_min },   // META-GTP-MAIL piece 3
+      slop: { enabled: slopOn(project?.policy) } },   // META-BETA-PREP (DIR-52): the run-end slop check obeys the project's one switch
     // the nudge waits while these exist: the project's QUIET flag (common-rules.txt line 1) and its GPU lock file (gpu_lock.ps1)
     quiet: project ? quietFlag(project) : undefined, gpu_lock: project?.gpu_lock_file,
     budget, paused: [path.join(path.dirname(path.resolve(state)), 'PAUSED'), path.join(state, 'PAUSED')], statusFile: path.join(state, 'STATUS.md'),
@@ -822,8 +840,9 @@ function mergeBriefCmd(argv, env, out, err) {
       const w = laneWriter({ state: p.state, locksDir: f.locks || path.join(path.dirname(path.resolve(p.state)), 'locks'), lane: f.lane, worktree: f.worktree });
       if (w) { out(`REFUSED: merge-brief ${f.lane}: ${w} - the brief would rebase under it; pass --sha <READY sha> (a staged merge in the main checkout)`); return 3; }
     }
-    // META-SLOP-A: open BLOCK findings of the branch's last slop check hold its merge until fixed (a clean check) or waived
-    const held = openBlocks(p.state, f.branch);
+    // META-SLOP-A: open BLOCK findings of the branch's last slop check hold its merge until fixed (a clean check) or waived;
+    // META-BETA-PREP: no hold while the project's SloppaChoppa switch is off (the recorded hold binds again when it is on)
+    const held = slopOn(p.policy) ? openBlocks(p.state, f.branch) : [];
     if (held.length) { out(`REFUSED: merge-brief ${f.branch}: ${held.length} open slop BLOCK finding(s) - fix them (norn slop check in its worktree) or waive each (norn rec add waiver):`); for (const b of held) out('  ' + findingLine(b)); return 3; }
     const txt = renderMergeBrief(p, { lane: f.lane, branch: f.branch, worktree: f.worktree, notes: f.notes, ui: !!f.ui, ...(f.sha ? { sha: f.sha } : {}) });
     fs.mkdirSync(path.dirname(path.resolve(f.out)), { recursive: true });
@@ -1173,6 +1192,7 @@ Plan and land work:
                                    (suggest: ranked tightening candidates; confirm <file>#<anchor>: "still true"; apply <S-id>: the owner's tap)
   norn usage                        where the week's tokens went: per lane + stage, top 5 spenders (--sources: what fills the contexts)
   norn guard                        the usage guard: live runs vs their peers, open alarms (watch / rule / sources)
+  norn tests                        lean tests, measured: per-test time + coverage, mutant kill sets, the merge check, the wave gate
   norn deliverables                follow finished work to main and to an install
   norn mergeq                      the merge queue of finished branches
   norn cv                          per-executor / model track record
@@ -1206,7 +1226,7 @@ Plumbing:
 function usageOf(c) {
   const u = { rec: ALL_USAGE, migrate: MIGRATE_USAGE, ...SETUP_USAGE, ...RUN_USAGE, ...S5_USAGE, dash: DASH_USAGE, smoke: 'norn smoke [--keep] [--update-goldens]',
     calib: CALIB_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
-    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE,
+    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE,
     node: NODE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
   return u && 'usage: ' + u.replace(/^usage: /, '');
 }
@@ -1267,11 +1287,13 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'ready') return readyCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'plan') return planCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'instructions') return instructionsCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'audit') return auditCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'mergeq') return mergeqCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'mail') return mailCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'cv') return cvCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'guard') return guardCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'slop') return slopCmd(argv.slice(1), { env, out, err, where: f => (f.project || f.state || env.META_STATE || env.META_PROJECT ? where(f, env) : null) });
+  if (argv[0] === 'tests') return testsCmd(argv.slice(1), { out, err, where: f => where(f, env) });
   if (argv[0] === 'usage') return usageCmd(argv.slice(1), env, out, err);
   try {
     if (argv[0] !== 'rec') { err(`error: unknown command ${argv[0]} - see norn help`); return 2; }
@@ -1521,6 +1543,53 @@ function instructionsCmd(argv, env, out, err) {
   }
 }
 
+// ---------- META-TEND P5: norn audit start | list (the vendor prompt audit as a read-only run of kind audit) ----------
+const AUDIT_USAGE = 'norn audit start [--queue] | list [--json]    --project <name | project.json> [--state D] [--machine F] [--budget F]    (start = a read-only claude run of `/doctor prompt-audit <the project steering files>`; its report + diff become hunk cards; nothing is edited)';
+function auditCmd(argv, env, out, err) {
+  try {
+    const flags = {}, pos = [];
+    for (let i = 0; i < argv.length; i++) {
+      const a = argv[i];
+      if (a === '--json' || a === '--queue') { flags[a.slice(2)] = true; continue; }
+      if (!a.startsWith('--')) { pos.push(a); continue; }
+      if (!['--project', '--state', '--machine', '--budget', '--as'].includes(a)) throw new RunError(`unexpected ${a}`);
+      if (i + 1 >= argv.length) throw new RunError(`${a} needs a value`);
+      flags[a.slice(2)] = argv[++i];
+    }
+    const [verb, extra] = pos;
+    if (!['start', 'list'].includes(verb) || extra) throw new RunError(verb ? `unexpected ${extra || verb}` : 'start or list');
+    const w = where(flags, env), { project, state } = w;
+    if (!project) throw new RunError('norn audit needs --project (the steering files come from project.json)');
+    const mf = flags.machine || path.join(metaRoot(env), 'local', 'machine.json');
+    const machine = fs.existsSync(mf) ? loadMachine(mf, { meta: metaRoot(env) }) : null;
+    const p = { ...project, state }, home = machine?.home || (process.platform === 'win32' ? env.USERPROFILE : env.HOME) || os.homedir();
+    const rows = discover(p, { home, machine });
+    if (verb === 'list') {
+      const items = loadState(state).items, v = auditsView(p, items, { rows, cards: openCards(state, items), machine });
+      if (flags.json) { out(JSON.stringify(v, null, 1)); return 0; }
+      out(`${v.rule.mode}: ${v.rule.why}`);
+      for (const t of v.triggers) out(`trigger ${t.key}: ${t.why}`);
+      for (const a of v.runs) out(`${a.id} ${a.created.slice(0, 16)} ${a.state}${a.outcome ? ' ' + a.outcome : ''}: ${a.accepted + a.declined + a.open} hunks (${a.accepted} accepted, ${a.declined} declined, ${a.open} open)`);
+      if (!v.runs.length) out('no audit has run yet: ' + v.command);
+      return 0;
+    }
+    const scope = auditScope(rows, p);
+    if (!scope.length) throw new RunError(`${project.name}: no steering files in scope (the repo, the project folder, the memory)`);
+    fs.mkdirSync(auditsDir(state), { recursive: true });
+    const notes = path.join(auditsDir(state), `audit-${new Date().toISOString().replace(/[-:]/g, '').replace(/\..*$/, '')}.md`);
+    const brief = notes.replace(/\.md$/, '.brief.md');   // the record of what ran (the model gets the prompt itself, never this file)
+    fs.writeFileSync(brief, `# Audit of ${project.name} (read-only, the vendor prompt audit)\n\nprompt: ${auditPrompt(scope)}\n\nscope (${scope.length} files):\n${scope.map(f => `- ${f}`).join('\n')}\n`);
+    const o = runSpec({ executor: 'claude', lane: 'audit', stage: 'audit', brief, worktree: project.root, notes, model: AUDIT_MODEL, effort: AUDIT_EFFORT, machine: flags.machine, budget: flags.budget, as: flags.as }, env, w);
+    const r = startRun({ ...o, kind: 'audit', readonly: true, promptText: auditPrompt(scope), ...(flags.queue ? { queue: true } : {}) });
+    writeStamp(state, { ...auditStamp(p, rows, { machine, run: r.run }), scope });
+    out(`${r.queued ? 'QUEUED' : 'STARTED'} ${r.run} audit of ${project.name}: ${scope.length} steering files, read-only, ${AUDIT_MODEL} ${AUDIT_EFFORT}; report -> ${notes.replace(/\\/g, '/')}`);
+    return 0;
+  } catch (e) {
+    if (e instanceof RunError || e instanceof ConfigError || e instanceof RecordError || e instanceof RunRefused) { err('error: ' + e.message); err('usage: ' + AUDIT_USAGE); return 2; }
+    throw e;
+  }
+}
+
 // ---------- META-GTP-FLOW piece 2: norn flow start | status | resume (engine/flows/<name>.json = an epic of chained queued runs) ----------
 const FLOW_USAGE = 'norn flow start <name> [--var k=v]... [--priority P0-P3] [--executor X (every step; tests: fake)] [--dry-run] | status EP-n [--json] | resume EP-n [--var k=v]... [--executor X] [--dry-run]    [--flows-dir D] [--briefs-dir D (default project briefs_dir, else <state>/briefs)] [--project F | --state D] [--locks D] [--machine F] [--budget F] [--no-tick] [--as role]';
 const FLOW_FLAGS = ['project', 'state', 'locks', 'machine', 'budget', 'as', 'var*', 'executor', 'priority', 'flows-dir', 'briefs-dir', 'dry-run!', 'json!', 'no-tick!'];
@@ -1544,7 +1613,7 @@ function flowCmd(argv, env, out, err) {
     for (const kv of flags.var) { const m = kv.match(/^(\w+)=([\s\S]*)$/); if (!m) throw new RunError(`--var ${kv}: want k=v`); given[m[1]] = m[2]; }
     const { project, state, locks } = where(flags, env);
     const dir = flags['flows-dir'] || FLOWS_DIR, root = metaRoot(env);
-    const ctx = { briefs_dir: flags['briefs-dir'] || project?.briefs_dir || path.join(state, 'briefs'), meta: `node "${fwd(root)}/engine/bin/norn.mjs"`, project };
+    const ctx = { briefs_dir: flags['briefs-dir'] || project?.briefs_dir || path.join(state, 'briefs'), norn: `node "${fwd(root)}/engine/bin/norn.mjs"`, project };
     const ov = flags.executor;
     const launch = (s, { after, brief, epic, flow }) => {
       const rf = { executor: ov || s.executor, lane: s.lane, brief, worktree: s.worktree, notes: s.notes, stage: s.stage, 'budget-min': String(s.budget_min),
@@ -2173,7 +2242,8 @@ function mailCmd(argv, env, out, err) {
       if (reader && reader !== run) throw new RunError(`--run ${reader}: a run takes delivery of its own mail only (META_RUN_ID=${run || '-'}); read others with norn mail list --to ${reader}`);
       if (flags.to && flags.to !== 'role:controller' && !(flags.to === 'role:checkin' && by === 'checkin')) throw new RunError('--to: the controller\'s session reads role:controller (a run reads with --run)');
       const got = checkMail(state, { by, run: reader || null, to: flags.to, via: inject ? 'hook' : 'cli' });
-      if (inject) { const j = injectJson(got); if (j) out(j); return 0; }
+      // META-CTX-ENFORCE R1: the same hook delivers the run's context order (ctxlimit.mjs; once per level)
+      if (inject) { const o = reader ? ctxOrder(state, reader) : null; const j = injectJson(got, o?.text); if (j) out(j); return 0; }
       out(got.length ? got.map(formatMail).join('\n\n') : 'no new mail');
       return 0;
     }

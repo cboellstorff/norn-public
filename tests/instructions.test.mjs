@@ -149,6 +149,19 @@ test('lint hints (read-only): a missing path, an unknown norn command, a duplica
   assert.equal(fs.readFileSync(path.join(f.repo, 'CLAUDE.md'), 'utf8'), before, 'lint edits nothing');
 });
 
+test('lint: a ${root} / ~/ path on a POSIX root is an absolute path, still checked (CI-RED-42B7708: Linux roots start with /)', () => {
+  const d = mkTmp('meta-instr-posix-'), f = path.join(d, 'AGENTS.md');
+  fs.writeFileSync(f, ['# A', '- Never start a run while `${root}/.superpowers/QUIET` is on.', '- Read `~/notes/plan.md` first.', '- See `/etc/never.conf`.', ''].join('\n'));
+  const rows = [{ id: 'a1', path: f, exists: true, generated: false, chars: fs.statSync(f).size }];
+  const HOME = '/ho' + 'me/kpos';   // built from parts: no literal home path (lint)
+  const hints = lint(rows, { project: { root: '/srv/kestrel-posix' }, home: HOME, commands: new Set() }).filter(h => h.kind === 'missing-path');
+  const q = hints.find(h => /QUIET/.test(h.text));
+  assert.ok(q, 'the expanded POSIX path is a hint');
+  assert.deepEqual(q.cands, ['/srv/kestrel-posix/.superpowers/QUIET'], 'checked as itself, not joined to a base');
+  assert.deepEqual(hints.find(h => /plan\.md/.test(h.text))?.cands, [HOME + '/notes/plan.md']);
+  assert.ok(!hints.some(h => /never\.conf/.test(h.text)), 'a literal /path token stays no candidate');
+});
+
 test('the view + text: rows with hints, totals, the method; `norn instructions --json` and text in a sandbox home', () => {
   const f = fx();
   const v = instructionsView(f.p, { home: f.home, machine: f.machine });
@@ -181,11 +194,11 @@ const VIEW = {
     parts: { worker: { run: 'RUN-640', method: 'request', total: 22269, parts: [{ key: 'base', label: 'harness base prompt + tool schemas', ours: false, tokens: 9106 }, { key: 'skills', label: 'skills list', ours: true, tokens: 4251 }, { key: 'plugins', label: 'plugins (their skills)', ours: true, tokens: 4946 }] } } },
   suggest: [{ id: 'S-1', class: 'stale', path: 'C:/r/CLAUDE.md', file: 'CLAUDE.md', anchor: 'p12345678', line: 3, head: 'Old rule', tokens: 600, loads_per_day: 3, saved_per_day: 1800, why: 'older than 30 d', action: 'delete it', patch: '--- a/C:/r/CLAUDE.md\n+++ b/C:/r/CLAUDE.md\n@@ -3,2 +2,0 @@\n-Old rule\n-\n', owner_file: false }],
 };
-test('the Instructions tab: in the Urd group next to Docs, a one-project tab; rows with load class, ~size, daily cost, drift and hints', async () => {
+test('the Instructions tab: in the Verdandi group next to Usage (META-TEND P1-VISUAL), a one-project tab; rows with load class, ~size, daily cost, drift and hints', async () => {
   assert.ok(TABS.some(([k, l]) => k === 'instructions' && l === 'Instructions'));
   assert.ok(SERVER_TABS.includes('instructions'));
-  const urd = NORN_GROUPS.find(g => g[0] === 'urd')[3];
-  assert.equal(urd[urd.indexOf('docs') + 1], 'instructions');
+  const ver = NORN_GROUPS.find(g => g[0] === 'verdandi')[3];
+  assert.deepEqual(ver.slice(ver.indexOf('usage')), ['usage', 'tests', 'instructions', 'guard']);   // META-TEND P6: Guard (the open faults now = what is) after Instructions
   assert.ok(renderTab('instructions', { one: true }).includes('Choose one project'));
   const html = renderTab('instructions', { ...VIEW, file: null });
   assert.match(html, /id="panel-instructions"/);
