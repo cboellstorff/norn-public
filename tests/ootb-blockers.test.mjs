@@ -176,7 +176,7 @@ test('F-1 first task end to end: lane new --task, then a fake run with --wait en
   assert.equal(s.run('lane', 'new', 'first', '--task', 'mode: done', '--project', s.pf).code, 0);
   const r = s.run('run', '--executor', 'fake', '--lane', 'first', '--brief', path.join(s.state, 'briefs', 'first.md'), '--project', s.pf, '--wait');
   assert.equal(r.code, 0, r.err + r.out);
-  assert.match(r.out, /^STARTED RUN-1 lane first fake/m);
+  assert.match(r.out, /^STARTED RUN-1 lane first fake/m); assert.doesNotMatch(r.out, /fake fake/, "executor and model said once (SHIP-READY minor)");
   assert.match(r.out, /^RUN-1 exited: DONE$/m);
 });
 

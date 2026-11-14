@@ -185,8 +185,11 @@ export function checkinDays(state, { now = Date.now(), days = 7 } = {}) {
 }
 /** doctor rows: the check-in diet in force for project p ({ level: ok | warn, text }) */
 export function checkinDoctorLines(p) {
-  const c = checkinPolicy(p.policy), L = x => (x.length ? x.join(', ') : '-'), out = [];
-  out.push({ level: 'ok', text: `${p.name}: check-ins: routine ${L(c.routine)}; fold ends ${c.debounce_min} min; lanes none ${L(c.none_lanes)}, on-end ${L(c.on_end_lanes)}; auto-stage ${L(c.auto_stage)}` });
+  const c = checkinPolicy(p.policy), L = x => (x.length ? x.join(', ') : 'none'), out = [];
+  // SHIP-READY R1: plain words for a reader who never saw the policy keys (the warn lines below name the keys to edit)
+  const said = { merge_done: 'a finished merge is reviewed', worker_done_stage: 'a finished worker on an auto-merge lane gets its merge queued' };
+  const byCode = c.routine.filter(k => said[k]).map(k => said[k]);
+  out.push({ level: 'ok', text: `${p.name}: check-ins: run ends within ${c.debounce_min} min share one check-in; done by code, no model turn: ${byCode.length ? byCode.join(', ') : 'nothing'}; auto-merge lanes: ${L(c.auto_stage)}; lanes that never wake a check-in: ${L(c.none_lanes)}; lanes checked only when a run ends: ${L(c.on_end_lanes)}` });
   for (const k of c.routine) if (!ROUTINE_KINDS.includes(k)) out.push({ level: 'warn', text: `${p.name}: policy.checkin.routine names ${k}, not a routine kind (${ROUTINE_KINDS.join(' | ')}): ignored` });
   if (c.auto_stage.length && !c.routine.includes('worker_done_stage')) out.push({ level: 'warn', text: `${p.name}: policy.checkin.auto_stage lists lanes but routine has no worker_done_stage: no lane is staged by code` });
   if (c.auto_stage.length && c.routine.includes('worker_done_stage') && !p.merge?.gate?.fast && !p.file) out.push({ level: 'warn', text: `${p.name}: auto-stage needs the project file to queue the staged merge (norn run --queue)` });

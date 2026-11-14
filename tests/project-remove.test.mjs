@@ -49,7 +49,7 @@ function sandbox() {
 
 const fakeSched = installed => {
   const calls = [];
-  return { calls, io: { run: (c, a) => { calls.push([c, ...a].join(' ')); return { status: installed ? 0 : 1, stdout: installed ? '*/15 * * * * x # meta:meta-controller-tick\n' : '' }; },
+  return { calls, io: { run: (c, a) => { calls.push([c, ...a].join(' ')); return { status: installed ? 0 : 1, stdout: installed ? '*/15 * * * * x # norn:norn-tick\n' : '' }; },
     exists: () => installed, write: () => {}, rm: f => calls.push('rm ' + f) } };
 };
 const snapshot = dir => {
@@ -137,15 +137,15 @@ test('remove --purge-state deletes state/<name>; --dry-run changes nothing (byte
 });
 
 test('sched adapters installed() ask the OS through the injected io', () => {
-  const O = { name: 'meta-controller-tick', interval_min: 15, node: '/n', meta: '/m', home: '/h' };
+  const O = { name: 'norn-tick', interval_min: 15, node: '/n', meta: '/m', home: '/h' };
   const io = (status, stdout = '', exists = true) => { const calls = []; return { calls, run: (c, a) => { calls.push([c, ...a].join(' ')); return { status, stdout }; }, exists: () => exists }; };
-  let x = io(0); assert.equal(ADAPTERS['windows-task'].installed(O, x), true); assert.deepEqual(x.calls, ['schtasks /Query /TN meta-controller-tick']);
+  let x = io(0); assert.equal(ADAPTERS['windows-task'].installed(O, x), true); assert.deepEqual(x.calls, ['schtasks /Query /TN norn-tick']);
   assert.equal(ADAPTERS['windows-task'].installed(O, io(1)), false);
-  x = io(0); assert.equal(ADAPTERS.systemd.installed(O, x), true); assert.deepEqual(x.calls, ['systemctl --user is-enabled meta-controller-tick.timer']);
+  x = io(0); assert.equal(ADAPTERS.systemd.installed(O, x), true); assert.deepEqual(x.calls, ['systemctl --user is-enabled norn-tick.timer']);
   assert.equal(ADAPTERS.systemd.installed(O, io(1)), false);
-  assert.equal(ADAPTERS.cron.installed(O, io(0, '0 1 * * * b\n*/15 * * * * cd /m && x # meta:meta-controller-tick\n')), true);
+  assert.equal(ADAPTERS.cron.installed(O, io(0, '0 1 * * * b\n*/15 * * * * cd /m && x # norn:norn-tick\n')), true);
   assert.equal(ADAPTERS.cron.installed(O, io(0, '0 1 * * * b\n')), false); assert.equal(ADAPTERS.cron.installed(O, io(1)), false);
-  x = io(0); assert.equal(ADAPTERS.launchd.installed(O, x), true); assert.deepEqual(x.calls, ['launchctl list meta-controller-tick']);
+  x = io(0); assert.equal(ADAPTERS.launchd.installed(O, x), true); assert.deepEqual(x.calls, ['launchctl list norn-tick']);
   assert.equal(ADAPTERS.launchd.installed(O, io(0, '', false)), false); assert.equal(ADAPTERS.launchd.installed(O, io(1)), false);
 });
 

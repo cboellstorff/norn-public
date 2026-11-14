@@ -20,7 +20,7 @@ const SHOT = 'C:/rev/meta/shots/plan-desktop-dark.png';
 const FIX = [
   { key: 'k1', ts: T(1), cat: 'checkin', kind: 'checkin', headline: 'reviewed RUN-401', subs: [{ label: 'skipped', text: 'meta-ledger (held by chat)' }] },
   { key: 'c1', ts: T(2), cat: 'chat', kind: 'you', text: 'stop RUN-399 <script>x</script>\nre-queue it' },
-  { key: 'c2', ts: T(3), cat: 'chat', kind: 'tools', names: ['meta_boot', 'meta_status'] },
+  { key: 'c2', ts: T(3), cat: 'chat', kind: 'tools', names: ['norn_boot', 'norn_status'] },
   { key: 'c3', ts: T(4), cat: 'chat', kind: 'controller', text: `Done. Shots: ${SHOT}`, images: [SHOT] },
   { key: 'r1', ts: T(5), cat: 'run', kind: 'run-start', run: 'RUN-413', lane: 'meta-ledger', stage: 'R2', executor: 'claude', model: 'claude-opus-5-5', effort: 'high' },
   { key: 'r2', ts: T(6), cat: 'run', kind: 'run-end', run: 'RUN-399', lane: 'meta-notify', outcome: 'stopped', why: 'stalled 40 min', images: [] },
@@ -35,8 +35,8 @@ test('C2 homeEvents: the chat thread, check-in ledger lines, run starts / ends, 
   const thread = [
     { ts: T(0), seg: 1, kind: 'segment', n: 1, why: 'first' }, { ts: T(0), seg: 1, kind: 'owner', text: 'hello' },
     { ts: T(0.1), seg: 1, kind: 'start', resume: false }, { ts: T(0.2), seg: 1, kind: 'session', session_id: 's' },
-    { ts: T(0.3), seg: 1, kind: 'tool', name: 'mcp__norn__meta_boot' }, { ts: T(0.4), seg: 1, kind: 'result', text: 'ok' },
-    { ts: T(0.5), seg: 1, kind: 'tool', name: 'mcp__norn__meta_status' }, { ts: T(0.6), seg: 1, kind: 'usage', ctx: 62000 },
+    { ts: T(0.3), seg: 1, kind: 'tool', name: 'mcp__norn__norn_boot' }, { ts: T(0.4), seg: 1, kind: 'result', text: 'ok' },
+    { ts: T(0.5), seg: 1, kind: 'tool', name: 'mcp__norn__norn_status' }, { ts: T(0.6), seg: 1, kind: 'usage', ctx: 62000 },
     { ts: T(0.7), seg: 1, kind: 'text', text: `See ${SHOT} and D:/x/y.txt` }, { ts: T(0.8), seg: 1, kind: 'turn', ok: true, cost_usd: 0.1 },
     { ts: T(20), seg: 1, kind: 'stop', why: 'idle', code: 0 },
   ];
@@ -54,7 +54,7 @@ test('C2 homeEvents: the chat thread, check-in ledger lines, run starts / ends, 
   assert.deepEqual(ev.map(e => [e.cat, e.kind]), [
     ['chat', 'segment'], ['chat', 'you'], ['chat', 'tools'], ['chat', 'controller'], ['run', 'run-start'], ['merge', 'run-start'], ['merge', 'run-end'],
     ['checkin', 'checkin'], ['needs', 'question'], ['run', 'run-end'], ['chat', 'stop']]);
-  assert.deepEqual(ev[2].names, ['meta_boot', 'meta_status'], 'consecutive tool lines fold into one, the MCP prefix dropped');
+  assert.deepEqual(ev[2].names, ['norn_boot', 'norn_status'], 'consecutive tool lines fold into one, the MCP prefix dropped');
   assert.deepEqual(ev[3].images, [SHOT], 'images named in the controller text (not the .txt)');
   assert.deepEqual(ev.find(e => e.kind === 'run-end' && e.run === 'RUN-5').images, [SHOT], 'a run marker line carries its shots');
   assert.ok(!ev.some(e => e.run === 'RUN-6' || e.run === 'RUN-7'), 'check-in runs (the ledger line says it) and helpers are not thread items');

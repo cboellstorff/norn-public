@@ -99,9 +99,23 @@ test('ci-suite: an explicit glob without smoke runs only the parallel phase; one
 test('ci-suite: the calling run identity (META_RUN_ID, META_ROLE, META_STATE, ..., CLAUDECODE) never reaches the suite', () => {
   const r = spawnSync(process.execPath, [CI, '--known', 'tests/fixtures/ci-suite-env/known.txt', 'tests/fixtures/ci-suite-env/*.test.mjs'],
     { cwd: REPO, encoding: 'utf8', env: { ...process.env, META_RUN_ID: 'RUN-1', META_RUN_STATE: '/x/state', META_ROLE: 'checkin', META_STATE: '/x/state',
-      META_PROJECT: 'p', META_SESSION_ID: 's', META_RESUMES: '1', META_NOTES: '/x/NOTES.md', CLAUDECODE: '1' } });
+      META_PROJECT: 'p', META_SESSION_ID: 's', META_RESUMES: '1', META_NOTES: '/x/NOTES.md', META_JOB: 'j', META_PARENT_RUN: 'RUN-2', CLAUDECODE: '1' } });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.match(r.stdout, /ci-suite: 0 listed red\(s\), 0 new/);
+});
+
+// 11-13 MAIL-33: `node --test` run straight from a worker (no ci-suite) inherited META_RUN_ID / META_RUN_STATE / META_JOB: 4 tests in
+// cli / digest / delegate went red and mail.test hung. tests/helpers/tmp.mjs (every spawning test file imports it) drops CALLER_ENV.
+test('tests/helpers/tmp.mjs: importing it drops the calling run identity (CALLER_ENV, META_JOB, META_PARENT_RUN) from process.env', () => {
+  const ids = { META_RUN_ID: 'RUN-1', META_RUN_STATE: '/x/state', META_ROLE: 'checkin', META_STATE: '/x/state', META_PROJECT: 'p',
+    META_SESSION_ID: 's', META_RESUMES: '1', META_NOTES: '/x/NOTES.md', META_JOB: 'j', META_PARENT_RUN: 'RUN-2', CLAUDECODE: '1' };
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e',
+    "await import('./tests/helpers/tmp.mjs'); console.log(JSON.stringify(Object.keys(process.env).filter(k => /^(META_|CLAUDECODE$)/i.test(k))))"],
+    { cwd: REPO, encoding: 'utf8', env: { ...process.env, ...ids, META_WALL_STEP_MS: '5' } });
+  assert.equal(r.status, 0, r.stderr);
+  const left = JSON.parse(r.stdout);
+  assert.deepEqual(left.filter(k => k in ids), []);
+  assert.ok(left.includes('META_WALL_STEP_MS'), 'a test knob passes through');
 });
 
 test('suiteEnv: the temp repos of the suite skip git auto maintenance (a gc / maintenance process per commit or fetch, not under test); the git config entries of a caller are kept', () => {

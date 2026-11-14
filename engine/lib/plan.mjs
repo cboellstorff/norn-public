@@ -1,6 +1,6 @@
 // META-PLAN R1 (norn DIR-13): the Plan - what happens next, and when. ONE home: buildPlan is pure (records + the fill walk's rows +
 // STATUS.md text + the merge queue in -> the plan model out); loadPlan gathers those inputs from a state dir; the dashboard tab
-// (/api/plan), `norn plan` and the MCP tool meta_plan are thin front ends over it. Nothing here re-implements a gate: the hold-ups
+// (/api/plan), `norn plan` and the MCP tool norn_plan are thin front ends over it. Nothing here re-implements a gate: the hold-ups
 // are the words for the terms the fill's own walk wrote (runs.mjs readiness), the order is queueOf (the fill's order), run
 // successors are after.mjs follow, usage is the STATUS.md the usage guard reads.
 // R2: one line per real chain (a step = one lane + stage, newest run wins), a run's time = its whole family, ETAs count the merge,
@@ -462,7 +462,7 @@ export function loadPlan({ state, project = null, budget = {}, now = Date.now(),
   return buildPlan({ project: project?.name ?? path.basename(path.resolve(state)), runs, ready, status, budget, merges, roadmap, lanes, now });
 }
 
-// ---------- text (norn plan, meta_plan) ----------
+// ---------- text (norn plan, norn_plan) ----------
 export const GLYPH = { check: '✓', play: '▶', ring: '○', pause: '‖', stop: '■', '!': '!' };
 export function formatPlan(p) {
   const L = [`Plan - ${p.project ?? '-'}   (times in ${p.zone ?? 'local time'})`, '', 'Up next'];

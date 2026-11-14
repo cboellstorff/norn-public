@@ -10,7 +10,7 @@ export function plan(o) {
   const args = `-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -Command "& ${tickArgv(o).map(q).join(' ')}"`;
   const content = `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo><Description>meta-controller tick: norn status + one check-in per project, every ${o.interval_min} min</Description></RegistrationInfo>
+  <RegistrationInfo><Description>Norn tick: norn status + one check-in per project, every ${o.interval_min} min</Description></RegistrationInfo>
   <Triggers>
     <TimeTrigger>
       <Repetition><Interval>PT${o.interval_min}M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition>

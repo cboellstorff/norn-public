@@ -1,5 +1,5 @@
 // META-INSTRUCTIONS R1: the Instructions view - every file that steers an agent (per harness), its load class, ~tokens, daily cost
-// and read-only lint hints; the dashboard tab, `norn instructions [--json]` and the MCP read (meta_status view instructions).
+// and read-only lint hints; the dashboard tab, `norn instructions [--json]` and the MCP read (norn_status view instructions).
 // Sandbox only: a fixture repo, a fixture home (never the owner's real ~/.claude) and a fixture state.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -220,7 +220,7 @@ test('the dashboard API: /api/instructions lists the rows; /api/instructions/<id
   } finally { await app.close(); }
 });
 
-test('the MCP read: meta_status view instructions (the controller profile stays at <= 16 tools)', async () => {
+test('the MCP read: norn_status view instructions (the controller profile stays at <= 16 tools)', async () => {
   const f = fx();
   const { context, handle, TOOLS } = await import('../engine/lib/mcp.mjs');
   const { main } = await import('../engine/bin/norn.mjs');
@@ -228,7 +228,7 @@ test('the MCP read: meta_status view instructions (the controller profile stays 
   const env = { ...process.env, HOME: f.home, USERPROFILE: f.home, META_ROOT: f.base, META_NO_TICK: '1' };
   for (const k of ['META_STATE', 'META_PROJECT', 'META_ROLE', 'META_RUN_ID']) delete env[k];
   const ctx = context({ state: f.p.state, project: { ...f.p, file: path.join(f.pd, 'project.json') }, profile: 'checkin', client: 't', env, cli: main });
-  const r = handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'meta_status', arguments: { view: 'instructions' } } }, ctx);
+  const r = handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'norn_status', arguments: { view: 'instructions' } } }, ctx);
   assert.ok(!r.result.isError, JSON.stringify(r));
   assert.match(r.result.content[0].text, /Standing context per role/);
   assert.ok(byName(r.result.structuredContent.instructions.rows, 'home/.claude/CLAUDE.md'), 'the fixture home');

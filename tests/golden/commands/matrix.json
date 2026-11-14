@@ -126,7 +126,7 @@
     "--permission-mode",
     "bypassPermissions",
     "--remote-control",
-    "meta-lane1",
+    "norn-lane1",
     "--output-format",
     "json",
     "--add-dir",

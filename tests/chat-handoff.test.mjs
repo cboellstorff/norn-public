@@ -233,14 +233,14 @@ test('C5 settings live in the MCP server: hold length and raw shell are read fro
   const s = mkTmp('meta-c5-', 'p'), root = budgetRoot({ chat_hold_min: 45, chat_raw_shell: 'on' });
   record(s, { kind: 'lane', ev: 'create', by: 'controller', data: { name: 'water' } }, { views: false });
   const ctx = context({ state: s, project: null, profile: 'chat', client: 'chat', env: { META_ROOT: root }, cli: (argv, env, out, err) => main(argv, env, out, err), approvalMs: 60000, pollMs: 10, notifyFn: () => {} });
-  const r = await call(ctx, 'meta_decision_add', { lane: 'water', question: 'q', choice: 'c', why: 'w' });
+  const r = await call(ctx, 'norn_decision_add', { lane: 'water', question: 'q', choice: 'c', why: 'w' });
   assert.ok(!r.isError, txt(r));
   const h = holdOf(loadState(s).items['L:water']);
   assert.ok(Math.abs(Date.parse(h.until) - Date.now() - 45 * MIN) < 5000, `hold length 45 min (got ${h.until})`);
-  let a = JSON.parse(txt(await call(ctx, 'meta_approve', { tool_name: 'Bash', input: { command: 'ls' } })));
+  let a = JSON.parse(txt(await call(ctx, 'norn_approve', { tool_name: 'Bash', input: { command: 'ls' } })));
   assert.equal(a.behavior, 'allow', 'raw shell on');
   fs.writeFileSync(path.join(root, 'local', 'budget.json'), JSON.stringify({ chat_raw_shell: 'off' }));
-  a = JSON.parse(txt(await call(ctx, 'meta_approve', { tool_name: 'Bash', input: { command: 'ls' } })));
+  a = JSON.parse(txt(await call(ctx, 'norn_approve', { tool_name: 'Bash', input: { command: 'ls' } })));
   assert.equal(a.behavior, 'deny', 'switched off live: no restart of the server');
   assert.equal(HOLD_MIN, 30, 'the default stays 30 min');
 });

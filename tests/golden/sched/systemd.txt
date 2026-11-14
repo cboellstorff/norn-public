@@ -1,16 +1,16 @@
-=== /srv/hm/.config/systemd/user/meta-controller-tick.service
+=== /srv/hm/.config/systemd/user/norn-tick.service
 [Unit]
-Description=meta-controller tick (norn status + one check-in per project)
+Description=Norn tick (norn status + one check-in per project)
 
 [Service]
 Type=oneshot
-WorkingDirectory=/srv/meta-controller
-ExecStart="/opt/node/bin/node" "/srv/meta-controller/engine/bin/norn.mjs" "tick" "--reason" "schedule"
+WorkingDirectory=/srv/norn
+ExecStart="/opt/node/bin/node" "/srv/norn/engine/bin/norn.mjs" "tick" "--reason" "schedule"
 KillMode=process
 TimeoutStartSec=55min
-=== /srv/hm/.config/systemd/user/meta-controller-tick.timer
+=== /srv/hm/.config/systemd/user/norn-tick.timer
 [Unit]
-Description=meta-controller tick every 15 min
+Description=Norn tick every 15 min
 
 [Timer]
 OnBootSec=2min
@@ -20,9 +20,9 @@ AccuracySec=1min
 [Install]
 WantedBy=timers.target
 $ systemctl --user daemon-reload
-$ systemctl --user enable --now meta-controller-tick.timer
+$ systemctl --user enable --now norn-tick.timer
 --- remove
-$ systemctl --user disable --now meta-controller-tick.timer
-$ rm /srv/hm/.config/systemd/user/meta-controller-tick.service
-$ rm /srv/hm/.config/systemd/user/meta-controller-tick.timer
+$ systemctl --user disable --now norn-tick.timer
+$ rm /srv/hm/.config/systemd/user/norn-tick.service
+$ rm /srv/hm/.config/systemd/user/norn-tick.timer
 $ systemctl --user daemon-reload

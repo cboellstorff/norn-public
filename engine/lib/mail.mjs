@@ -1,7 +1,7 @@
 // META-GTP-MAIL (GT-PARITY-PLAN sec. 2.7): agent mail for headless workers. The record kind lives in records.mjs (MAIL-n,
 // mail.jsonl); this module reads it and does the delivery. Gas Town (cited, not ported): `gt mail check --inject` from a hook
 // (internal/hooks/config.go:1085-1092; internal/cmd/mail_check.go:75-99). Headless `claude -p` has no prompt to hook, so the
-// delivery is (a) a PostToolUse hook (the next tool round), (b) the MCP tool meta_mail + one headless line for executors without
+// delivery is (a) a PostToolUse hook (the next tool round), (b) the MCP tool norn_mail + one headless line for executors without
 // hooks, (c) the nudge (supervisor.mjs). Every path takes a mail through ONE deliver event (records.mjs: the compare-and-set).
 import fs from 'node:fs';
 import path from 'node:path';
@@ -73,7 +73,7 @@ export function listMail(state, { to, open } = {}) {
       ...(m.deliver?.run ? { delivered_to: m.deliver.run } : {}), ...(m.nudge ? { nudged: m.nudge.run } : {}) }));
 }
 
-export const formatMail = m => `${m.id} from ${m.data.from}${m.data.urgent ? ' URGENT' : ''}: ${m.data.subject}\n${String(m.text ?? bodyOf(m)).replace(/\s+$/, '')}\n(ack it: norn mail ack ${m.id}, or meta_mail ack)`;
+export const formatMail = m => `${m.id} from ${m.data.from}${m.data.urgent ? ' URGENT' : ''}: ${m.data.subject}\n${String(m.text ?? bodyOf(m)).replace(/\s+$/, '')}\n(ack it: norn mail ack ${m.id}, or norn_mail ack)`;
 
 /** the PostToolUse hook's stdout: the delivered mail as additionalContext (Claude Code hook JSON); '' = nothing to say */
 export function injectJson(mails) {

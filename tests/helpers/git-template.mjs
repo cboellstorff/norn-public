@@ -6,6 +6,7 @@
 // Every dir comes from mkTmp (DEC-60). The template's commit SHAs are shared by all its copies (same objects, same tips).
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { mkTmp } from './tmp.mjs';
 
 const templates = new Map();   // recipe key -> { root, data }
@@ -32,7 +33,10 @@ function remap(v, pairs) {
 export function fromTemplate(key, build, dest) {
   let t = templates.get(key);
   if (!t) {
-    const root = mkTmp('meta-gtpl-' + key.replace(/[^\w-]/g, '_') + '-');
+    // a short dir name: the recipe key (a JSON branch list) spelled out pushed git's object paths past Windows MAX_PATH under
+    // ci-suite's per-file TEMP (CI 43518267986: "Filename too long", "'$GIT_DIR' too big") - a readable head + a hash of the key
+    const slug = key.replace(/[^\w-]/g, '_').slice(0, 12), hash = crypto.createHash('sha1').update(key).digest('hex').slice(0, 8);
+    const root = mkTmp(`meta-gtpl-${slug}-${hash}-`);
     let data;
     try { data = build(root); }
     catch (e) { fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 }); throw e; }

@@ -219,7 +219,13 @@ for (const name of Object.keys(SHIPPED)) {
     assert.equal(r.code, 0, r.err);
     const ep = r.out.match(/^(EP-\d+)/)[1];
     const st = () => JSON.parse(meta(['flow', 'status', ep, '--json', ...common]).out);
-    await waitFor(() => st().done, 60000);
+    // META-OOTB-FIX FLOW-STALL (CI 43536392454): a stall names its step - the flow status + every run's supervisor log tail (no timeout change)
+    try { await waitFor(() => st().done, 60000); }
+    catch (e) {
+      const logs = d.runs().map(x => `--- ${x.id} ${x.data.flow?.step ?? '?'} ${x.state} ${x.data.log ?? '(no log)'}\n`
+        + (x.data.log && fs.existsSync(x.data.log) ? fs.readFileSync(x.data.log, 'utf8').trimEnd().split('\n').slice(-20).join('\n') : ''));
+      throw new Error(`${e.message}: flow ${name} ${ep} not done\nnorn flow status ${ep} --json:\n${meta(['flow', 'status', ep, '--json', ...common]).out}\n${logs.join('\n')}`);
+    }
     await waitFor(d.allSettled);
     const end = st();
     assert.deepEqual(end.steps.map(s => [s.id, s.state, s.runs.length]), STEPS[name].map(s => [s, 'done', 1]));

@@ -56,7 +56,7 @@ Run these from a clone of this repository, on Windows, Linux or macOS. `init` fi
 and looks at it through git. It asks a few questions one at a time - the caps profile (`try-it` by default; `solo` and `heavy`
 allow more), whether an agent may read the repo for a better draft (one paid read-only run) or git alone drafts it (free) - and
 then drafts a roadmap, project rules, the test command and a first task. Nothing is written into your repo, and nothing is
-applied until you approve it. Setup offers a phone or desktop notification and puts the `norn` command (old name `meta`, same entry) in
+applied until you approve it. Setup offers a phone or desktop notification and puts the `norn` command in
 `~/.local/bin`. The full walkthrough, also in a scripted form for agents: [SETUP.md](SETUP.md).
 
 ## What you get

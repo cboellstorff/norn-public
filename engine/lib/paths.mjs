@@ -27,7 +27,11 @@ export function resolveShim(exe, args = [], { platform = process.platform, execP
   if (platform !== 'win32' || !/\.(cmd|bat)$/i.test(exe)) return { exe, args };
   let text;
   try { text = vfs.readText(exe); } catch (e) { throw new Error(`cannot resolve ${exe}: ${e.message}`); }
-  const m = text.match(/"%(?:~?dp0%?)\\?([^"%]+\.(?:c|m)?js)"\s+%\*/i);
+  let m = text.match(/"%(?:~?dp0%?)\\?([^"%]+\.(?:c|m)?js)"\s+%\*/i);
+  // npm >= 10's npm.cmd / npx.cmd name the entry in a variable: SET "NPX_CLI_JS=%~dp0\node_modules\npm\bin\npx-cli.js" ...
+  // "%NODE_EXE%" "%NPX_CLI_JS%" %* - the npm that ships beside that node (its global-prefix override is not read)
+  const v = m ? null : text.match(/"%NODE_EXE%"\s+"%(\w+)%"\s+%\*/i);
+  if (v) m = text.match(new RegExp(`SET\\s+"${v[1]}=%~?dp0%?\\\\?([^"%]+\\.(?:c|m)?js)"`, 'i'));
   if (!m) throw new Error(`cannot resolve ${exe}: not an npm node shim (no "%dp0%\\<entry>.js" %*)`);
   const dir = path.win32.dirname(exe), entry = path.win32.join(dir, m[1]);
   if (!vfs.isFile(entry)) throw new Error(`cannot resolve ${exe}: entry ${entry} does not exist`);
@@ -79,7 +83,7 @@ export function discover({ platform = process.platform, env = process.env, home,
   return {
     node: { exe: fwd(execPath), version: nodeVersion }, git: gitExe && { exe: gitExe }, claude,
     codex: codexExe && { exe: codexExe, optional: true },
-    scheduler: { kind: SCHED[platform] || 'cron', name: 'meta-controller-tick', interval_min: 15 }, problems,
+    scheduler: { kind: SCHED[platform] || 'cron', name: 'norn-tick', interval_min: 15 }, problems,
   };
 }
 

@@ -1,5 +1,5 @@
 === crontab
-*/15 * * * * cd /srv/meta-controller && /opt/node/bin/node /srv/meta-controller/engine/bin/norn.mjs tick --reason schedule >/dev/null 2>&1 # meta:meta-controller-tick
+*/15 * * * * cd /srv/norn && /opt/node/bin/node /srv/norn/engine/bin/norn.mjs tick --reason schedule >/dev/null 2>&1 # norn:norn-tick
 $ crontab -l
 $ crontab -
 --- remove

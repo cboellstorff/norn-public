@@ -367,7 +367,8 @@ const sameLinks = (a = [], b = []) => a.length === b.length && a.every(x => b.in
 /** an existing roadmap item that IS this imported line: the same legacy (file, line, text), or the same title + links */
 const itemMatch = (items, l) => items.find(i => i.kind === 'item' && ((i.legacy && i.legacy.file === l.legacy?.file && i.legacy.line === l.legacy?.line && i.legacy.text === l.legacy?.text)
   || (i.title === l.text && sameLinks(i.links, l.links))));
-export const laneNameOf = text => slugOf(text).slice(0, 40).replace(/-+$/, '') || 'first-task';
+// at most 40 chars, cut at a word boundary (SHIP-READY W7); one word longer than that is cut as it is
+export const laneNameOf = text => { const s = slugOf(text), k = s.slice(0, 41).lastIndexOf('-'); return (s.length <= 40 ? s : k > 0 ? s.slice(0, k) : s.slice(0, 40)) || 'first-task'; };
 
 /** what is already on record for this project: { items (roadmap), rules (RULES.md text | null), gate, lanes } */
 export function existingOf(stateDir, project) {
@@ -393,7 +394,7 @@ export function draftFacts(facts, { answers = {}, existing = {} } = {}) {
     ...(answers.tests && !facts.commands.some(c => c.id === 'test') ? [{ id: 'test', cmd: answers.tests, source: 'your answer (tests)' }] : [])];
   part('commands', cmds.map(c => ({ id: c.id, text: c.cmd, source: c.source,
     ...((c.id === 'test' ? ex.gate === c.cmd : inRules('`' + c.cmd + '`')) ? { already: true } : {}) })),
-    cmds.length ? {} : { empty: `no test command found (${facts.manifests.length ? 'manifests only in sub-folders: ' + facts.manifests.join(', ') : 'no manifest, no CI test step'}): set merge.gate.cmd by hand` });
+    cmds.length ? {} : { empty: `no test command found (${facts.manifests.length ? 'manifests only in sub-folders: ' + facts.manifests.join(', ') : 'no manifest, no CI test step'}): merges are not gated until you name your test command as merge.gate.cmd in project.json` });
   const rules = [];
   for (const a of facts.agent_files) rules.push({ text: `Read ${a.file} before you change anything: it is the repository's own instruction file.`, source: `${a.file} (${a.lines} lines)` });
   if (facts.docs.contributing) rules.push({ text: `Follow ${facts.docs.contributing} for branches, commits and reviews.`, source: facts.docs.contributing });
@@ -904,7 +905,8 @@ export function renderProposal(p, { part } = {}) {
   for (const x of d.problems || []) o.push(`  checked: ${x}`);
   for (const x of p.parts.filter(y => !part || y.id === part)) {
     o.push(`  ${x.id.padEnd(13)} ${x.applied ? 'applied' : x.status}${x.pick ? ' (pick one)' : ''} - ${x.lines.length} line(s)${x.empty ? ': ' + x.empty : ''}`);
-    const off = x.decision?.off || [], on = x.decision?.on || [];
+    // a pick part not yet decided has no line on: [x] on all of them read as "all picked" (SHIP-READY R1)
+    const off = x.pick && !x.decision ? x.lines.map(l => l.id) : x.decision?.off || [], on = x.decision?.on || [];
     for (const l of x.lines) o.push(`    ${l.id.padEnd(8)} [${l.already ? '=' : off.includes(l.id) || (l.unverified && !on.includes(l.id)) ? ' ' : 'x'}] ${l.text}  (${l.source})${l.theme ? ` [${[l.theme, l.horizon, ...(l.links || []), l.legacy?.word ? 'claims ' + l.legacy.word : null].filter(Boolean).join(', ')}]` : ''}${l.unverified ? ' - unverified' : ''}${l.default ? ' - default' : ''}`);
   }
   for (const q of d.questions || []) o.push(`  question ${q.id}: ${q.text}${q.options?.length ? ` (${q.options.join(' / ')})` : ''}`);

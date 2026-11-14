@@ -122,7 +122,7 @@ test('C4 first writer wins on a Q: an answer recorded twice - the second is refu
     e => new RegExp(`first writer wins: applied by checkin RUN-410 \\(refs ${d.id}\\)`).test(e.message));
 });
 
-// ---------- the chat's acts set / extend the hold; meta_cli lane claim / release ----------
+// ---------- the chat's acts set / extend the hold; norn_cli lane claim / release ----------
 const own = (state, ...texts) => {
   fs.mkdirSync(path.dirname(threadFile(state)), { recursive: true });
   for (const text of texts) fs.appendFileSync(threadFile(state), JSON.stringify({ ts: new Date().toISOString(), seg: 1, kind: 'owner', text }) + '\n');
@@ -137,36 +137,36 @@ const claims = (s, lane = 'water') => loadState(s).items['L:' + lane].history.fi
 test('C4 the chat acting on a lane sets the hold itself (30 min, holder chat, via chat:chat) and extends it; a read takes none', async () => {
   assert.equal(HOLD_MIN, 30);
   const s = laneState(), ctx = ctxOf(s);
-  await call(ctx, 'meta_records', { lane: 'water' });
+  await call(ctx, 'norn_records', { lane: 'water' });
   assert.equal(claims(s).length, 0, 'tier 0 (read) holds nothing');
-  const r = await call(ctx, 'meta_decision_add', { lane: 'water', question: 'q', choice: 'c', why: 'w' });
+  const r = await call(ctx, 'norn_decision_add', { lane: 'water', question: 'q', choice: 'c', why: 'w' });
   assert.ok(!r.isError, txt(r));
   const h = holdOf(loadState(s).items['L:water']);
   assert.deepEqual([h.holder, h.via, h.by], ['chat', 'chat:chat', 'controller']);
   assert.ok(Math.abs(Date.parse(h.until) - Date.now() - 30 * MIN) < 5000);
   refusedHeld(() => record(s, dec('water'), { views: false }));
-  await call(ctx, 'meta_decision_add', { lane: 'water', question: 'q2', choice: 'c', why: 'w' });
+  await call(ctx, 'norn_decision_add', { lane: 'water', question: 'q2', choice: 'c', why: 'w' });
   assert.equal(claims(s).length, 1, 'a fresh hold is not re-recorded on every act (extended once it is 5 min old)');
-  const q = await call(ctx, 'meta_question_add', { lane: 'relief', title: 't', options: [{ key: 'a', text: 'a' }] });
+  const q = await call(ctx, 'norn_question_add', { lane: 'relief', title: 't', options: [{ key: 'a', text: 'a' }] });
   assert.ok(!q.isError, txt(q));
   assert.equal(holdOf(loadState(s).items['L:relief']).holder, 'chat', 'a question on a lane holds it too');
-  const free = await call(ctx, 'meta_decision_add', { lane: 'nolane', question: 'q', choice: 'c', why: 'w' });
+  const free = await call(ctx, 'norn_decision_add', { lane: 'nolane', question: 'q', choice: 'c', why: 'w' });
   assert.ok(!free.isError, 'a lane with no LANE record: the act stands, no hold (nothing to hold)');
 });
 
-test('C4 meta_cli lane claim / release are tier 1 on the chat\'s list; release drops the hold; the outside controller window holds as controller', async () => {
+test('C4 norn_cli lane claim / release are tier 1 on the chat\'s list; release drops the hold; the outside controller window holds as controller', async () => {
   assert.deepEqual([cliPlan(['lane', 'claim', 'water']).tier, cliPlan(['lane', 'release', 'water']).tier], [1, 1]);
   const s = laneState(), ctx = ctxOf(s);
-  let r = await call(ctx, 'meta_cli', { args: ['lane', 'claim', 'water', '--min', '45', '--why', 'owner asked'] });
+  let r = await call(ctx, 'norn_cli', { args: ['lane', 'claim', 'water', '--min', '45', '--why', 'owner asked'] });
   assert.ok(!r.isError, txt(r));
   let h = holdOf(loadState(s).items['L:water']);
   assert.deepEqual([h.holder, h.via], ['chat', 'chat:chat']);
   assert.ok(Math.abs(Date.parse(h.until) - Date.now() - 45 * MIN) < 5000);
-  r = await call(ctx, 'meta_cli', { args: ['lane', 'release', 'water'] });
+  r = await call(ctx, 'norn_cli', { args: ['lane', 'release', 'water'] });
   assert.ok(!r.isError, txt(r));
   assert.equal(holdOf(loadState(s).items['L:water']), null, 'a release is not re-held by the act itself');
   const outside = ctxOf(s, { profile: 'controller', client: 'claude-code' });
-  r = await call(outside, 'meta_decision_add', { lane: 'water', question: 'q', choice: 'c', why: 'w' });
+  r = await call(outside, 'norn_decision_add', { lane: 'water', question: 'q', choice: 'c', why: 'w' });
   assert.ok(!r.isError, txt(r));
   h = holdOf(loadState(s).items['L:water']);
   assert.deepEqual([h.holder, h.via], ['controller', 'chat:claude-code']);

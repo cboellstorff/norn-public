@@ -149,10 +149,10 @@ test('norn rec not-an-answer DEC-m --q Q-n: the row leaves, the Q stays open', (
   assert.equal(dg(s).sections.questions.find(x => x.id === q).answered_by ?? null, null);
 });
 
-test('MCP meta_decision_add: the same refusal (code 3) and the same --answers path', () => {
+test('MCP norn_decision_add: the same refusal (code 3) and the same --answers path', () => {
   const { s, q } = setup();
   const ctx = { state: s, profile: 'controller', writer: 'controller', via: 'chat:test' };
-  const call = args => handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'meta_decision_add', arguments: args } }, ctx).result;
+  const call = args => handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'norn_decision_add', arguments: args } }, ctx).result;
   const no = call({ lane: 'night', question: DEC873.question, choice: DEC873.choice, why: DEC873.why });
   assert.equal(no.isError, true); assert.equal(no.structuredContent.code, 3);
   assert.match(no.structuredContent.error, new RegExp(`${q} is open on lane night`));

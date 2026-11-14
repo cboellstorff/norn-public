@@ -1,0 +1,19 @@
+{
+  "id": "K3", "level": "BLOCK", "kind": "eslint",
+  "title": "a new unused variable or import",
+  "how": "ESLint no-unused-vars (engine/lib/slop/eslint.config.mjs: _x names, caught errors and rest siblings allowed) on the JS files the diff touches, at base and at head",
+  "tool": "eslint",
+  "files": ["**/*.mjs", "**/*.js", "**/*.cjs"],
+  "fixture": {
+    "hit": { "base": { "src/m.mjs": "import path from 'node:path';\nexport const a = x => path.join(x);\n" },
+      "head": { "src/m.mjs": "import fs from 'node:fs';\nimport path from 'node:path';\nexport const a = x => path.join(x);\n" },
+      "recorded": {
+        "base": [{ "filePath": "src/m.mjs", "messages": [] }],
+        "head": [{ "filePath": "src/m.mjs", "messages": [{ "ruleId": "no-unused-vars", "severity": 2, "message": "'fs' is defined but never used. Allowed unused vars must match /^_/u.", "line": 1, "column": 8 }] }] } },
+    "miss": { "base": { "src/m.mjs": "import fs from 'node:fs';\nexport const a = 1;\n" },
+      "head": { "src/m.mjs": "// a comment above moves every line\nimport fs from 'node:fs';\nexport const a = 1;\nconst _unused = 2;\n" },
+      "recorded": {
+        "base": [{ "filePath": "src/m.mjs", "messages": [{ "ruleId": "no-unused-vars", "severity": 2, "message": "'fs' is defined but never used. Allowed unused vars must match /^_/u.", "line": 1, "column": 8 }] }],
+        "head": [{ "filePath": "src/m.mjs", "messages": [{ "ruleId": "no-unused-vars", "severity": 2, "message": "'fs' is defined but never used. Allowed unused vars must match /^_/u.", "line": 2, "column": 8 }] }] } }
+  }
+}

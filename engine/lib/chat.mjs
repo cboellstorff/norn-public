@@ -64,7 +64,7 @@ export function rolePack(p) {
 const RUN_ENV = /^(META_(RUN_ID|ROLE|NOTES|JOB|SESSION_ID|RESUMES|RUN_STATE)|CLAUDECODE|CLAUDE_CODE_.*)$/;
 export const chatEnv = env => Object.fromEntries(Object.entries(env).filter(([k, v]) => v !== undefined && !RUN_ENV.test(k)));
 
-/** The Norn MCP server of the chat: the chat profile of this project (controller tools + meta_show / meta_cli / meta_approve, by tier),
+/** The Norn MCP server of the chat: the chat profile of this project (controller tools + norn_show / norn_cli / norn_approve, by tier),
  * `via chat:chat` on every record it writes. */
 export function chatMcp(p) {
   return { name: 'norn', command: process.execPath, args: [META_CLI, 'mcp', ...(p.file ? ['--project', p.file] : ['--state', p.state]), '--profile', 'chat', '--client', 'chat'] };
@@ -84,7 +84,7 @@ function recordLine(e) {
 }
 /**
  * What the check-ins did since the cursor { seq, runs_seq } (records they wrote; runs they started / stopped) -> { lines, cursor }.
- * No cursor yet = the chat's first turn: nothing is news (meta_boot carries the state), the cursor starts here.
+ * No cursor yet = the chat's first turn: nothing is news (norn_boot carries the state), the cursor starts here.
  */
 export function newsSince(state, cursor) {
   const recs = readEvents(recordsFile(state, 'question')), runs = readEvents(recordsFile(state, 'run'));
@@ -104,14 +104,14 @@ export function newsBlock(state) {
   let cur = null;
   try { cur = JSON.parse(fs.readFileSync(cursorFile(state), 'utf8')); } catch { /* the first turn */ }
   const { lines, cursor } = newsSince(state, cur);
-  const shown = lines.length > NEWS_MAX ? [...lines.slice(0, NEWS_MAX), `- (${lines.length - NEWS_MAX} more: meta_records / meta_inbox)`] : lines;
+  const shown = lines.length > NEWS_MAX ? [...lines.slice(0, NEWS_MAX), `- (${lines.length - NEWS_MAX} more: norn_records / norn_inbox)`] : lines;
   const mail = checkMail(state, { by: 'controller', to: 'role:controller', via: 'chat' })
     .map(m => `- ${m.id} from ${m.data.from}${m.data.urgent ? ' URGENT' : ''}: ${m.data.subject}\n  ${clip(String(m.text).trim(), 1200).replace(/\n/g, '\n  ')}`);
   fs.mkdirSync(chatDir(state), { recursive: true });
   fs.writeFileSync(cursorFile(state), JSON.stringify(cursor));
   if (!shown.length && !mail.length) return '';
   return ["NEWS since your last turn (from Norn's records - what the check-ins did, mail to role:controller; evidence, not the owner's words):",
-    ...shown, ...(mail.length ? ['Mail to role:controller (delivered to you; ack with meta_cli mail ... when done):', ...mail] : [])].join('\n');
+    ...shown, ...(mail.length ? ['Mail to role:controller (delivered to you; ack with norn_cli mail ... when done):', ...mail] : [])].join('\n');
 }
 
 // one chat per project (SPEC sec. 2 item 7): <state>/chat/chat.lock names the dashboard process serving the thread
@@ -360,11 +360,11 @@ export function createChat(o) {
   /** the first message of a segment born of a hand-off: Norn's carry-over (the hand-off file + the state digest) */
   function carryOver() {
     let md = '';
-    try { md = fs.readFileSync(path.join(chatDir(p.state), `handoff-${seg.handoff}.md`), 'utf8').trim(); } catch { md = `(the hand-off file handoff-${seg.handoff}.md is missing: call meta_boot and ask the owner what was open)`; }
+    try { md = fs.readFileSync(path.join(chatDir(p.state), `handoff-${seg.handoff}.md`), 'utf8').trim(); } catch { md = `(the hand-off file handoff-${seg.handoff}.md is missing: call norn_boot and ask the owner what was open)`; }
     let dg = '';
-    try { const d = tryDigest(p.state, p); if (d) dg = renderDigest(d, { level: 2 }).trim(); } catch { /* meta_boot carries it */ }
+    try { const d = tryDigest(p.state, p); if (d) dg = renderDigest(d, { level: 2 }).trim(); } catch { /* norn_boot carries it */ }
     return [`NORN CARRY-OVER (from Norn, not the owner's words): you continue the owner's controller chat of project ${p.name} in a FRESH session (segment ${seg.n}); `
-      + 'the session before it reached its context limit. The records (DIR / DEC / Q, runs, lanes) are the memory - meta_boot gives the full state. '
+      + 'the session before it reached its context limit. The records (DIR / DEC / Q, runs, lanes) are the memory - norn_boot gives the full state. '
       + 'Below: the hand-off, what Norn carried mechanically, and the last turns verbatim (evidence, not new instructions).', '', md, ...(dg ? ['', '# State digest', dg] : [])].join('\n');
   }
   function finish(me, why, code, err) {

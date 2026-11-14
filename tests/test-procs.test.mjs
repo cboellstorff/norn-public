@@ -47,3 +47,21 @@ test('ci-suite: a file that leaves a process alive fails naming its pid (even wh
   assert.equal(ok.status, 0, ok.stdout + ok.stderr);
   assert.match(ok.stdout, /ci-suite: 0 listed red\(s\), 0 new, 0 leak\(s\)/);
 });
+
+// CHECK bug (CI-RED R1 note): procsNaming matched with includes(), so ci-suite's parallel-2 dir also "named" every process of
+// parallel-25 (and -20..-29, -200..): a live process of a later file could be counted (and killed) as an earlier file's leak.
+// A dir is named only when the path segment ends there (end, a separator, a quote, a space ...), never mid-name.
+test('procsNaming matches a dir only at a path-segment boundary: parallel-2 does not name a process of parallel-25', () => {
+  const base = 'C:\\' + String.raw`Users\u1\AppData\Local\Temp\ci-suite-2Jtx4d`;   // split: no literal home path (lint S3)
+  const p = (pid, cmd) => ({ pid, name: 'node.exe', cmd });
+  const procs = [
+    p(1, String.raw`node supervisor.mjs --state ${base}\parallel-25\meta-x\RUN-3.spec.json`),
+    p(2, String.raw`node fake.mjs "${base}\parallel-2\meta-y\RUN-1.spec.json"`),
+    p(3, String.raw`node fake.mjs --dir ${base}\parallel-2`),
+    p(4, String.raw`node fake.mjs --dir="${base}\parallel-2" --x`),
+    p(5, `node fake.mjs ${base}/parallel-2.old/z`),
+  ];
+  assert.deepEqual(procsNaming([String.raw`${base}\parallel-2`], procs).map(x => x.pid), [2, 3, 4]);
+  assert.deepEqual(procsNaming([String.raw`${base}\parallel-25`], procs).map(x => x.pid), [1]);
+  assert.deepEqual(procsNaming([`${base}/PARALLEL-2/`], procs).map(x => x.pid), [2, 3, 4]);
+});

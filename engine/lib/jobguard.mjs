@@ -18,24 +18,50 @@ import { fileURLToPath } from 'node:url';
 const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), 'jobguard.cs');
 const CSC = ['Framework64', 'Framework'].map(f => path.join(process.env.SystemRoot || 'C:\\Windows', 'Microsoft.NET', f, 'v4.0.30319', 'csc.exe'));
 
-/** the compiled helper's path (compiled once per source version), or null off Windows / without csc */
-export function jobguardExe({ platform = process.platform, dir = os.tmpdir(), csc = CSC } = {}) {
+// the cached helper path + what a compile needs: { exe } when cached, { exe, c, tmp } to compile, null when it cannot be had
+function jobguardPlan({ platform, dir, csc }) {
   if (platform !== 'win32') return null;
   let src;
   try { src = fs.readFileSync(SRC); } catch { return null; }
   const exe = path.join(dir, `meta-jobguard-${crypto.createHash('sha256').update(src).digest('hex').slice(0, 12)}.exe`);
-  if (fs.existsSync(exe)) return exe;
+  if (fs.existsSync(exe)) return { exe };
   const c = csc.find(f => fs.existsSync(f));
-  if (!c) return null;
-  const tmp = `${exe}.${process.pid}.tmp.exe`;
-  const r = spawnSync(c, ['-nologo', '-optimize', `-out:${tmp}`, SRC], { encoding: 'utf8', windowsHide: true, timeout: 60000 });
-  if (r.status !== 0 || !fs.existsSync(tmp)) { try { fs.unlinkSync(tmp); } catch { /* none */ } return null; }
-  try { fs.renameSync(tmp, exe); } catch { try { fs.unlinkSync(tmp); } catch { /* a racer won */ } }
-  return fs.existsSync(exe) ? exe : null;
+  return c ? { exe, c, tmp: `${exe}.${process.pid}.tmp.exe` } : null;
+}
+const CSC_ARGS = tmp => ['-nologo', '-optimize', `-out:${tmp}`, SRC];
+function jobguardSettle(p, ok) {
+  if (!ok || !fs.existsSync(p.tmp)) { try { fs.unlinkSync(p.tmp); } catch { /* none */ } return null; }
+  try { fs.renameSync(p.tmp, p.exe); } catch { try { fs.unlinkSync(p.tmp); } catch { /* a racer won */ } }
+  return fs.existsSync(p.exe) ? p.exe : null;
+}
+
+/** the compiled helper's path (compiled once per source version), or null off Windows / without csc. Blocks while it compiles:
+ * a process with a heartbeat (the supervisor) uses jobguardExeAsync */
+export function jobguardExe({ platform = process.platform, dir = os.tmpdir(), csc = CSC } = {}) {
+  const p = jobguardPlan({ platform, dir, csc });
+  if (!p?.c) return p?.exe ?? null;
+  const r = spawnSync(p.c, CSC_ARGS(p.tmp), { encoding: 'utf8', windowsHide: true, timeout: 60000 });
+  return jobguardSettle(p, r.status === 0);
+}
+
+/** jobguardExe without blocking the event loop (CI-RED-D5B3788: a first-use compile in a fresh TEMP stopped the supervisor's
+ * heartbeat for the whole csc run - seconds under load - and a sweep marked the live run lost). Resolves the path or null. */
+export function jobguardExeAsync({ platform = process.platform, dir = os.tmpdir(), csc = CSC, timeoutMs = 60000 } = {}) {
+  const p = jobguardPlan({ platform, dir, csc });
+  if (!p?.c) return Promise.resolve(p?.exe ?? null);
+  return new Promise(res => {
+    let child, done = false;
+    const resolve = ok => { if (!done) { done = true; res(jobguardSettle(p, ok)); } };
+    try { child = spawn(p.c, CSC_ARGS(p.tmp), { stdio: 'ignore', windowsHide: true, timeout: timeoutMs }); }
+    catch { return resolve(false); }
+    child.on('error', () => resolve(false));
+    child.on('exit', code => resolve(code === 0));
+  });
 }
 
 /** put `pid` (the caller) in a new named job; resolves { name, exe, proc } or { error } (never rejects) */
-export function holdJob(pid, { exe = jobguardExe(), name = `meta-run-${pid}-${Date.now()}`, timeoutMs = 15000 } = {}) {
+export async function holdJob(pid, { exe, name = `meta-run-${pid}-${Date.now()}`, timeoutMs = 15000 } = {}) {
+  if (exe === undefined) exe = await jobguardExeAsync();
   if (!exe) return Promise.resolve({ error: 'no jobguard helper (not Windows, or no .NET Framework csc.exe)' });
   return new Promise(resolve => {
     let buf = '', done = false;

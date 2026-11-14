@@ -58,7 +58,7 @@ export { prompt } from './harness/common.mjs';
 export const claudeCmd = (o, remote) => adapterFor('claude').command({ ...o, remote });
 /** The command { exe, args, stdin, stdout, parse } of run spec `o`, built by its executor's harness adapter. */
 // META-GTP-MAIL delivery (a): a run whose adapter runs the mail hook (caps.hooks settings + adapter.mailHook: claude) gets the
-// PostToolUse hook `norn mail check --inject`; the others read mail by MCP meta_mail + their headless line (HEADLESS_MAIL)
+// PostToolUse hook `norn mail check --inject`; the others read mail by MCP norn_mail + their headless line (HEADLESS_MAIL)
 export function mailHookOf(o) {
   const fam = harnessOf(o.executor, o.provider);
   const a = fam ? adapterFor(fam) : null;
@@ -81,6 +81,20 @@ export function renameRetry(t, f, tries = 40) {
     try { return fs.renameSync(t, f); } catch (e) {
       if (!['EPERM', 'EACCES', 'EBUSY'].includes(e.code) || i >= tries) { try { fs.unlinkSync(t); } catch { /* gone */ } throw e; }
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+  }
+}
+// Windows sharing / delete-pending errors on a lock or flag file are transient (graceful-fs's EPERM practice, as renameRetry): retried
+// on the monotonic clock up to STALE_MS, then thrown - a caller logs it; never a silent lost wakeup (META-OOTB-FIX FLOW-STALL)
+const TRANSIENT = ['EPERM', 'EACCES', 'EBUSY'];
+const sleepSync = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+function retryTransient(fn, what) {
+  const t0 = performance.now();
+  for (;;) {
+    try { return fn(); } catch (e) {
+      if (!TRANSIENT.includes(e.code)) throw e;
+      if (performance.now() - t0 > STALE_MS) throw new RunError(`${what}: ${e.code} for ${STALE_MS} ms`);
+      sleepSync(25);
     }
   }
 }
@@ -268,7 +282,7 @@ const startFields = (o, info) => ({
   agent: o.agent, model: o.model, effort: o.effort, worktree: o.worktree, brief: o.brief, notes: o.notes });
 const runTail = o => ({ budget_min: o.budgetMin, resumes: o.resumes || 0, resume_of: o.resumeOf, parent: o.parent, via: o.via, role: o.role, class: o.cls, q: o.q, tick_class: o.tickClass, trial: o.trial, fallback_of: o.fallbackOf,
   from_queue: o.fromQueue, requeue_of: o.requeueOf, after: o.after?.length ? o.after : undefined, inputs: o.inputs?.length ? o.inputs : undefined,
-  epic: o.epic, priority: o.priority, nudge: o.nudge, flow: o.flow,   // flow: META-GTP-FLOW piece 2 ({ name, step, vars })
+  epic: o.epic, priority: o.priority, nudge: o.nudge, flow: o.flow, slop_of: o.slopOf,   // flow: META-GTP-FLOW piece 2 ({ name, step, vars }); slop_of: META-SLOP-A (the run-end slop resume)
   labels: o.labels?.length ? o.labels : undefined, claim_of: o.claim_of, replaces: o.replaces,
   launch_profile: o.profile && o.profile.name !== 'full' ? o.profile.name : undefined });   // META-STANDING-CONTEXT R1: a lean launch (standing.mjs profileOf)   // replaces: META-AUTONOMY R1 (norn requeue)   // claim_of: META-GTP-FED piece 3 ({ home, project, run, node } on a node)   // META-GTP-FED piece 1: the machines that may run it (none = home)
 // META-GTP-DAG piece 2: a NEW run (not a fill / resume / re-queue of one) named --epic joins that open epic; no --priority = the epic's
@@ -436,32 +450,57 @@ export function queueOf(runs) {
  * Linux irq_work / Go runtime "wakeup pending" pattern): every fillQueue call is followed by a pass that began after the call did.
  * onPass: a test seam, called after each pass under the lock.
  */
-export function fillQueue(state, { now, resources = sampleResources, onPass, authProbe = probeAuth } = {}) {
+export function fillQueue(state, { now, resources = sampleResources, onPass, authProbe = probeAuth, io = fs } = {}) {
   const lockFile = path.join(state, 'queue.lock'), flagFile = path.join(state, 'queue.refill');
+  const token = `${process.pid}-${crypto.randomBytes(6).toString('hex')}`;   // this call's lock: the release frees only its own
+  const transient = (fn, what) => retryTransient(fn, `${what} ${fwd(lockFile)}`);
+  // the lock's holder as read now: live (fresh JSON, or created by 'wx' with its JSON not yet written - FLOW-STALL suspect (i): that
+  // was broken as stale), stale (ts, else mtime, older than STALE_MS), free (gone), pending (Windows delete-pending / a sharing handle:
+  // a holder released it - FLOW-STALL suspect (ii): the loser returned on it after its flag and nobody filled)
+  const holder = () => {
+    let raw, cur = null;
+    try { raw = io.readFileSync(lockFile, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return 'free'; if (TRANSIENT.includes(e.code)) return 'pending'; throw e; }
+    try { cur = JSON.parse(raw); } catch { /* being written */ }
+    let ts = Date.parse(cur?.ts);
+    if (Number.isNaN(ts)) { try { ts = io.statSync(lockFile).mtimeMs; } catch (e) { if (e.code === 'ENOENT') return 'free'; if (TRANSIENT.includes(e.code)) return 'pending'; throw e; } }
+    return Date.now() - ts > STALE_MS ? 'stale' : 'live';
+  };
+  // true = ours; false only with a live holder seen after the call began (its after-release re-check sees our flag): never on a
+  // released lock - free / stale / pending retry the create (pending waits like retryTransient, then fails loudly)
   const acquire = () => {
-    for (let i = 0; ; i++) {
-      try { fs.mkdirSync(state, { recursive: true }); fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, ts: new Date().toISOString() }), { flag: 'wx' }); return true; }
-      catch (e) {
-        if (!['EEXIST', 'EPERM', 'EACCES'].includes(e.code)) throw e;
-        const cur = readJson(lockFile);
-        if (i > 0 || (cur && !(Date.now() - Date.parse(cur.ts) > STALE_MS))) return false;   // another filler is at it
-        try { fs.unlinkSync(lockFile); } catch { /* another breaker */ }
-      }
+    fs.mkdirSync(state, { recursive: true });
+    const t0 = performance.now();
+    for (;;) {
+      try { io.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, token, ts: new Date().toISOString() }), { flag: 'wx' }); return true; }
+      catch (e) { if (!['EEXIST', ...TRANSIENT].includes(e.code)) throw e; }
+      const h = holder();
+      if (h === 'live') return false;   // another filler is at it
+      if (h === 'stale') { try { io.unlinkSync(lockFile); } catch { /* another breaker / pending: the next read says */ } }
+      if (performance.now() - t0 > STALE_MS) throw new RunError(`queue fill: ${fwd(lockFile)} not acquired in ${STALE_MS} ms (${h})`);
+      if (h === 'pending') sleepSync(25);
     }
   };
+  // FLOW-STALL window (iii): a swallowed unlink failure left a holder-less fresh lock - every filler lost for STALE_MS
+  const release = () => {
+    let cur = null;
+    try { cur = JSON.parse(transient(() => io.readFileSync(lockFile, 'utf8'), 'read')); } catch (e) { if (e.code === 'ENOENT' || e instanceof SyntaxError) return; throw e; }
+    if (cur?.token !== token) return;   // broken as stale meanwhile: the lock is a successor's
+    try { transient(() => io.unlinkSync(lockFile), 'release'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  };
+  const unflag = () => { try { transient(() => io.unlinkSync(flagFile), 'clear flag'); } catch (e) { if (e.code !== 'ENOENT') throw e; } };
   const flagged = () => fs.existsSync(flagFile);
   const started = [];
   for (;;) {
     if (!acquire()) {
       // the loser: leave the flag, then try once more - a holder that released before the flag landed is gone, so the lock is free
       // (we fill) or a holder took it after the flag landed (its after-release re-check sees the flag). Never lost, no second lock.
-      fs.writeFileSync(flagFile, '');
+      transient(() => io.writeFileSync(flagFile, ''), 'flag');
       if (!acquire()) return started;
     }
     try {
       let at, res;
       do {
-        try { fs.unlinkSync(flagFile); } catch { /* not set */ }
+        unflag();
         at = now ?? Date.now();
         let R;
         res = () => (R ??= resources());   // one sample per pass: the pass and the view after it read the same numbers
@@ -469,7 +508,7 @@ export function fillQueue(state, { now, resources = sampleResources, onPass, aut
         onPass?.();
       } while (flagged());
       try { const ready = readiness(state, { now: at, resources: res }); writeQueueView(state, {}, { ready }); writeOffers(state, ready); } catch { /* a view never fails a fill (NORN-WATCH S4) */ }
-    } finally { try { fs.unlinkSync(lockFile); } catch { /* gone */ } }
+    } finally { release(); }
     if (!flagged()) return started;
   }
 }

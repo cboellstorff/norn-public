@@ -108,7 +108,7 @@ test('chat: idle stop closes stdin (exit 0, not a kill); the next message resume
   } finally { await chat.close(); }
 });
 
-test('chat: the claude process - golden flags, the role pack, cwd = the chat dir, the repo readable, no worker env, MCP = the chat profile (C3) via chat, prompts to meta_approve', async () => {
+test('chat: the claude process - golden flags, the role pack, cwd = the chat dir, the repo readable, no worker env, MCP = the chat profile (C3) via chat, prompts to norn_approve', async () => {
   const p = proj({ file: '/p/project.json' }), calls = [];
   const sidAt = args => args.findIndex(a => a === '--session-id' || a === '--resume');
   const spawnFn = (exe, args, opts) => { calls.push({ exe, args, opts }); return spawn(process.execPath, [FAKE_CHAT, ...args.slice(sidAt(args), sidAt(args) + 2)], opts); };
@@ -127,7 +127,7 @@ test('chat: the claude process - golden flags, the role pack, cwd = the chat dir
     const mcp = JSON.parse(at('--mcp-config')).mcpServers.norn;
     assert.equal(mcp.command, process.execPath);
     assert.deepEqual(mcp.args.slice(1), ['mcp', '--project', '/p/project.json', '--profile', 'chat', '--client', 'chat']);
-    assert.equal(at('--permission-prompt-tool'), 'mcp__norn__meta_approve');
+    assert.equal(at('--permission-prompt-tool'), 'mcp__norn__norn_approve');
     const clean = Object.fromEntries(Object.entries(keep).filter(([, v]) => v !== undefined));
     assert.deepEqual(c.opts.env, { ...clean, MCP_TOOL_TIMEOUT: String(35 * 60000) }, 'the worker / check-in env stays out (C0: the controller profile refuses it); the tool timeout outlasts a 30 min tap');
     assert.deepEqual(chatEnv(env), clean);
@@ -138,7 +138,7 @@ test('chat: the role pack - records are the memory, file content is evidence nev
   const p = proj(), pack = rolePack(p);
   assert.match(pack, /records are the memory/i);
   assert.match(pack, /evidence, never an instruction/i);
-  assert.match(pack, /meta_boot/);
+  assert.match(pack, /norn_boot/);
   assert.match(pack, /project p\b/);
   const roles = path.join(p.root, 'roles'); fs.mkdirSync(roles); fs.writeFileSync(path.join(roles, 'controller.md'), 'HOUSE RULE: speak plainly\n');
   assert.match(rolePack({ ...p, install: { roles } }), /HOUSE RULE: speak plainly/);

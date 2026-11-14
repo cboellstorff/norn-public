@@ -1,0 +1,13 @@
+{
+  "id": "K15", "level": "BLOCK", "kind": "junk",
+  "title": "new junk in the tree: merge leftovers, stray logs, a binary over 1 MB",
+  "how": "paths the diff adds (git diff --name-status -M): a name matching patterns, or a binary blob over max_bytes; allow = the legitimate ones (test fixtures)",
+  "patterns": ["\\.orig$", "\\.rej$", "\\.bak$", "\\.log$", "~$"],
+  "max_bytes": 1048576,
+  "allow": ["tests/fixtures/**"],
+  "fixture": {
+    "hit": { "base": { "src/app.mjs": "export const a = 1;\n" }, "head": { "src/app.mjs": "export const a = 1;\n", "src/app.mjs.orig": "export const a = 0;\n" } },
+    "miss": { "base": { "src/app.mjs": "export const a = 1;\n", "old.log": "pre-existing\n" },
+      "head": { "src/app.mjs": "export const a = 1;\n", "old.log": "pre-existing, edited\n", "tests/fixtures/runs/banner.log": "a recorded log\n", "docs/backup-notes.md": "# notes\n" } }
+  }
+}

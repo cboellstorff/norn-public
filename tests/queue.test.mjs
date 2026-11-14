@@ -300,3 +300,73 @@ test('fill: a stale queue.lock (holder died) is still broken; a fresh one held b
   assert.ok(fs.existsSync(lock), 'fresh: left to its holder');
   assert.ok(fs.existsSync(path.join(d.state, 'queue.refill')), 'the loser left the re-fill flag for it');
 });
+
+// META-OOTB-FIX FLOW-STALL (CI 43536392454, Windows: the art-round flow stalled 60 s): the queue.lock windows on the step-advance path.
+// A fake fs for queue.lock only (fillQueue's io seam); every other path passes through. Deterministic: counts, never sleeps.
+function lockIo(lock, { pendingCreates = 0, busyUnlinks = 0 } = {}) {
+  const n = { create: 0, unlink: 0 }, err = code => Object.assign(new Error(code), { code });
+  const pending = () => n.create < pendingCreates;   // Windows delete-pending: create / open / delete fail EPERM until the last handle closes
+  return { n,
+    writeFileSync(f, data, o) { if (f === lock && o?.flag === 'wx' && pending()) { n.create++; throw err('EPERM'); } return fs.writeFileSync(f, data, o); },
+    readFileSync(f, enc) { if (f === lock && pending()) throw err('EPERM'); return fs.readFileSync(f, enc); },
+    unlinkSync(f) {
+      if (f === lock && pending()) throw err('EPERM');
+      if (f === lock && n.unlink < busyUnlinks && fs.existsSync(f)) { n.unlink++; throw err('EBUSY'); }   // a scanner's handle without share-delete
+      return fs.unlinkSync(f);
+    },
+    statSync: (f, o) => fs.statSync(f, o),
+  };
+}
+// suspect (i): 'wx' creates the file, the JSON lands in a second write - a loser reading in between saw null and broke a live lock
+test('fill: a queue.lock just created by another filler (its JSON not yet written) is held, not broken as stale', async () => {
+  const d = sandbox();
+  const q = queueRun(d.opts({ brief: d.brief('mode: done\n') })).run;
+  const lock = path.join(d.state, 'queue.lock'), flag = path.join(d.state, 'queue.refill');
+  fs.writeFileSync(lock, '');   // created, content not yet written
+  assert.deepEqual(fillQueue(d.state), [], 'no second filler beside the live one');
+  assert.equal(fs.readFileSync(lock, 'utf8'), '', 'left to its holder');
+  assert.ok(fs.existsSync(flag), 'the loser left the re-fill flag for it');
+  assert.equal(d.item(q).state, 'queued');
+  const old = new Date(Date.now() - 10 * 60000);   // a crash between create and write: the empty lock's mtime is its age
+  fs.utimesSync(lock, old, old);
+  const got = fillQueue(d.state);
+  assert.equal(got.length, 1, 'stale by its mtime: broken, filled');
+  assert.ok(!fs.existsSync(lock) && !fs.existsSync(flag));
+  assert.equal((await d.ended(got[0].next)).end.outcome, 'done');
+});
+// suspect (ii): the holder released, its lock is delete-pending (a handle still open): the loser's two tries both failed EPERM, it
+// returned after its flag - and the holder's after-release re-check had already passed. Nobody filled.
+test('fill: a queue.lock in Windows delete-pending (released, a handle still open) is waited out - the wakeup is never lost', async () => {
+  const d = sandbox();
+  const q = queueRun(d.opts({ brief: d.brief('mode: done\n') })).run;
+  const lock = path.join(d.state, 'queue.lock');
+  const io = lockIo(lock, { pendingCreates: 4 });
+  const got = fillQueue(d.state, { io });
+  assert.equal(io.n.create, 4, 'every create met the pending delete until the handle closed');
+  assert.equal(got.length, 1, 'the filler waited it out and filled');
+  assert.equal(got[0].queued, q);
+  assert.ok(!fs.existsSync(lock));
+  assert.equal((await d.ended(got[0].next)).end.outcome, 'done');
+});
+// window (iii): the release's unlink met a transient sharing error and was swallowed: a fresh-looking lock with no holder made every
+// filler a loser for STALE_MS (120 s - past the flow test's 60 s wait)
+test('fill: a release that meets a transient sharing error (EBUSY) still frees queue.lock', async () => {
+  const d = sandbox();
+  const lock = path.join(d.state, 'queue.lock');
+  const io = lockIo(lock, { busyUnlinks: 2 });
+  assert.deepEqual(fillQueue(d.state, { io }), []);
+  assert.equal(io.n.unlink, 2);
+  assert.ok(!fs.existsSync(lock), 'released after the handle closed');
+  const q = queueRun(d.opts({ brief: d.brief('mode: done\n') })).run;
+  const got = fillQueue(d.state);
+  assert.equal(got.length, 1, 'the next fill is not locked out');
+  assert.equal(got[0].queued, q);
+  assert.equal((await d.ended(got[0].next)).end.outcome, 'done');
+});
+// the release removes only its own lock: a holder whose lock was broken as stale meanwhile must not free its successor's
+test('fill: a holder whose queue.lock was taken over meanwhile leaves the successor\'s lock in place', () => {
+  const d = sandbox();
+  const lock = path.join(d.state, 'queue.lock'), other = JSON.stringify({ pid: 1, token: 'other', ts: new Date().toISOString() });
+  fillQueue(d.state, { onPass() { fs.writeFileSync(lock, other); } });
+  assert.equal(fs.readFileSync(lock, 'utf8'), other);
+});

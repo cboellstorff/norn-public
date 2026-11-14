@@ -65,7 +65,7 @@ test('initialize negotiates the protocol version; ping answers; unknown method i
   const s = tmp(), m = server(['--state', s, '--profile', 'controller']);
   const a = await m.call('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '0' } });
   assert.equal(a.result.protocolVersion, '2025-06-18');
-  assert.equal(a.result.serverInfo.name, 'meta');
+  assert.equal(a.result.serverInfo.name, 'norn');
   assert.ok(a.result.capabilities.tools && a.result.capabilities.prompts);
   const b = await m.call('initialize', { protocolVersion: '1999-01-01', capabilities: {} });
   assert.equal(b.result.protocolVersion, '2025-11-25');
@@ -81,23 +81,23 @@ test('profiles decide the tools: controller <= 16 one-line tools, checkin has no
   const n = t => t.map(x => x.name).sort();
   assert.ok(ctl.length <= 16, `${ctl.length} tools`);
   for (const t of ctl) { assert.equal(t.inputSchema.type, 'object'); assert.ok(!t.description.includes('\n') && t.description.length <= 160, t.name); }
-  for (const x of ['meta_answer', 'meta_directive', 'meta_tick', 'meta_pause', 'meta_settings', 'meta_boot', 'meta_run']) assert.ok(n(ctl).includes(x), x);
-  for (const x of ['meta_answer', 'meta_directive', 'meta_tick', 'meta_pause']) assert.ok(!n(ck).includes(x), x);
-  assert.ok(n(ck).includes('meta_settings') && n(ck).includes('meta_run'));
-  assert.deepEqual(n(wk), ['meta_mail', 'meta_run_show', 'meta_status']);   // META-GTP-MAIL: + its own mailbox
+  for (const x of ['norn_answer', 'norn_directive', 'norn_tick', 'norn_pause', 'norn_settings', 'norn_boot', 'norn_run']) assert.ok(n(ctl).includes(x), x);
+  for (const x of ['norn_answer', 'norn_directive', 'norn_tick', 'norn_pause']) assert.ok(!n(ck).includes(x), x);
+  assert.ok(n(ck).includes('norn_settings') && n(ck).includes('norn_run'));
+  assert.deepEqual(n(wk), ['norn_mail', 'norn_run_show', 'norn_status']);   // META-GTP-MAIL: + its own mailbox
 });
 
-// META-PLAN R1: the plan rides on meta_status (view plan): every profile reads it, the controller stays at <= 16 tools
-test('meta_status view plan: listed in every profile, read-only plan text + the model', async () => {
+// META-PLAN R1: the plan rides on norn_status (view plan): every profile reads it, the controller stays at <= 16 tools
+test('norn_status view plan: listed in every profile, read-only plan text + the model', async () => {
   const s = tmp();
   for (const prof of ['controller', 'checkin', 'worker']) {
     const m = server(['--state', s, '--profile', prof]); await m.init();
-    const st = (await m.call('tools/list')).result.tools.find(t => t.name === 'meta_status');
+    const st = (await m.call('tools/list')).result.tools.find(t => t.name === 'norn_status');
     assert.deepEqual(st.inputSchema.properties.view.enum, ['status', 'plan', 'instructions'], prof);
     await m.close();
   }
   const m = server(['--state', s, '--profile', 'controller']); await m.init();
-  const r = await m.tool('meta_status', { view: 'plan' });
+  const r = await m.tool('norn_status', { view: 'plan' });
   await m.close();
   assert.ok(!r.isError, JSON.stringify(r));
   assert.match(r.content[0].text, /Up next\n  nothing is waiting to start/);
@@ -122,7 +122,7 @@ test('a tool outside the profile is refused with code 2; nothing is written', as
   const s = tmp();
   record(s, { kind: 'question', ev: 'create', by: 'checkin', data: { title: 'T', lane: 'gen', options: [{ key: 'a', text: 'A' }] } });
   const m = server(['--state', s, '--profile', 'checkin']); await m.init();
-  const r = await m.tool('meta_answer', { q: 'Q-1', text: 'a' });
+  const r = await m.tool('norn_answer', { q: 'Q-1', text: 'a' });
   assert.equal(r.isError, true); assert.equal(r.structuredContent.code, 2); assert.match(text(r), /not in profile checkin/);
   await m.close();
   assert.equal(loadState(s).items['Q-1'].state, 'open');
@@ -131,19 +131,19 @@ test('a tool outside the profile is refused with code 2; nothing is written', as
 test('controller writes: answer is the owner, via is stamped by the server (chat:<client>), a model-supplied via is invalid', async () => {
   const s = tmp();
   const m = server(['--state', s, '--profile', 'controller', '--client', 'codex']); await m.init();
-  const q = await m.tool('meta_question_add', { lane: 'gen', title: 'Carve or fill?', body: 'b', options: [{ key: 'a', text: 'carve', cost: '1 round' }, { key: 'b', text: 'fill' }], recommend: { key: 'a', why: 'relief' } });
+  const q = await m.tool('norn_question_add', { lane: 'gen', title: 'Carve or fill?', body: 'b', options: [{ key: 'a', text: 'carve', cost: '1 round' }, { key: 'b', text: 'fill' }], recommend: { key: 'a', why: 'relief' } });
   assert.ok(!q.isError, text(q)); assert.equal(q.structuredContent.id, 'Q-1');
-  const bad = await m.tool('meta_answer', { q: 'Q-1', text: 'a', via: 'dashboard' });
+  const bad = await m.tool('norn_answer', { q: 'Q-1', text: 'a', via: 'dashboard' });
   assert.equal(bad.isError, true); assert.equal(bad.structuredContent.code, 2);
-  const ans = await m.tool('meta_answer', { q: 'Q-1', text: 'carve it, owner words', choice: 'a' });
+  const ans = await m.tool('norn_answer', { q: 'Q-1', text: 'carve it, owner words', choice: 'a' });
   assert.ok(!ans.isError, text(ans));
-  const dir = await m.tool('meta_directive', { text: 'Keep it small.', scope: ['gen'] });
+  const dir = await m.tool('norn_directive', { text: 'Keep it small.', scope: ['gen'] });
   assert.equal(dir.structuredContent.id, 'DIR-1');
-  const dec = await m.tool('meta_decision_add', { lane: 'gen', question: 'Carve or fill?', choice: 'a', why: 'owner', answers: 'Q-1' });
+  const dec = await m.tool('norn_decision_add', { lane: 'gen', question: 'Carve or fill?', choice: 'a', why: 'owner', answers: 'Q-1' });
   assert.equal(dec.structuredContent.id, 'DEC-1');
-  const ap = await m.tool('meta_record_event', { id: 'Q-1', event: 'apply', fields: { refs: ['DEC-1'] } });
+  const ap = await m.tool('norn_record_event', { id: 'Q-1', event: 'apply', fields: { refs: ['DEC-1'] } });
   assert.ok(!ap.isError, text(ap));
-  const missing = await m.tool('meta_answer', { q: 'Q-9', text: 'x' });
+  const missing = await m.tool('norn_answer', { q: 'Q-9', text: 'x' });
   assert.equal(missing.isError, true); assert.equal(missing.structuredContent.code, 2); assert.match(text(missing), /Q-9 does not exist/);
   await m.close();
   const st = loadState(s), h = id => st.items[id].history;
@@ -156,50 +156,50 @@ test('controller writes: answer is the owner, via is stamped by the server (chat
 test('checkin writes as checkin; inbox lists needs-you items with a cursor; records filter', async () => {
   const s = tmp();
   const m = server(['--state', s, '--profile', 'checkin']); await m.init();
-  await m.tool('meta_question_add', { lane: 'gen', title: 'Q one', options: [{ key: 'a', text: 'A' }] });
-  const i1 = await m.tool('meta_inbox', {});
+  await m.tool('norn_question_add', { lane: 'gen', title: 'Q one', options: [{ key: 'a', text: 'A' }] });
+  const i1 = await m.tool('norn_inbox', {});
   assert.deepEqual(i1.structuredContent.items.map(i => i.id), ['Q-1']);
   const cur = i1.structuredContent.cursor;
   assert.equal(cur.seq, 1);
-  assert.deepEqual((await m.tool('meta_inbox', { since_seq: cur.seq })).structuredContent.items, []);
-  await m.tool('meta_question_add', { lane: 'gen', title: 'Q two', options: [{ key: 'a', text: 'A' }] });
-  assert.deepEqual((await m.tool('meta_inbox', { since_seq: cur.seq })).structuredContent.items.map(i => i.id), ['Q-2']);
-  const recs = await m.tool('meta_records', { kind: 'question', id: 'Q-2' });
+  assert.deepEqual((await m.tool('norn_inbox', { since_seq: cur.seq })).structuredContent.items, []);
+  await m.tool('norn_question_add', { lane: 'gen', title: 'Q two', options: [{ key: 'a', text: 'A' }] });
+  assert.deepEqual((await m.tool('norn_inbox', { since_seq: cur.seq })).structuredContent.items.map(i => i.id), ['Q-2']);
+  const recs = await m.tool('norn_records', { kind: 'question', id: 'Q-2' });
   assert.equal(recs.structuredContent.rows.length, 1); assert.equal(recs.structuredContent.rows[0].data.title, 'Q two');
-  const bad = await m.tool('meta_records', { limit: 500 });
+  const bad = await m.tool('norn_records', { limit: 500 });
   assert.equal(bad.isError, true); assert.equal(bad.structuredContent.code, 2);
   await m.close();
   assert.equal(loadState(s).items['Q-1'].history[0].by, 'checkin');
 });
 
-test('meta_run starts a fake run (via stamped on the run), meta_run_show reports it, meta_stop needs a run', async () => {
+test('norn_run starts a fake run (via stamped on the run), norn_run_show reports it, norn_stop needs a run', async () => {
   const s = path.join(tmp(), 'state'), wt = tmp(), brief = path.join(wt, 'brief.md');
   fs.writeFileSync(brief, 'mode: done\n');
   const m = server(['--state', s, '--profile', 'controller', '--client', 'codex']); await m.init();
-  const r = await m.tool('meta_run', { lane: 'demo', brief, executor: 'fake', worktree: wt, notes: path.join(wt, 'NOTES.md') });
+  const r = await m.tool('norn_run', { lane: 'demo', brief, executor: 'fake', worktree: wt, notes: path.join(wt, 'NOTES.md') });
   assert.ok(!r.isError, text(r));
   assert.equal(r.structuredContent.run, 'RUN-1'); assert.equal(r.structuredContent.executor, 'fake');
   let show;
-  for (let i = 0; i < 100; i++) { show = (await m.tool('meta_run_show', { run: 'RUN-1', notes_tail: 5 })).structuredContent; if (show.state !== 'running') break; await new Promise(res => setTimeout(res, 100)); }
+  for (let i = 0; i < 100; i++) { show = (await m.tool('norn_run_show', { run: 'RUN-1', notes_tail: 5 })).structuredContent; if (show.state !== 'running') break; await new Promise(res => setTimeout(res, 100)); }
   assert.equal(show.state, 'exited'); assert.equal(show.outcome, 'done'); assert.match(show.notes_tail, /## DONE/);
-  const bad = await m.tool('meta_run', { lane: 'demo', brief: path.join(wt, 'missing.md'), executor: 'fake', worktree: wt });
+  const bad = await m.tool('norn_run', { lane: 'demo', brief: path.join(wt, 'missing.md'), executor: 'fake', worktree: wt });
   assert.equal(bad.isError, true); assert.equal(bad.structuredContent.code, 2); assert.match(text(bad), /brief not found/);
-  const stop = await m.tool('meta_stop', { run: 'RUN-1', why: 'x' });
+  const stop = await m.tool('norn_stop', { run: 'RUN-1', why: 'x' });
   assert.equal(stop.isError, true);
   await m.close();
   assert.equal(loadState(s).items['RUN-1'].history[0].data.via, 'chat:codex');
 });
 
-test('worker profile: meta_run_show works, writes are refused', async () => {
+test('worker profile: norn_run_show works, writes are refused', async () => {
   const s = tmp();
   record(s, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'fake', lane: 'demo' } });
   const m = server(['--state', s, '--profile', 'worker'], { META_RUN_ID: 'RUN-1' }); await m.init();
-  assert.equal((await m.tool('meta_run_show', { run: 'RUN-1' })).structuredContent.state, 'running');
-  assert.equal((await m.tool('meta_run', { lane: 'x', brief: 'b' })).structuredContent.code, 2);
+  assert.equal((await m.tool('norn_run_show', { run: 'RUN-1' })).structuredContent.state, 'running');
+  assert.equal((await m.tool('norn_run', { lane: 'x', brief: 'b' })).structuredContent.code, 2);
   await m.close();
 });
 
-test('prompts: controller + checkin packs; meta_boot returns the pack and a state digest; pause writes the PAUSED flag', async () => {
+test('prompts: controller + checkin packs; norn_boot returns the pack and a state digest; pause writes the PAUSED flag', async () => {
   const s = tmp();
   record(s, { kind: 'question', ev: 'create', by: 'checkin', data: { title: 'T', lane: 'gen' } });
   const m = server(['--state', s, '--profile', 'controller']); await m.init();
@@ -208,19 +208,19 @@ test('prompts: controller + checkin packs; meta_boot returns the pack and a stat
   const g = (await m.call('prompts/get', { name: 'controller' })).result;
   assert.equal(g.messages[0].role, 'user'); assert.match(g.messages[0].content.text, /NORN CONTROLLER/);
   assert.equal((await m.call('prompts/get', { name: 'nope' })).error.code, -32602);
-  const boot = await m.tool('meta_boot', { role: 'controller' });
+  const boot = await m.tool('norn_boot', { role: 'controller' });
   assert.match(text(boot), /NORN CONTROLLER/); assert.equal(boot.structuredContent.digest.needs_you, 1);
   assert.deepEqual(boot.structuredContent.digest.running, []);
   assert.equal(boot.structuredContent.digest.digest.questions.length, 1, 'NORN-WATCH S1: the resume digest beside needs_you');
   assert.match(text(boot), /Ended without a clean successor/);
-  await m.tool('meta_pause', { on: true });
+  await m.tool('norn_pause', { on: true });
   assert.ok(fs.existsSync(path.join(s, 'PAUSED')));
-  await m.tool('meta_pause', { on: false });
+  await m.tool('norn_pause', { on: false });
   assert.ok(!fs.existsSync(path.join(s, 'PAUSED')));
   await m.close();
   const c = server(['--state', s, '--profile', 'checkin']); await c.init();
   assert.deepEqual((await c.call('prompts/list')).result.prompts.map(p => p.name), ['checkin']);
-  assert.equal((await c.tool('meta_boot', { role: 'controller' })).structuredContent.code, 2);
+  assert.equal((await c.tool('norn_boot', { role: 'controller' })).structuredContent.code, 2);
   await c.close();
 });
 
@@ -233,43 +233,43 @@ test('settings get / dry-run / set through policy validation; ledger tail; check
   fs.writeFileSync(path.join(root, 'local', 'budget.json'), JSON.stringify(budget0, null, 2) + '\n');
   const env = { META_ROOT: root };
   const m = server(['--project', pf, '--profile', 'controller'], env); await m.init();
-  const g = await m.tool('meta_settings', { get: ['max_claude_workers'] });
+  const g = await m.tool('norn_settings', { get: ['max_claude_workers'] });
   assert.ok(!g.isError, text(g)); assert.equal(g.structuredContent.values.max_claude_workers, 2);
-  const dry = await m.tool('meta_settings', { set: { key: 'max_claude_workers', value: 3 }, dry_run: true });
+  const dry = await m.tool('norn_settings', { set: { key: 'max_claude_workers', value: 3 }, dry_run: true });
   assert.ok(!dry.isError, text(dry)); assert.deepEqual(dry.structuredContent.diff, [{ key: 'max_claude_workers', from: 2, to: 3 }]);
   assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'local', 'budget.json'))).max_claude_workers, 2);
-  const set = await m.tool('meta_settings', { set: { key: 'max_claude_workers', value: 3 } });
+  const set = await m.tool('norn_settings', { set: { key: 'max_claude_workers', value: 3 } });
   assert.ok(!set.isError, text(set));
   assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'local', 'budget.json'))).max_claude_workers, 3);
-  const bad = await m.tool('meta_settings', { set: { key: 'no_such_setting', value: 1 } });
+  const bad = await m.tool('norn_settings', { set: { key: 'no_such_setting', value: 1 } });
   assert.equal(bad.isError, true); assert.equal(bad.structuredContent.code, 2);
-  assert.deepEqual((await m.tool('meta_ledger', { tail: 2 })).structuredContent.lines, ['l2', 'l3']);
+  assert.deepEqual((await m.tool('norn_ledger', { tail: 2 })).structuredContent.lines, ['l2', 'l3']);
   await m.close();
   const c = server(['--project', pf, '--profile', 'checkin'], env); await c.init();
-  assert.ok(!(await c.tool('meta_settings', { get: ['max_claude_workers'] })).isError);
-  assert.equal((await c.tool('meta_settings', { set: { key: 'max_claude_workers', value: 1 } })).structuredContent.code, 2);
+  assert.ok(!(await c.tool('norn_settings', { get: ['max_claude_workers'] })).isError);
+  assert.equal((await c.tool('norn_settings', { set: { key: 'max_claude_workers', value: 1 } })).structuredContent.code, 2);
   await c.close();
 });
 
-test('meta_run_show ask (META-GTP-ASK): checkin / controller ask an ENDED run (norn ask, a cold fake helper here); a worker is refused', async () => {
+test('norn_run_show ask (META-GTP-ASK): checkin / controller ask an ENDED run (norn ask, a cold fake helper here); a worker is refused', async () => {
   const s = path.join(tmp(), 'state'), wt = tmp(), brief = path.join(wt, 'brief.md');
   fs.writeFileSync(brief, 'mode: done\n');
   const m = server(['--state', s, '--profile', 'checkin']); await m.init();
-  assert.ok(!(await m.tool('meta_run', { lane: 'demo', brief, executor: 'fake', worktree: wt, notes: path.join(wt, 'NOTES.md') })).isError);
+  assert.ok(!(await m.tool('norn_run', { lane: 'demo', brief, executor: 'fake', worktree: wt, notes: path.join(wt, 'NOTES.md') })).isError);
   for (let i = 0; i < 100 && loadState(s).items['RUN-1'].state === 'running'; i++) await new Promise(res => setTimeout(res, 100));
-  const r = await m.tool('meta_run_show', { run: 'RUN-1', ask: 'why the X table?', executor: 'fake', max_s: 15 });
+  const r = await m.tool('norn_run_show', { run: 'RUN-1', ask: 'why the X table?', executor: 'fake', max_s: 15 });
   assert.ok(!r.isError, text(r));
   assert.equal(r.structuredContent.code, 0); assert.match(r.structuredContent.ask_run, /^RUN-\d+$/); assert.equal(r.structuredContent.mode, 'cold');
   assert.match(text(r), /## DONE/);
   await m.close();
   const w = server(['--state', s, '--profile', 'worker'], { META_RUN_ID: 'RUN-1' }); await w.init();
-  const no = await w.tool('meta_run_show', { run: 'RUN-1', ask: 'x' });
+  const no = await w.tool('norn_run_show', { run: 'RUN-1', ask: 'x' });
   assert.equal(no.isError, true); assert.equal(no.structuredContent.code, 2);
   await w.close();
 });
 
 // ---------- META-ADOPT A4 (SPEC meta-adopt sec. 5 MCP): the machine-scoped setup profile ----------
-const SETUP_TOOLS = ['meta_adopt_apply', 'meta_adopt_decide', 'meta_adopt_scan', 'meta_adopt_show', 'meta_adopt_start', 'meta_setup_status'];
+const SETUP_TOOLS = ['norn_adopt_apply', 'norn_adopt_decide', 'norn_adopt_scan', 'norn_adopt_show', 'norn_adopt_start', 'norn_setup_status'];
 const GIT_DIR = path.dirname(spawnSync(process.platform === 'win32' ? 'where' : 'which', ['git'], { encoding: 'utf8' }).stdout.split(/\r?\n/)[0]);
 /** a temp machine (META_ROOT, HOME, a fake claude on PATH; `norn setup` run when setup) + a node repo with a CI test line and a ROADMAP */
 function machine({ setup = true } = {}) {
@@ -294,14 +294,14 @@ test('setup profile (META-ADOPT A4): machine-scoped (no --project), six tools + 
   const mc = machine({ setup: false });
   const m = server(['--profile', 'setup'], mc.env);
   const init = await m.init();
-  assert.match(init.result.instructions, /meta_setup_status/);
+  assert.match(init.result.instructions, /norn_setup_status/);
   const tools = (await m.call('tools/list')).result.tools;
   assert.deepEqual(tools.map(t => t.name).sort(), SETUP_TOOLS);
   for (const t of tools) assert.ok(!t.description.includes('\n') && t.description.length <= 160, t.name);
   assert.deepEqual((await m.call('prompts/list')).result.prompts.map(p => p.name), ['adopt']);
   const pr = (await m.call('prompts/get', { name: 'adopt' })).result.messages[0].content.text;
-  assert.match(pr, /never decide/i); assert.match(pr, /profile/i); assert.match(pr, /meta_adopt_scan/);
-  const st = await m.tool('meta_setup_status');
+  assert.match(pr, /never decide/i); assert.match(pr, /profile/i); assert.match(pr, /norn_adopt_scan/);
+  const st = await m.tool('norn_setup_status');
   assert.ok(!st.isError, text(st)); assert.equal(st.structuredContent.machine, false); assert.match(text(st), /norn setup/);
   await m.close();
   const go = extra => spawnSync(process.execPath, [META, 'mcp', '--profile', 'setup'], { env: cleanEnv({ ...mc.env, ...extra }), input: '', encoding: 'utf8' });
@@ -316,38 +316,38 @@ test('setup profile (META-ADOPT A4): machine-scoped (no --project), six tools + 
 test('setup walk over MCP: status -> scan (writes nothing) -> start (registers, facts-only) -> show -> decide / apply need owner_words', async () => {
   const mc = machine();
   const m = server(['--profile', 'setup', '--client', 'test'], mc.env); await m.init();
-  assert.match(text(await m.tool('meta_setup_status')), /no project yet.*meta_adopt_scan/i);
-  const sc = await m.tool('meta_adopt_scan', { root: mc.repo });
+  assert.match(text(await m.tool('norn_setup_status')), /no project yet.*norn_adopt_scan/i);
+  const sc = await m.tool('norn_adopt_scan', { root: mc.repo });
   assert.ok(!sc.isError, text(sc)); assert.match(text(sc), /npm test/); assert.equal(sc.structuredContent.facts.commands[0].cmd, 'npm test');
   assert.equal(mc.projects().length, 0, 'the scan writes nothing');
-  const ask = await m.tool('meta_adopt_start', { root: mc.repo });   // no read choice yet: register, then ask (the cost line)
+  const ask = await m.tool('norn_adopt_start', { root: mc.repo });   // no read choice yet: register, then ask (the cost line)
   assert.ok(!ask.isError, text(ask)); assert.match(text(ask), /read/i); assert.equal(ask.structuredContent.choose, true);
   assert.match(text(ask), /wrote .*project\.json/); assert.equal(mc.projects().length, 1);
   const name = mc.projects()[0].name;
-  const s1 = await m.tool('meta_adopt_start', { root: mc.repo, read: false, answers: { never: 'push to main' } });
+  const s1 = await m.tool('norn_adopt_start', { root: mc.repo, read: false, answers: { never: 'push to main' } });
   assert.ok(!s1.isError, text(s1)); assert.equal(s1.structuredContent.project, name); assert.match(s1.structuredContent.id, /^ADP-\d+$/);
   assert.equal(mc.projects().length, 1, 'a registered root is reused');
-  const all = await m.tool('meta_adopt_show', { project: name });
+  const all = await m.tool('norn_adopt_show', { project: name });
   assert.match(text(all), /roadmap\s+to review/); assert.ok(all.structuredContent.parts.some(p => p.id === 'profile' && p.pick));
-  const rm = await m.tool('meta_adopt_show', { project: name, part: 'roadmap' });
+  const rm = await m.tool('norn_adopt_show', { project: name, part: 'roadmap' });
   assert.match(text(rm), /r1 .*Export to CSV.*ROADMAP\.md:4/); assert.doesNotMatch(text(rm), /Caps profile/);
-  const no = await m.tool('meta_adopt_decide', { project: name, part: 'roadmap', verdict: 'approve' });
+  const no = await m.tool('norn_adopt_decide', { project: name, part: 'roadmap', verdict: 'approve' });
   assert.equal(no.isError, true); assert.match(text(no), /owner_words/);
   const pf = JSON.parse(fs.readFileSync(mc.config(), 'utf8'));
   const state = () => loadProject(mc.config(), { meta: mc.root }).state;
   const decides = () => readEvents(recordsFile(state(), 'proposal')).filter(e => e.id === s1.structuredContent.id && e.ev === 'decide');
   assert.equal(decides().length, 0);
   for (const [part, verdict, extra] of [['roadmap', 'approve', { off: ['r2'] }], ['profile', 'approve', { pick: 'try-it' }], ['commands', 'approve', {}], ['rules', 'skip', {}], ['instructions', 'skip', {}], ['first', 'skip', {}]]) {
-    const r = await m.tool('meta_adopt_decide', { project: name, part, verdict, ...extra, owner_words: `yes, ${verdict} the ${part}` });
+    const r = await m.tool('norn_adopt_decide', { project: name, part, verdict, ...extra, owner_words: `yes, ${verdict} the ${part}` });
     assert.ok(!r.isError, part + ': ' + text(r));
   }
   const dec = decides();
   assert.ok(dec.every(h => h.by === 'owner')); assert.equal(dec[0].data.owner_words, 'yes, approve the roadmap'); assert.equal(dec[0].data.via, 'chat:test');
-  assert.equal((await m.tool('meta_adopt_apply', { project: name })).isError, true);
-  const ap = await m.tool('meta_adopt_apply', { project: name, owner_words: 'apply it' });
+  assert.equal((await m.tool('norn_adopt_apply', { project: name })).isError, true);
+  const ap = await m.tool('norn_adopt_apply', { project: name, owner_words: 'apply it' });
   assert.ok(!ap.isError, text(ap)); assert.match(text(ap), /roadmap: 1 item/); assert.match(text(ap), /applied/);
   assert.equal(JSON.parse(fs.readFileSync(mc.config(), 'utf8')).merge.gate.cmd, 'npm test'); assert.equal(pf.merge, undefined);
-  const fin = await m.tool('meta_setup_status');
+  const fin = await m.tool('norn_setup_status');
   assert.equal(fin.structuredContent.projects[0].adopt.state, 'applied');
   await m.close();
   assert.equal(spawnSync('git', ['-C', mc.repo, 'status', '--porcelain'], { encoding: 'utf8' }).stdout, '', 'the repo is never written');
@@ -358,26 +358,26 @@ test('setup elicitation (spec 2025-06-18): the server asks the HUMAN for the pro
   let answer = { action: 'cancel' };   // a headless client (claude -p, live 11-12) declares elicitation and cancels every dialog
   const m = server(['--profile', 'setup'], mc.env, { onRequest: q => { asked.push(q); return q.method === 'elicitation/create' ? answer : { error: { code: -32601, message: 'no' } }; } });
   await m.init({ elicitation: {} });
-  const s1 = await m.tool('meta_adopt_start', { root: mc.repo, read: false });
+  const s1 = await m.tool('norn_adopt_start', { root: mc.repo, read: false });
   assert.ok(!s1.isError, text(s1));
   const name = s1.structuredContent.project;
-  const c = await m.tool('meta_adopt_decide', { project: name, part: 'profile', verdict: 'approve', pick: 'try-it', owner_words: 'I pick try-it' });
+  const c = await m.tool('norn_adopt_decide', { project: name, part: 'profile', verdict: 'approve', pick: 'try-it', owner_words: 'I pick try-it' });
   assert.ok(!c.isError, text(c)); assert.equal(c.structuredContent.decided, false);
   assert.match(text(c), /nothing was decided/); assert.match(text(c), /norn adopt approve profile --pick <id> --project/, 'no dead end: the terminal or the dashboard');
   answer = { action: 'accept', content: { profile: 'solo' } };
-  const p = await m.tool('meta_adopt_decide', { project: name, part: 'profile', verdict: 'approve', pick: 'heavy' });   // the model's pick is not the human's
+  const p = await m.tool('norn_adopt_decide', { project: name, part: 'profile', verdict: 'approve', pick: 'heavy' });   // the model's pick is not the human's
   assert.ok(!p.isError, text(p));
   assert.equal(asked.length, 2); assert.deepEqual(asked[1].params.requestedSchema.properties.profile.enum, ['try-it', 'solo', 'heavy']);
   assert.match(text(p), /solo/);
   for (const part of ['commands', 'rules', 'instructions', 'roadmap', 'first'])
-    assert.ok(!(await m.tool('meta_adopt_decide', { project: name, part, verdict: 'skip', owner_words: 'skip it' })).isError, part);
+    assert.ok(!(await m.tool('norn_adopt_decide', { project: name, part, verdict: 'skip', owner_words: 'skip it' })).isError, part);
   answer = { action: 'decline' };
-  const d = await m.tool('meta_adopt_apply', { project: name, owner_words: 'the model says apply' });
+  const d = await m.tool('norn_adopt_apply', { project: name, owner_words: 'the model says apply' });
   assert.ok(!d.isError, text(d)); assert.match(text(d), /declined.*nothing/i); assert.equal(asked.at(-1).params.requestedSchema.properties.apply.type, 'boolean');
-  assert.equal((await m.tool('meta_adopt_show', { project: name })).structuredContent.state, 'open');
+  assert.equal((await m.tool('norn_adopt_show', { project: name })).structuredContent.state, 'open');
   answer = { action: 'accept', content: { apply: true } };
-  const a = await m.tool('meta_adopt_apply', { project: name });
+  const a = await m.tool('norn_adopt_apply', { project: name });
   assert.ok(!a.isError, text(a)); assert.match(text(a), /caps profile solo/);
-  assert.equal((await m.tool('meta_adopt_show', { project: name })).structuredContent.state, 'applied');
+  assert.equal((await m.tool('norn_adopt_show', { project: name })).structuredContent.state, 'applied');
   await m.close();
 });

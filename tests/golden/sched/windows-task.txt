@@ -1,7 +1,7 @@
-=== C:/meta-controller/local/meta-controller-tick.task.xml
+=== C:/norn/local/norn-tick.task.xml
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo><Description>meta-controller tick: norn status + one check-in per project, every 15 min</Description></RegistrationInfo>
+  <RegistrationInfo><Description>Norn tick: norn status + one check-in per project, every 15 min</Description></RegistrationInfo>
   <Triggers>
     <TimeTrigger>
       <Repetition><Interval>PT15M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition>
@@ -21,10 +21,10 @@
     <Enabled>true</Enabled>
   </Settings>
   <Actions Context="Author">
-    <Exec><Command>powershell.exe</Command><Arguments>-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -Command &quot;&amp; 'C:/Program Files/nodejs/node.exe' 'C:/meta-controller/engine/bin/norn.mjs' 'tick' '--reason' 'schedule'&quot;</Arguments><WorkingDirectory>C:/meta-controller</WorkingDirectory></Exec>
+    <Exec><Command>powershell.exe</Command><Arguments>-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -Command &quot;&amp; 'C:/Program Files/nodejs/node.exe' 'C:/norn/engine/bin/norn.mjs' 'tick' '--reason' 'schedule'&quot;</Arguments><WorkingDirectory>C:/norn</WorkingDirectory></Exec>
   </Actions>
 </Task>
-$ schtasks /Create /TN meta-controller-tick /XML C:/meta-controller/local/meta-controller-tick.task.xml /F
+$ schtasks /Create /TN norn-tick /XML C:/norn/local/norn-tick.task.xml /F
 --- remove
-$ schtasks /Delete /TN meta-controller-tick /F
-$ rm C:/meta-controller/local/meta-controller-tick.task.xml
+$ schtasks /Delete /TN norn-tick /F
+$ rm C:/norn/local/norn-tick.task.xml

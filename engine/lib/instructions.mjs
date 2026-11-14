@@ -1,6 +1,6 @@
 // META-INSTRUCTIONS R1: the ONE home of "what steers the agents" - every file a session of a project loads (per harness), its load
 // class, its size in ~tokens, its last change, generated or hand-written, what it cost today, and read-only lint hints.
-// Front ends: the dashboard's Instructions tab (/api/instructions), `norn instructions [--json]`, the MCP read (meta_status view
+// Front ends: the dashboard's Instructions tab (/api/instructions), `norn instructions [--json]`, the MCP read (norn_status view
 // instructions). Which files a harness loads by itself is DATA in the harness adapters (harness/<family>.mjs `instructions`).
 // Writes nothing. Node built-ins only.
 //

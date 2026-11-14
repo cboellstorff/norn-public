@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { record, loadState, readEvents, recordsFile, RecordError } from '../engine/lib/records.mjs';
 import { loadRoadmap } from '../engine/lib/roadmap.mjs';
 import { loadProject } from '../engine/lib/config.mjs';
-import { scan, importPlan, AdoptError, draftFacts, proposalOf, adoptStart, adoptDecide, adoptApply } from '../engine/lib/adopt.mjs';
+import { scan, importPlan, AdoptError, draftFacts, proposalOf, adoptStart, adoptDecide, adoptApply, renderProposal, laneNameOf } from '../engine/lib/adopt.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -164,6 +164,17 @@ test('decide keeps its verdict while the part sha is unchanged; a changed part r
   assert.equal(p.id, 'ADP-1'); assert.equal(st('rules'), 'approved'); assert.equal(st('profile'), 'approved'); assert.equal(st('roadmap'), 'to review');
 });
 
+// SHIP-READY R1: a stranger's `adopt show` marked all three first-task lines [x] under "(pick one)" before any pick - read as "all picked"
+test('adopt show: a pick part marks no line [x] until one is picked, then only that one', () => {
+  const s = sample();
+  adoptStart(s.state, { project: s.load(), by: 'owner' });
+  const marks = () => renderProposal(proposalOf(s.state), { part: 'first' }).filter(l => /^ {4}f\d/.test(l)).map(l => l.match(/\[(.)\]/)[1]);
+  assert.equal(marks().length, 3);
+  assert.deepEqual(marks().filter(m => m === 'x'), [], renderProposal(proposalOf(s.state), { part: 'first' }).join('\n'));
+  adoptDecide(s.state, { part: 'first', verdict: 'approve', pick: 'f2', by: 'owner' });
+  const m = marks(); assert.equal(m[1], 'x'); assert.deepEqual(m.filter(x => x === 'x').length, 1);
+});
+
 // ---------- apply ----------
 test('apply: roadmap -> RM records (migration, legacy_by), RULES.md + rules_read_whole, merge.gate, profile DEC, first-task lane; the repo is untouched; a second adoption adds 0', async () => {
   const s = sample(), head = git(s.root, 'rev-parse', 'HEAD');
@@ -203,4 +214,10 @@ test('apply: roadmap -> RM records (migration, legacy_by), RULES.md + rules_read
   assert.equal(items(s.state).length, 4, '0 new roadmap records');
   assert.equal(fs.readFileSync(path.join(s.pdir, 'rules', 'RULES.md'), 'utf8'), rules, 'RULES.md is the user\'s file now');
 
+});
+
+test('the first-task lane name is cut at a word boundary (<= 40 chars); one over-long word is cut as it is (SHIP-READY W7)', () => {
+  assert.equal(laneNameOf('Write an AGENTS.md for this repository, how to build and test'), 'write-an-agents-md-for-this-repository');
+  assert.equal(laneNameOf('x'.repeat(50)), 'x'.repeat(40));
+  assert.equal(laneNameOf('Short task'), 'short-task'); assert.equal(laneNameOf('!!'), 'first-task');
 });

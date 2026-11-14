@@ -8,7 +8,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { startRun } from '../engine/lib/runs.mjs';
 import { loadState } from '../engine/lib/records.mjs';
-import { holdJob, reapJob, spawnOutside, jobguardExe, winQuote } from '../engine/lib/jobguard.mjs';
+import { jobguardExe, jobguardExeAsync, winQuote } from '../engine/lib/jobguard.mjs';
 import { settled } from './helpers/settled.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
@@ -92,6 +92,23 @@ process.exit(0);`;
   assert.equal(o.outside.breakaway, true);
   assert.equal(alive(o.outside.pid), true, 'the breakaway process lives on');
   process.kill(o.outside.pid);
+});
+
+// CI-RED-D5B3788 (agnostic delegate --mode, Windows): holdJob compiled the helper with a blocking spawnSync (csc, cap 60 s) right after
+// the supervisor's first beat - in a fresh TEMP (every ci-suite file's first run) its heartbeat stopped for the whole compile and a
+// 3 s staleMs sweep marked the live parent lost. The compile is async: the event loop (the beat timer) runs through it.
+test('jobguard: the first-use csc compile does not block the event loop (the heartbeat beats through it)', { skip: process.platform !== 'win32' && 'Windows only' }, async () => {
+  const dir = mkTmp('meta-jgc-');
+  let ticks = 0;
+  const iv = setInterval(() => { ticks++; }, 5);
+  const p = jobguardExeAsync({ dir });
+  assert.ok(p instanceof Promise, 'async: returns before the compile ends');
+  const exe = await p;
+  clearInterval(iv);
+  assert.ok(exe && fs.existsSync(exe), 'compiled into the given dir');
+  assert.ok(ticks >= 3, `the timer ran ${ticks} time(s) during the compile`);
+  assert.equal(await jobguardExeAsync({ dir }), exe, 'cached: the same exe, no second compile');
+  assert.equal(jobguardExe({ dir }), exe, 'the sync lookup finds the same cache');
 });
 
 test('K3 round 2: a run the supervisor starts itself (auto-resume) breaks away from the supervisor\'s own job', { skip: process.platform !== 'win32' && 'job objects: Windows only' }, async () => {

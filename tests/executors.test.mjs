@@ -159,6 +159,7 @@ test('delegate-ready: executorsFor(class) lists the allowed executors; a run rec
   const r = startRun({ state: d.state, locksDir: d.locks, executor: 'fake', lane: 'kid', worktree: d.wt, notes: d.notes, hbMs: 150, staleMs: 3000,
     policy: { auto_resume_max: 0 }, budget: {}, tick: null, parent: 'RUN-7', brief: d.brief('mode: done\n') });
   assert.equal(d.item(r.run).data.parent, 'RUN-7');
-  // the property is the start record; the detached run ends on its own in this sandbox. No wait for its whole lifecycle: on a
-  // loaded runner (CI 43182791620, Windows) its supervisor took 11 s to boot and 21 s for its end tail - past any fixed deadline.
+  // the run this test started settles here (progress, no fixed deadline): left to the exit reap, its supervisor outlived the file on
+  // Linux (CI 43540726632 LEAK RED, RUN-1)
+  await d.ended(r.run);
 });

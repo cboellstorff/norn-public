@@ -47,7 +47,19 @@ test('Usage renderer: summary, check-in baseline, by lane / stage / executor / d
     const html = renderTab('usage', await loadTab('usage', 'kestrel', get), { project: 'kestrel' });
     for (const id of ['id="panel-usage"', 'id="usage-summary"', 'id="usage-checkins"', 'id="usage-lane"', 'id="usage-stage"', 'id="usage-executor"', 'id="usage-day"'])
       assert.ok(html.includes(id), id);
-    for (const s of ['since the weekly reset', 'rolling 7 days', 'seabed', 'codex-sol', '% of week', 'tokens / tick', 'ticks / day', 'cacheR_per_pct', '1.4M cache read', '10k output']) assert.ok(html.includes(s), s);
+    for (const s of ['since the weekly reset', 'rolling 7 days', 'seabed', 'codex-sol', '% of week', 'per check-in, on average', 'check-ins per day', '1.4M cache read', '10k output']) assert.ok(html.includes(s), s);
+    // SHIP-READY R1: the words for someone who never read the records - units and spans spelled out, no internal shorthand
+    for (const s of ['of your weekly Claude limit', 'cache-read tokens = 1 % of your week', 'k = thousand, M = million tokens', 'cache read (stored context re-read on every turn']) assert.ok(html.includes(s), s);
+    for (const s of ['heartbeat', 'roll-up', 'grok', 'tok<', 'own-account', 'transcripts root', 'tokens / tick', 'ticks / day', '~plan', 'cache create', 'cacheR_per_pct']) assert.ok(!html.includes(s), 'jargon left: ' + s);
+    assert.doesNotMatch(html, /\b1 runs\b/, 'one run is "1 run"');
+    // NAME-W2 item 5: no calibration = the headline says what to do; no '- of week', no 'unknown'
+    const raw = await loadTab('usage', 'kestrel', get), part = raw.parts[0];
+    const nc = { ...raw, parts: [{ ...part, account: null, headline: { ...(part.headline || {}), pct: null }, calib: { ...part.calib, cacheR_per_pct: null },
+      totals: { ...part.totals, claude: { ...part.totals.claude, pct: null, runs: 1 } }, secondary: { rolling: { days: 7, pct: null, runs: 1, cache_read: 0 }, last24h: { pct: null, runs: 1, cache_read: 0 } }, week: part.week && { ...part.week, totals: { ...part.week.totals, pct: null } } }] };
+    const u = renderTab('usage', nc, { project: 'kestrel' });
+    assert.ok(u.includes('Usage: not known yet - set your weekly limit in Settings > Usage calibration'), 'the uncalibrated headline');
+    assert.ok(u.includes('% of week not known'));
+    for (const bad of ['>unknown<', '- of week', '- of your weekly', '1 runs']) assert.ok(!u.includes(bad), 'left: ' + bad);
     const all = renderTab('usage', await loadTab('usage', 'all', get), { project: 'all' });
     assert.ok(all.includes('id="usage-kestrel"') && all.includes('id="usage-other"'));
   } finally { await f.done(); }

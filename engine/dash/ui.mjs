@@ -219,7 +219,7 @@ function overview(d, ctx) {
   const trip = fin(used) && fin(stop) && fin(u.rate) && u.rate > 0 && used < stop
     ? (() => { const h = (stop - used) / u.rate; return `in ~${h.toFixed(1)} h · <b>${esc(fmtLocal(new Date(ctx.now + h * 3600000).toISOString()))}</b>`; })()
     : fin(used) && fin(stop) && used >= stop ? '<b>tripped</b>' : '<span class="mute">- (no trailing rate)</span>';
-  const provLine = (o.burn.executors || []).length ? `<div class="small mute" id="exec-usage" style="margin-top:8px">Own-account executors (7 days, not in burn): ${o.burn.executors.map(x => `<b>${esc(x.name)}</b> ${x.runs} runs ${mTok(x.tokens)} tok${x.cost_usd ? ` $${x.cost_usd.toFixed(2)}` : ''}`).join(' · ')}</div>` : '';
+  const provLine = (o.burn.executors || []).length ? `<div class="small mute" id="exec-usage" style="margin-top:8px">Own-account executors (7 days, not in burn): ${o.burn.executors.map(x => `<b>${esc(x.name)}</b> ${plural(x.runs, 'run')} ${mTok(x.tokens)} tok${x.cost_usd ? ` $${x.cost_usd.toFixed(2)}` : ''}`).join(' · ')}</div>` : '';
   const burners = (o.burn.top || []).map(t => `<div class="item"><span class="mono" style="width:76px">${fin(t.pct_per_h) ? t.pct_per_h.toFixed(2) + ' %/h' : mTok(t.burn30)}</span><span class="small"><span class="id">${esc(t.id)}</span> ${projTag(ctx, t.project)}${esc(t.lane ?? '')}</span></div>`).join('')
     || '<div class="small mute">no cache reads in the last 30 min</div>';
   const recs = d.records ? [...d.records.decisions, ...d.records.directives].sort((a, b) => String(b.updated).localeCompare(String(a.updated))).slice(0, 5)
@@ -748,9 +748,12 @@ export function usageGroup(rows, keys) {
   return [...m.values()].sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1) || b.codex - a.codex || String(keys.map(x => a[x])).localeCompare(String(keys.map(x => b[x]))));
 }
 const pct2 = n => (fin(n) ? `${n < 0.1 && n > 0 ? n.toFixed(3) : n.toFixed(2)} %` : '-');
+// NAME-W2 item 5: '1 run' / '2 runs'; a share of the week that is not known says so (never '- of week')
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+const ofWeek = n => (fin(n) ? `${pct2(n)} of week` : '% of week not known');
 const fmtS = s => (fin(s) ? (s < 90 ? `${Math.round(s)} s` : `${(s / 60).toFixed(1)} min`) : '-');
 function usageTable(id, title, note, rows, keys, maxPct) {
-  const head = keys.map(k => `<th>${esc(k)}</th>`).join('');
+  const head = keys.map(k => `<th>${esc(k === 'executor' ? 'agent CLI' : k)}</th>`).join('');
   const body = rows.map(g => `<tr>${keys.map((k, i) => `<td>${i ? esc(g[k]) : `<b>${esc(g[k])}</b>`}</td>`).join('')}
     <td class="mono">${g.runs}${g.running ? ' ' + chip('running', g.running + ' live') : ''}</td>
     <td class="small">${g.executors.map(e => chip(exClass(e), e)).join(' ')}</td>
@@ -758,45 +761,45 @@ function usageTable(id, title, note, rows, keys, maxPct) {
     <td style="width:16%">${fin(g.pct) ? `<span class="mono">${pct2(g.pct)}</span>${bar(g.pct, maxPct)}` : dash}</td>
     <td class="mono">${g.codex ? mTok(g.codex) : dash}</td><td class="mono">${g.provider ? mTok(g.provider) : dash}</td></tr>`).join('')
     || `<tr><td colspan="${keys.length + 9}" class="mute">No runs in the window.</td></tr>`;
-  return `<div class="tablecard" id="${esc(id)}"><h3>${esc(title)} <span class="mute small">${esc(note)}</span></h3><table><thead><tr>${head}<th>runs</th><th>executors</th>
-    <th>cache read</th><th>cache create</th><th>input</th><th>output</th><th>% of week (Claude)</th><th>Codex tok</th><th>own-account tok</th></tr></thead><tbody>${body}</tbody></table></div>`;
+  return `<div class="tablecard" id="${esc(id)}"><h3>${esc(title)} <span class="mute small">${esc(note)}</span></h3><table><thead><tr>${head}<th>runs</th><th>agent CLIs</th>
+    <th>cache read</th><th>cache write</th><th>input</th><th>output</th><th>% of weekly Claude limit</th><th>Codex tokens</th><th>other-provider tokens</th></tr></thead><tbody>${body}</tbody></table></div>`;
 }
 const fmtUtc = iso => { const t = Date.parse(iso ?? ''); if (!Number.isFinite(t)) return '-';
   return `${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(t).getUTCDay()]} ${new Date(t).toISOString().slice(0, 16).replace('T', ' ')}Z`; };
 function usagePart(p, ctx) {
   const t = p.totals, c = p.checkins, k = p.calib, rows = p.rows || [], sec = p.secondary;
-  const head = p.window === 'week' ? `since the weekly reset ${fmtUtc(p.since)}` : `runs started in the last ${p.days} days (no weekly reset in the budget)`;
-  const secRows = sec ? `<span class="mute small">rolling ${sec.rolling.days} days</span><div class="mono" id="usage-rolling">${pct2(sec.rolling.pct)} · ${sec.rolling.runs} runs · ${mTok(sec.rolling.cache_read)} cache read</div>
-     <span class="mute small">last 24 h</span><div class="mono" id="usage-24h">${pct2(sec.last24h.pct)} · ${sec.last24h.runs} runs · ${mTok(sec.last24h.cache_read)} cache read</div>` : '';
+  const head = p.window === 'week' ? `since the weekly reset ${fmtUtc(p.since)}` : `runs started in the last ${p.days} days (your weekly reset time is not set in Settings, so the window rolls)`;
+  const secRows = sec ? `<span class="mute small">rolling ${sec.rolling.days} days</span><div class="mono" id="usage-rolling">${ofWeek(sec.rolling.pct)} · ${plural(sec.rolling.runs, 'run')} · ${mTok(sec.rolling.cache_read)} cache read</div>
+     <span class="mute small">last 24 h</span><div class="mono" id="usage-24h">${ofWeek(sec.last24h.pct)} · ${plural(sec.last24h.runs, 'run')} · ${mTok(sec.last24h.cache_read)} cache read</div>` : '';
   const maxPct = Math.max(0.01, ...usageGroup(rows, ['lane']).map(g => g.pct ?? 0));
   // META-OPS-R3: the headline is the account's number (every Claude session since the reset) when the cache has it; lanes stay runs
   const A = p.account, hp = p.headline ? p.headline.pct : t.claude.pct, rf = ctx.refresh || {}, out = A ? A.outside : null;
-  const acctRows = A ? `<span class="mute small">account, since the weekly reset</span><div class="mono"><b>${pct2(A.pct)}</b> · ${int(A.messages)} messages · ${mTok(A.cache_read)} cache read · <span class="mute">cache age ${fmtS(A.age_s)} (scanned ${esc(fmtUtc(A.at))})${rf.running ? ', refreshing' : ''}</span></div>
-     <span class="mute small">norn runs</span><div class="mono">${pct2(t.claude.pct)} · ${t.claude.runs} runs <span class="small mute">(the lane rows below)</span></div>
-     <span class="mute small">outside runs (interactive)</span><div class="mono"><b>${pct2(out.pct)}</b> · ${mTok(out.cache_read)} cache read${out.clamped ? ` <span class="small">(runs exceed the account: raw delta ${out.raw_pct.toFixed(2)} %)</span>` : ''} <span class="small mute">controller / owner sessions not launched by norn run</span></div>`
-    : `<span class="mute small">account: n/a</span><div class="small mute">${rf.running ? 'account scan running (the first one reads the whole transcripts root: minutes)' : 'no account-usage cache for this provider'} - the headline is the norn runs only</div>`;
+  const acctRows = A ? `<span class="mute small">account, since the weekly reset</span><div class="mono"><b>${ofWeek(A.pct)}</b> <span class="small mute">every Claude session on your account</span> · ${int(A.messages)} messages · ${mTok(A.cache_read)} cache read · <span class="mute">cache age ${fmtS(A.age_s)}: counted ${esc(fmtUtc(A.at))}${rf.running ? ', refreshing' : ''}</span></div>
+     <span class="mute small">runs Norn started</span><div class="mono">${ofWeek(t.claude.pct)} · ${plural(t.claude.runs, 'run')} <span class="small mute">(the lane rows below)</span></div>
+     <span class="mute small">outside runs (interactive)</span><div class="mono"><b>${ofWeek(out.pct)}</b> · ${mTok(out.cache_read)} cache read${out.clamped ? ` <span class="small">(Norn's runs count more than the account shows, so this reads 0; the difference is ${out.raw_pct.toFixed(2)} %)</span>` : ''} <span class="small mute">your own Claude sessions, not started by Norn</span></div>`
+    : `<span class="mute small">account: n/a</span><div class="small mute">${rf.running ? 'counting your whole account (the first count reads every Claude session file: minutes)' : 'this provider has no account-wide count'} - until then the number above counts only the runs Norn started</div>`;
   const pt = c.per_tick, l24 = c.last24h;
   const ck = c.ticks ? `<div class="kv">
-     <span class="mute small">last 24 h</span><div><span class="big">${l24.ticks}</span> ticks · ${mTok(l24.cache_read)} cache read · ${mTok(l24.cache_create)} cache create · <b>${pct2(l24.pct)}</b> of week</div>
-     <span class="mute small">ticks / day</span><div><b>${c.ticks_per_day.toFixed(1)}</b> <span class="mute">(${c.ticks} in ${(c.days ?? p.days).toFixed(1)} days)</span> · mean ${fmtS(c.mean_s)} a tick</div>
-     <span class="mute small">tokens / tick</span><div class="mono">${mTok(pt.cache_read)} cache read · ${mTok(pt.cache_create)} cache create · ${int(pt.input)} input · ${mTok(pt.output)} output · ${pct2(pt.pct)}</div>
-     <span class="mute small">% of week / day</span><div><b>${pct2(c.pct_per_day)}</b> <span class="small mute">the baseline the event-driven check-ins are judged against</span></div></div>`
-    : '<div class="small mute">No check-in with a measured usage in the window.</div>';
+     <span class="mute small">last 24 h</span><div><span class="big">${l24.ticks}</span> check-ins · ${mTok(l24.cache_read)} cache read · ${mTok(l24.cache_create)} cache write · <b>${ofWeek(l24.pct)}</b></div>
+     <span class="mute small">check-ins per day</span><div><b>${c.ticks_per_day.toFixed(1)}</b> <span class="mute">(${c.ticks} in ${(c.days ?? p.days).toFixed(1)} days)</span> · ${fmtS(c.mean_s)} each on average</div>
+     <span class="mute small">per check-in, on average</span><div class="mono">${mTok(pt.cache_read)} cache read · ${mTok(pt.cache_create)} cache write · ${int(pt.input)} input · ${mTok(pt.output)} output · ${ofWeek(pt.pct)}</div>
+     <span class="mute small">% of week per day</span><div><b>${pct2(c.pct_per_day)}</b> <span class="small mute">what the check-ins cost you each day</span></div></div>`
+    : '<div class="small mute">No check-in with measured usage in this window.</div>';
   return `<div id="usage-${esc(p.project)}">${ctx.project === 'all' ? `<h2>${esc(p.project)}</h2>` : ''}
-   <div class="grid2"><section class="card" id="usage-summary"><h2>Usage <b style="white-space:nowrap">${pct2(hp)}</b> of week <span class="mute small">Claude ${A ? 'account' : 'norn runs'}, ${esc(head)}${p.next_reset ? ` · next ${esc(fmtUtc(p.next_reset))}` : ''}</span></h2>
-     <div class="kv" id="usage-account">${acctRows}</div><div class="kv">${secRows}<span class="mute small">Claude</span><div class="mono">${t.claude.runs} runs · ${mTok(t.claude.cache_read)} cache read · ${mTok(t.claude.cache_create)} cache create · ${mTok(t.claude.input)} input · ${mTok(t.claude.output)} output</div>
-     <span class="mute small">Codex</span><div class="mono">${t.codex.runs} runs · ${mTok(t.codex.tokens)} tokens <span class="small mute">(totals only; its own plan)</span></div>
-     <span class="mute small">own account</span><div class="mono">${t.provider.runs} runs · ${mTok(t.provider.tokens)} tokens <span class="small mute">(providers; not in the Claude %)</span></div>
-     <span class="mute small">unmeasured</span><div class="small">${t.unmeasured} runs <span class="mute">(no final usage and no transcript, or grok)</span></div>
-     <span class="mute small">calibration</span><div class="small">cacheR_per_pct ${fin(k.cacheR_per_pct) ? mTok(k.cacheR_per_pct) : '- (not set: no %)'} · ${fin(k.mix) ? `1 weighted token = ${k.mix.toFixed(3)} cache read` : 'no Claude tokens'}
-       <div class="mute">weights per token, in cache reads: input ${k.weights.input}, output ${k.weights.output}, cache create ${k.weights.cache_create_1h} (1 h) / ${k.weights.cache_create_5m} (5 min)</div></div>
-     <span class="mute small">roll-up</span><div class="small mute">${p.cost.runs} runs scanned in ${p.cost.ms.toFixed(1)} ms · ${mTok(p.cost.bytesRead)} B of transcript read</div></div></section>
-   <section class="card" id="usage-checkins"><h2>Check-ins <span class="mute small">lane checkin, the 15-min heartbeat</span></h2>${ck}</section></div>
+   <div class="grid2"><section class="card" id="usage-summary"><h2>${fin(hp) ? `Usage <b style="white-space:nowrap">${pct2(hp)}</b> of your weekly Claude limit` : 'Usage: not known yet - set your weekly limit in Settings > Usage calibration'} <span class="mute small">${A ? 'your whole Claude account' : 'the runs Norn started'}, ${esc(head)}${p.next_reset ? ` · next reset ${esc(fmtUtc(p.next_reset))}` : ''}</span></h2>
+     <div class="kv" id="usage-account">${acctRows}</div><div class="kv">${secRows}<span class="mute small">Claude tokens</span><div class="mono">${plural(t.claude.runs, 'run')} · ${mTok(t.claude.cache_read)} cache read · ${mTok(t.claude.cache_create)} cache write · ${mTok(t.claude.input)} input · ${mTok(t.claude.output)} output</div>
+     <span class="mute small">Codex tokens</span><div class="mono">${plural(t.codex.runs, 'run')} · ${mTok(t.codex.tokens)} tokens <span class="small mute">(Codex has its own plan: totals only, not in the Claude %)</span></div>
+     <span class="mute small">other providers</span><div class="mono">${plural(t.provider.runs, 'run')} · ${mTok(t.provider.tokens)} tokens <span class="small mute">(agents on your own API keys; not in the Claude %)</span></div>
+     <span class="mute small">not measured</span><div class="small">${plural(t.unmeasured, 'run')} <span class="mute">(the agent reported no usage and left no session file to count)</span></div>
+     <span class="mute small">scale</span><div class="small">${fin(k.cacheR_per_pct) ? `${mTok(k.cacheR_per_pct)} cache-read tokens = 1 % of your week` : 'not set, so no % is shown: enter the % from your claude.ai usage page in Settings > Usage calibration (or norn calib --pct N)'}
+       <div class="mute">other token types count by price, in cache reads: 1 input = ${k.weights.input}, 1 output = ${k.weights.output}, 1 cache write = ${k.weights.cache_create_1h} (kept 1 h) / ${k.weights.cache_create_5m} (kept 5 min)${fin(k.mix) ? ` · this window: 1 token = ${k.mix.toFixed(3)} cache reads on average` : ''}</div></div>
+     <span class="mute small">counted</span><div class="small mute">${plural(p.cost.runs, 'run')} in ${p.cost.ms.toFixed(1)} ms · ${mTok(p.cost.bytesRead)} bytes of session files read</div></div></section>
+   <section class="card" id="usage-checkins"><h2>Check-ins <span class="mute small">the short agent turns that review finished runs and start the next (norn tick, or the scheduler every 15 min)</span></h2>${ck}</section></div>
    ${weekCard(p.week)}
-   ${usageTable('usage-lane', 'By lane', 'cost of each lane in the window', usageGroup(rows, ['lane']), ['lane'], maxPct)}
-   ${usageTable('usage-stage', 'By lane and stage', '', usageGroup(rows, ['lane', 'stage']), ['lane', 'stage'], maxPct)}
-   ${usageTable('usage-executor', 'By executor', '', usageGroup(rows, ['executor']), ['executor'], maxPct)}
-   ${usageTable('usage-day', 'By day', 'UTC day the run started', usageGroup(rows, ['day']).sort((a, b) => String(b.day).localeCompare(String(a.day))), ['day'], maxPct)}</div>`;
+   ${usageTable('usage-lane', 'By lane', 'each line of work (its own branch), in this window', usageGroup(rows, ['lane']), ['lane'], maxPct)}
+   ${usageTable('usage-stage', 'By lane and stage', 'each step of a lane', usageGroup(rows, ['lane', 'stage']), ['lane', 'stage'], maxPct)}
+   ${usageTable('usage-executor', 'By agent CLI', 'claude, codex, or fake (the free rehearsal)', usageGroup(rows, ['executor']), ['executor'], maxPct)}
+   ${usageTable('usage-day', 'By day', 'the day the run started (UTC)', usageGroup(rows, ['day']).sort((a, b) => String(b.day).localeCompare(String(a.day))), ['day'], maxPct)}</div>`;
 }
 // META-GUARD R1 item 2: where the week's tokens went - per lane + stage, outcomes, merged, per merged branch; the top 5 spenders with why
 const pcA = x => (fin(x) ? '~' + pct2(x) : dash);
@@ -808,15 +811,14 @@ function weekCard(w) {
     <td class="mono small">${r.per_merged ? `${mTok(r.per_merged.cache_read)} cache read · ${mTok(r.per_merged.output)} out${fin(r.per_merged.pct) ? ' · ' + pcA(r.per_merged.pct) : ''}` : dash}</td></tr>`).join('')
     || '<tr><td colspan="11" class="mute">No runs in the window.</td></tr>';
   const top = (w.top || []).map(t => `<li><span class="id">${esc(t.id)}</span> <b>${esc(t.lane)}</b> ${esc(t.stage)} ${chip(t.outcome === 'done' ? 'done' : t.state === 'running' ? 'running' : 'idle', t.outcome ?? t.state)} <span class="mono">${pcA(t.pct)}</span> · ${mTok(t.cache_read)} cache read <span class="small mute">- ${esc(t.why)}</span></li>`).join('');
-  return `<div class="tablecard" id="usage-week"><h3>Where the tokens went <span class="mute small">${w.window === 'week' ? 'this plan week' : 'last 7 days'} · ${w.totals.runs} runs · ${pcA(w.totals.pct)} of the plan · ${w.totals.merged} merged · token types are never added up</span></h3>
-   <table><thead><tr><th>lane</th><th>stage</th><th>runs</th><th>input</th><th>cache write</th><th>cache read</th><th>output</th><th>~plan</th><th>outcome</th><th>merged</th><th>per merged branch</th></tr></thead><tbody>${body}</tbody></table>
-   <h3 style="margin-top:10px">Top 5 spenders <span class="mute small">why = turns x mean context (each turn re-reads it)</span></h3><ol id="usage-top" class="small">${top || '<li class="mute">none</li>'}</ol></div>`;
+  return `<div class="tablecard" id="usage-week"><h3>Where the tokens went <span class="mute small">${w.window === 'week' ? 'since the weekly reset' : 'last 7 days'} · ${plural(w.totals.runs, 'run')} · ${fin(w.totals.pct) ? pcA(w.totals.pct) + ' of your weekly Claude limit' : '% of your weekly Claude limit not known'} · ${w.totals.merged} merged into main · the four token types are counted apart, never added up</span></h3>
+   <table><thead><tr><th>lane</th><th>stage</th><th>runs</th><th>input</th><th>cache write</th><th>cache read</th><th>output</th><th>~% of week</th><th>how the runs ended</th><th>merged</th><th>tokens per merged branch</th></tr></thead><tbody>${body}</tbody></table>
+   <h3 style="margin-top:10px">Top 5 spenders <span class="mute small">the runs that used the most; why = turns x average context size (every turn re-reads the whole context)</span></h3><ol id="usage-top" class="small">${top || '<li class="mute">none</li>'}</ol></div>`;
 }
 function usage(d, ctx) {
   const parts = d.parts || [];
-  return `<div class="banner">Headline: the Claude account (every session since the weekly reset, from the account-usage cache a background scan writes); the lane rows are norn runs. Cost per lane: Claude runs count their CLI final usage (running / killed ones their transcript, live); the % of week is
-   the current weekly window's (since the budget's reset) cache reads / the budget's cacheR_per_pct (the calibration), shared out by price-weighted tokens. Codex: totals only.
-   ${d.cached ? 'Cached view (one 15 s tick).' : `Computed in ${fin(d.ms) ? d.ms.toFixed(0) : '-'} ms.`}</div>
+  return `<div class="banner">How much of your Claude plan the work used. "% of week" = the share of your weekly Claude usage limit, estimated from token counts (the scale below). Token types: input (new text sent to the model), output (text it wrote), cache write (context stored for reuse), cache read (stored context re-read on every turn, usually the biggest). k = thousand, M = million tokens. Codex has its own plan: only its token totals are shown.
+   ${d.cached ? 'Updated every 15 s.' : `Counted in ${fin(d.ms) ? d.ms.toFixed(0) : '-'} ms.`}</div>
    ${parts.map(p => usagePart(p, { ...ctx, refresh: d.account_refresh })).join('') || '<p class="mute">No project.</p>'}`;
 }
 

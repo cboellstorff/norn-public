@@ -20,6 +20,7 @@ import { profileOf } from './standing.mjs';
 import { BUILTIN } from './executors.mjs';
 import { ledgerStep } from './ledger.mjs';
 import { tickMergeq, mqProbe } from './mergeq.mjs';
+import { tickSlop } from './slop/daily.mjs';
 import { checkinCv } from './cv.mjs';
 import { ciProbe } from './ciwatch.mjs';
 import { guardWatch, guardProbe, guardPolicy } from './guard.mjs';
@@ -77,7 +78,7 @@ export function checkinExecutor({ B = {}, machine = {}, p = {}, minor = false, d
   if (!dry && !exe) return { error: `no ${family} executable for checkin_executor ${want} (machine.json)` };
   const roots = [path.dirname(path.resolve(p.state || '.')), p.ledger && path.dirname(p.ledger), p.briefs_dir].filter(Boolean).map(fwd);
   return { executor: dry ? 'fake' : want, trial: want, exe: dry ? undefined : exe, model: TRIAL_MODELS[want] || claude.model, effort: claude.effort,
-    ...(dry || !p.file ? {} : { mcp: { name: 'meta', command: process.execPath, args: [fwd(META_CMD), 'mcp', '--project', fwd(p.file), '--profile', 'checkin'] } }),
+    ...(dry || !p.file ? {} : { mcp: { name: 'norn', command: process.execPath, args: [fwd(META_CMD), 'mcp', '--project', fwd(p.file), '--profile', 'checkin'] } }),
     writable_roots: roots, fallback: claude };
 }
 
@@ -148,6 +149,8 @@ function tickPass(o, g = {}) {
     for (const f of fillQueue(state)) tickLog(state, `${tag}: queue: ${f.queued} -> STARTED ${f.next}`);   // a due not_before or a freed slot (META-GT12)
     // META-GTP-MERGEQ piece 5: the merge queue right after the fill - a detached `norn mergeq --run` (code only; a dry tick only with o.spawnMergeq)
     if (o.mergeq !== false && (!o.dry || o.spawnMergeq)) { const m = tickMergeq(p, state, { metaCmd: META_CMD, spawnFn: o.spawnMergeq }); if (m) tickLog(state, `${tag}: ${m}`); }
+    // META-SLOP-A: the daily slop report on the same schedule - a detached `norn slop daily` once a day (a dry tick only with o.spawnSlop)
+    if (o.slop !== false && (!o.dry || o.spawnSlop)) { try { const s = tickSlop(p, state, { metaCmd: META_CMD, spawnFn: o.spawnSlop }); if (s) tickLog(state, `${tag}: ${s}`); } catch (e) { tickLog(state, `${tag}: slop daily: ${e.message}`); } }
     const running = liveRuns(state, { staleMs }).find(r => r.state_dir === path.resolve(state) && r.data.kind === 'checkin');
     if (running) return { code: 0, msg: `${tag}: check-in ${running.id} running - exit` };
     const B = projectBudget(p, o.budget || {}), machine = o.machine || {}, cp = checkinPolicy(p.policy), nowMs = o.now ? o.now().getTime() : Date.now();

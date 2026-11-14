@@ -108,7 +108,7 @@ test('mail nudge: the launcher claims an unacked mail once (queued | delivered -
   refused(() => rec(s, { kind: 'mail', ev: 'nudge', id: 'MAIL-2', by: 'launcher', data: { run: a } }), /is acked/);
 });
 
-// ---------- piece 2: norn mail send | check [--inject] | ack | list; delivery (a) hook, (b) MCP meta_mail + the headless line ----------
+// ---------- piece 2: norn mail send | check [--inject] | ack | list; delivery (a) hook, (b) MCP norn_mail + the headless line ----------
 const cleanEnv = (extra = {}) => {
   const env = { ...process.env, META_NO_TICK: '1', ...extra };
   for (const k of ['META_STATE', 'META_PROJECT', 'META_ROLE', 'META_RUN_ID', 'META_NOTES', 'META_SESSION_ID', 'META_RESUMES', 'META_JOB']) if (!(k in extra)) delete env[k];
@@ -209,26 +209,26 @@ test('the launcher adds the mail hook to executors that run hooks (claude: --set
   assert.doesNotMatch(ADAPTERS.claude.headless, /mail/);
 });
 
-test('MCP meta_mail (worker profile): check delivers, send as the run, ack; a worker without META_RUN_ID is refused', async () => {
+test('MCP norn_mail (worker profile): check delivers, send as the run, ack; a worker without META_RUN_ID is refused', async () => {
   const s = tmp();
   const parent = startRun(s), r = startRun(s, { parent });
   send(s, 'checkin', { from: 'role:checkin', to: r, subject: 'stop at step 3' });
   const m = mcpServer(s, { META_RUN_ID: r }); await m.init();
   const names = (await m.call('tools/list')).result.tools.map(t => t.name).sort();
-  assert.deepEqual(names, ['meta_mail', 'meta_run_show', 'meta_status']);
-  const c = await m.tool('meta_mail', { action: 'check' });
+  assert.deepEqual(names, ['norn_mail', 'norn_run_show', 'norn_status']);
+  const c = await m.tool('norn_mail', { action: 'check' });
   assert.ok(!c.isError, JSON.stringify(c));
   assert.deepEqual(c.structuredContent.mail.map(x => x.id), ['MAIL-1']);
   assert.equal(mails(s)['MAIL-1'].deliver.via, 'mcp');
-  assert.deepEqual((await m.tool('meta_mail', { action: 'check' })).structuredContent.mail, []);
-  const snd = await m.tool('meta_mail', { action: 'send', to: 'role:checkin', subject: 'ok', body: 'stopping at 3' });
+  assert.deepEqual((await m.tool('norn_mail', { action: 'check' })).structuredContent.mail, []);
+  const snd = await m.tool('norn_mail', { action: 'send', to: 'role:checkin', subject: 'ok', body: 'stopping at 3' });
   assert.ok(!snd.isError, JSON.stringify(snd)); assert.equal(mails(s)['MAIL-2'].data.from, r);
-  assert.equal((await m.tool('meta_mail', { action: 'send', to: 'lane:demo', subject: 'x', body: 'y' })).structuredContent.code, 2);
-  assert.ok(!(await m.tool('meta_mail', { action: 'ack', id: 'MAIL-1' })).isError);
+  assert.equal((await m.tool('norn_mail', { action: 'send', to: 'lane:demo', subject: 'x', body: 'y' })).structuredContent.code, 2);
+  assert.ok(!(await m.tool('norn_mail', { action: 'ack', id: 'MAIL-1' })).isError);
   assert.equal(mails(s)['MAIL-1'].state, 'acked');
   await m.close();
   const nobody = mcpServer(s, {}); await nobody.init();
-  assert.equal((await nobody.tool('meta_mail', { action: 'check' })).structuredContent.code, 2);
+  assert.equal((await nobody.tool('norn_mail', { action: 'check' })).structuredContent.code, 2);
   await nobody.close();
 });
 
@@ -245,7 +245,7 @@ async function mailRace({ hooksLate = false } = {}) {
     const m = mcpServer(s, { META_RUN_ID: r }); await m.init();
     const hook = async () => { const h = await metaAsync(['mail', 'check', '--inject', '--run', r, '--state', s], { META_RUN_ID: r });
       assert.equal(h.status, 0, h.stderr); const got = h.stdout ? ids(JSON.parse(h.stdout).hookSpecificOutput.additionalContext) : []; seen.push(...got); return got; };
-    const mcpCheck = async () => { const c = await m.tool('meta_mail', { action: 'check' }); assert.ok(!c.isError, JSON.stringify(c)); const got = c.structuredContent.mail.map(x => x.id); seen.push(...got); return got; };
+    const mcpCheck = async () => { const c = await m.tool('norn_mail', { action: 'check' }); assert.ok(!c.isError, JSON.stringify(c)); const got = c.structuredContent.mail.map(x => x.id); seen.push(...got); return got; };
     const hooks = async () => { for (let k = 0; k < 6; k++) await hook(); };
     const mcp = async () => { for (let k = 0; k < 12; k++) { await mcpCheck(); await new Promise(res => setTimeout(res, 30)); } };
     // Both paths take part by construction, not by the runner's scheduling (CI 43182791620: on a loaded Windows runner the MCP

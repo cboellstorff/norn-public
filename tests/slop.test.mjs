@@ -1,0 +1,214 @@
+// META-SLOP-A (SloppaChoppa slice A): the BLOCK rules at run end, line counts, the git sweep list. Temp git repos, recorded tool output.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { loadRules, slopCheck } from '../engine/lib/slop/check.mjs';
+import { hostWrite, openBlocks, slopHolds } from '../engine/lib/slop/host.mjs';
+import { record } from '../engine/lib/records.mjs';
+import { loadState } from '../engine/lib/records.mjs';
+import { startRun } from '../engine/lib/runs.mjs';
+import { pickBatch } from '../engine/lib/mergeq.mjs';
+import { locReport } from '../engine/lib/slop/loc.mjs';
+import { sweep } from '../engine/lib/slop/sweep.mjs';
+import { tickSlop, dailyReport } from '../engine/lib/slop/daily.mjs';
+import { digest } from '../engine/lib/digest.mjs';
+import { renderDigest } from '../engine/lib/views.mjs';
+import { settled } from './helpers/settled.mjs';
+import { waitFor } from './helpers/wait.mjs';
+import { mkTmp } from './helpers/tmp.mjs';
+import { resolveShim } from '../engine/lib/paths.mjs';
+
+const NORN = path.join(import.meta.dirname, '..', 'engine', 'bin', 'norn.mjs');
+const fwd = p => p.split(path.sep).join('/');
+/** project.json for norn under META_ROOT = root: its state is <root>/state/kestrel */
+function projectFile(root, repo) {
+  const f = path.join(root, 'project.json');
+  fs.writeFileSync(f, JSON.stringify({ schema: 1, name: 'kestrel', title: 'k', root: fwd(repo), ledger: '${root}/L.md', briefs_dir: '${root}', policy: {} }));
+  return f;
+}
+
+const git = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8' }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
+function writeTree(dir, files) {
+  for (const [f, text] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), text); }
+}
+/** a repo: main = base files, feat/x = head files (files absent from head are deleted) */
+function fixtureRepo({ base, head }) {
+  const dir = mkTmp('meta-slop-');
+  git(dir, 'init', '-q', '-b', 'main'); git(dir, 'config', 'user.email', 't@t'); git(dir, 'config', 'user.name', 't'); git(dir, 'config', 'core.autocrlf', 'false');
+  writeTree(dir, base); git(dir, 'add', '-A'); git(dir, 'commit', '-q', '--allow-empty', '-m', 'base');
+  git(dir, 'checkout', '-q', '-b', 'feat/x');
+  for (const f of Object.keys(base)) if (!(f in head)) fs.rmSync(path.join(dir, f));
+  writeTree(dir, head); git(dir, 'add', '-A'); git(dir, 'commit', '-q', '--allow-empty', '-m', 'head');
+  return dir;
+}
+const recordedTool = rec => (rule, side) => (rec?.[side] === undefined ? null : typeof rec[side] === 'string' ? rec[side] : JSON.stringify(rec[side]));
+
+for (const rule of loadRules().filter(r => r.level === 'BLOCK')) {
+  test(`${rule.id} (${rule.title}): the fixture's hit blocks, its near-miss does not`, () => {
+    for (const [which, want] of [['hit', true], ['miss', false]]) {
+      const fx = rule.fixture[which];
+      const repo = fixtureRepo(fx);
+      const r = slopCheck({ repo, base: 'main', head: 'HEAD', only: [rule.id], tool: recordedTool(fx.recorded) });
+      assert.equal(r.blocks.length > 0, want, `${rule.id} ${which}: ${JSON.stringify(r.findings, null, 1)}`);
+      for (const b of r.blocks) { assert.equal(b.rule, rule.id); assert.match(b.fp, /^[0-9a-f]{16}$/); assert.ok(b.file); }
+    }
+  });
+}
+
+test('only new: a finding the base already had never blocks, even in a renamed file; the fingerprint follows the rename', () => {
+  const body = 'export function old(f) {\n  try { f(); } catch (e) {}\n}\n';
+  const rest = Array.from({ length: 12 }, (_, i) => `export const k${i} = ${i};\n`).join('');   // enough unchanged lines to stay a rename
+  const repo = fixtureRepo({ base: { 'src/a.mjs': body + rest }, head: { 'src/a.mjs': body + rest } });
+  git(repo, 'mv', 'src/a.mjs', 'src/b.mjs'); git(repo, 'commit', '-q', '-m', 'rename');
+  const r = slopCheck({ repo, base: 'main', head: 'HEAD', only: ['K2'] });
+  assert.equal(r.findings.length, 1, 'the old swallow is seen in the renamed file');
+  assert.equal(r.findings[0].file, 'src/b.mjs');
+  assert.equal(r.findings[0].new, false);
+  assert.deepEqual(r.blocks, []);
+  fs.appendFileSync(path.join(repo, 'src/b.mjs'), body.replace('old', 'twin'));   // the same swallow written a second time IS new
+  git(repo, 'commit', '-qam', 'twin');
+  const r2 = slopCheck({ repo, base: 'main', head: 'HEAD', only: ['K2'] });
+  assert.equal(r2.blocks.length, 1);
+  assert.equal(r2.blocks[0].line, 17);
+});
+
+test('waiver WVR-n: owner or controller (never a check-in), why required, scope = a fingerprint or a glob; it clears an open block until it ends', () => {
+  const state = mkTmp('meta-slop-w-');
+  const block = { rule: 'K2', level: 'BLOCK', file: 'engine/lib/a.mjs', line: 3, fp: 'a1b2c3d4e5f60718', new: true, msg: 'empty catch' };
+  hostWrite(state, { type: 'check', branch: 'feat/x', lane: 'x', run: 'RUN-1', base: 'b', head: 'h', blocks: [block], findings: [block] });
+  assert.equal(openBlocks(state, 'feat/x').length, 1);
+  assert.throws(() => record(state, { kind: 'waiver', ev: 'create', by: 'checkin', data: { rule: 'K2', scope: block.fp, why: 'x y' } }), /role/);
+  assert.throws(() => record(state, { kind: 'waiver', ev: 'create', by: 'owner', data: { rule: 'K2', scope: block.fp } }), /why/);
+  const cli = spawnSync(process.execPath, [NORN, 'rec', 'add', 'waiver', '--state', state, '--as', 'controller', '--rule', 'K2', '--scope', 'engine/lib/*.mjs',
+    '--why', 'the owner asked for this fallback (DIR-9)', '--until', '2999-01-01T00:00:00Z'], { encoding: 'utf8' });
+  assert.equal(cli.status, 0, cli.stderr);
+  assert.equal(cli.stdout.trim(), 'WVR-1');
+  assert.deepEqual(openBlocks(state, 'feat/x'), [], 'the glob waiver clears it');
+  assert.equal(openBlocks(state, 'feat/x', { now: Date.parse('3000-01-01') }).length, 1, 'past its until the waiver no longer counts');
+  record(state, { kind: 'waiver', ev: 'revoke', id: 'WVR-1', by: 'owner', data: {} });
+  assert.equal(openBlocks(state, 'feat/x').length, 1, 'a revoked waiver no longer counts');
+  record(state, { kind: 'waiver', ev: 'create', by: 'owner', data: { rule: 'K2', scope: block.fp, why: 'reviewed: the caller retries' } });
+  assert.deepEqual(openBlocks(state, 'feat/x'), [], 'a fingerprint waiver clears it');
+  hostWrite(state, { type: 'check', branch: 'feat/x', base: 'b', head: 'h2', blocks: [], findings: [] });
+  assert.equal(slopHolds(state)['feat/x'], undefined, 'a clean check drops the hold');
+});
+
+test('run end: a fake lane run that ends DONE with a BLOCK finding is resumed ONCE with the list; its merge is refused until waived or fixed', async () => {
+  const state = mkTmp('meta-slop-run-'), root = path.dirname(path.dirname(state));
+  const repo = path.join(root, 'repo'), wt = path.join(root, 'wt'), notes = path.join(root, 'NOTES.md'), brief = path.join(root, 'brief.md');
+  fs.mkdirSync(repo);
+  git(repo, 'init', '-q', '-b', 'main'); git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n'); git(repo, 'add', '-A'); git(repo, 'commit', '-q', '-m', 'a');
+  git(repo, 'worktree', 'add', '-q', '-b', 'feat/x', wt);
+  fs.writeFileSync(path.join(wt, 'a.txt.orig'), 'left by a merge\n'); git(wt, 'add', '-A'); git(wt, 'commit', '-q', '-m', 'oops');
+  fs.writeFileSync(brief, 'mode: done\n');
+  const id = startRun({ state, locksDir: path.join(root, 'locks'), executor: 'fake', lane: 'x', worktree: wt, notes, brief, hbMs: 150, staleMs: 3000,
+    policy: { auto_resume_max: 0, trigger_on_exit: false }, budget: {} }).run;
+  const next = await waitFor(() => loadState(state).items[id]?.resume?.next, { what: 'the slop resume' });
+  await waitFor(() => settled(loadState(state).items[next]) && fs.existsSync(path.join(state, 'slop', 'holds.json')) && slopHolds(state)['feat/x']?.run === next, { what: 'the resumed run ends' });
+  assert.equal(loadState(state).items[id].resume.slop, 1);
+  assert.match(fs.readFileSync(notes, 'utf8'), /prompt: Norn's slop check found 1 BLOCK finding\(s\)[^\n]*\n- K15 a\.txt\.orig /, 'the resume carries the list');
+  assert.equal(loadState(state).items[next].resume, undefined, 'a second BLOCK is not resumed again: the check-in decides');
+  assert.deepEqual(openBlocks(state, 'feat/x').map(b => b.rule), ['K15']);
+  const brief2 = ['merge-brief', '--project', projectFile(root, repo), '--lane', 'x', '--branch', 'feat/x', '--worktree', wt, '--notes', notes, '--out', path.join(root, 'MB.md'), '--sha', 'abc1234'];
+  const mb = () => spawnSync(process.execPath, [NORN, ...brief2], { encoding: 'utf8', env: { ...process.env, META_ROOT: root } });
+  let r = mb();
+  assert.equal(r.status, 3, r.stdout + r.stderr); assert.match(r.stdout, /REFUSED: merge-brief feat\/x: 1 open slop BLOCK/);
+  assert.deepEqual(pickBatch([{ id: 'DLV-1', gate: 'batch', word: 'clean', tip: 'abc', lane: 'x', branch: 'feat/x', slop: 1 }], { cfg: { batch_max: 4 }, mq: { red: {} }, writer: () => null }), []);
+  record(state, { kind: 'waiver', ev: 'create', by: 'owner', data: { rule: 'K15', scope: '*.orig', why: 'kept on purpose: the merge test reads it' } });
+  r = mb(); assert.equal(r.status, 0, r.stdout + r.stderr);
+  record(state, { kind: 'waiver', ev: 'revoke', id: 'WVR-1', by: 'owner', data: {} });
+  git(wt, 'rm', '-q', 'a.txt.orig'); git(wt, 'commit', '-q', '-m', 'fix');
+  const c = spawnSync(process.execPath, [NORN, 'slop', 'check', '--state', state], { cwd: wt, encoding: 'utf8' });
+  assert.equal(c.status, 0, c.stdout + c.stderr);
+  assert.match(c.stdout, /slop check: 0 BLOCK/);
+  assert.equal(mb().status, 0, 'fixed: the merge may be staged');
+});
+
+const gitAt = (cwd, iso, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_DATE: iso, GIT_COMMITTER_DATE: iso } }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
+const lines = n => Array.from({ length: n }, (_, i) => `l${i}`).join('\n') + '\n';
+
+test('loc: non-blank lines by git per class (generated, vendored, fixtures apart), area and language; one point per day; churn per landing + the big flag', () => {
+  const repo = mkTmp('meta-slop-loc-');
+  git(repo, 'init', '-q', '-b', 'main'); git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't');
+  writeTree(repo, { 'engine/lib/a.mjs': 'const a = 1;\n\n  \nexport { a };\nlet b;\n', 'tests/a.test.mjs': lines(2), 'README.md': '# r\n\n', 'cfg.json': '{}\n',
+    'engine/dash/vendor/v.js': lines(5), 'tests/fixtures/f.txt': lines(4), 'package-lock.json': lines(3) });
+  git(repo, 'add', '-A'); gitAt(repo, '2026-10-30T10:00:00Z', 'commit', '-q', '-m', 'first');
+  git(repo, 'checkout', '-q', '-b', 'feat/big');
+  writeTree(repo, { 'engine/lib/b.mjs': lines(2000) }); git(repo, 'add', '-A'); gitAt(repo, '2026-11-01T09:00:00Z', 'commit', '-q', '-m', 'big');
+  git(repo, 'checkout', '-q', 'main'); gitAt(repo, '2026-11-01T10:00:00Z', 'merge', '-q', '--no-ff', '-m', 'merge: feat/big', 'feat/big');
+  const r = locReport(repo, { since: '2026-10-30', until: '2026-11-01' });
+  assert.deepEqual(r.totals, { code: 2003, tests: 2, docs: 1, config: 1 });
+  assert.deepEqual(r.apart, { generated: 3, vendored: 5, fixtures: 4 });
+  assert.deepEqual(r.areas['engine/lib'], { code: 2003 });
+  assert.equal(r.languages.JavaScript.code, 2003); assert.equal(r.languages.JavaScript.tests, 2);
+  assert.deepEqual(r.series.map(p => [p.day, p.totals.code]), [['2026-10-30', 3], ['2026-10-31', 3], ['2026-11-01', 2003]]);
+  const m = r.landings.find(l => l.subject === 'merge: feat/big');
+  assert.deepEqual([m.added.code, m.deleted.code, m.big], [2000, 0, true]);
+  assert.equal(r.landings.find(l => l.subject === 'first').big, false);
+});
+
+test('sweep: merge-tree sorts branches real / empty / conflicting / merged; dead worktrees, work at risk (dirty, half-merged), merged remote branches', () => {
+  const state = mkTmp('meta-slop-sw-'), root = path.dirname(path.dirname(state)), repo = path.join(root, 'repo'), remote = path.join(root, 'origin.git');
+  fs.mkdirSync(repo);
+  const old = '2026-10-01T10:00:00Z', at = (...a) => gitAt(repo, old, ...a);
+  git(repo, 'init', '-q', '-b', 'main'); git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't');
+  writeTree(repo, { 'a.txt': 'a\n' }); git(repo, 'add', '-A'); at('commit', '-q', '-m', 'a');
+  git(repo, 'branch', 'feat/merged');
+  git(repo, 'checkout', '-q', '-b', 'feat/real'); writeTree(repo, { 'r.txt': 'r\n' }); git(repo, 'add', '-A'); at('commit', '-q', '-m', 'r');
+  git(repo, 'checkout', '-q', '-b', 'feat/clash', 'main'); writeTree(repo, { 'a.txt': 'clash\n' }); at('commit', '-qam', 'clash');
+  git(repo, 'checkout', '-q', '-b', 'feat/empty', 'main'); writeTree(repo, { 'a.txt': 'a2\n' }); at('commit', '-qam', 'same as main');
+  git(repo, 'checkout', '-q', 'main'); writeTree(repo, { 'a.txt': 'a2\n' }); at('commit', '-qam', 'main moves');
+  git(repo, 'branch', 'feat/live', 'feat/merged');
+  git(root, 'init', '-q', '--bare', remote); git(repo, 'remote', 'add', 'origin', remote); git(repo, 'push', '-q', 'origin', 'main', 'feat/merged', 'feat/real');
+  const wt = n => path.join(root, n);
+  git(repo, 'worktree', 'add', '-q', wt('dead'), 'feat/merged');
+  git(repo, 'worktree', 'add', '-q', wt('risk'), 'feat/real'); fs.writeFileSync(path.join(wt('risk'), 'wip.txt'), 'unsaved\n');
+  git(repo, 'worktree', 'add', '-q', wt('half'), 'feat/clash'); spawnSync('git', ['merge', 'main'], { cwd: wt('half') });
+  git(repo, 'worktree', 'add', '-q', wt('live'), 'feat/live');
+  record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'fake', lane: 'live', worktree: fwd(wt('live')) } });
+  const s = sweep(repo, { state, now: Date.parse('2027-01-01') });
+  const by = list => Object.fromEntries(list.map(x => [x.branch, x]));
+  assert.deepEqual(Object.keys(by(s.real)).sort(), ['feat/clash', 'feat/real']);
+  assert.equal(by(s.real)['feat/clash'].conflicts, true); assert.equal(by(s.real)['feat/real'].conflicts, false);
+  assert.deepEqual(s.empty.map(x => [x.branch, x.why]).sort(), [['feat/empty', 'adds nothing'], ['feat/live', 'merged'], ['feat/merged', 'merged']]);
+  assert.deepEqual(s.dead.map(x => path.basename(x.path)), ['dead'], 'clean, adds nothing, idle, no live run (live is skipped)');
+  const risk = Object.fromEntries(s.at_risk.map(x => [path.basename(x.path), x]));
+  assert.deepEqual(Object.keys(risk).sort(), ['half', 'risk']);
+  assert.equal(risk.half.merging, true); assert.equal(risk.half.unmerged, 1); assert.equal(risk.risk.paths, 1);
+  assert.deepEqual(s.remote_merged, ['origin/feat/merged']);
+});
+
+test('daily: the tick starts `norn slop daily` once a day; the report has absolute numbers beside every %, and the digest carries ONE slop line', () => {
+  const state = mkTmp('meta-slop-day-'), root = path.dirname(path.dirname(state)), repo = path.join(root, 'repo');
+  fs.mkdirSync(repo);
+  git(repo, 'init', '-q', '-b', 'main'); git(repo, 'config', 'user.email', 't@t'); git(repo, 'config', 'user.name', 't');
+  writeTree(repo, { 'engine/lib/a.mjs': lines(100) }); git(repo, 'add', '-A'); gitAt(repo, '2026-10-30T10:00:00Z', 'commit', '-q', '-m', 'a');
+  writeTree(repo, { 'engine/lib/a.mjs': lines(150), 'tests/a.test.mjs': lines(10) }); git(repo, 'add', '-A'); gitAt(repo, '2026-11-08T10:00:00Z', 'commit', '-q', '-m', 'more');
+  const now = Date.parse('2026-11-09T06:00:00Z'), p = { name: 'kestrel', file: path.join(root, 'project.json'), root: repo, policy: {} };
+  const spawned = [], spawnFn = (exe, args) => { spawned.push(args); return { pid: 42 }; };
+  assert.equal(tickSlop(p, state, { metaCmd: NORN, spawnFn, now }), 'slop daily: started pid 42');
+  assert.deepEqual(spawned[0].slice(1), ['slop', 'daily', '--project', p.file, '--state', state]);
+  assert.equal(tickSlop(p, state, { metaCmd: NORN, spawnFn, now: now + 60e3 }), null, 'started 1 min ago: not again');
+  const env = { ...process.env, HOME: root, USERPROFILE: root, META_ROOT: root };
+  const { line, file } = dailyReport({ repo, state, env, now });
+  const md = fs.readFileSync(file, 'utf8');
+  assert.match(md, /\| code \| 150 \| \+50 \(\+50\.0 %\) \|/);
+  assert.match(md, /\| engine\/lib \| 150 \| \+50 \(\+50\.0 %\) \|/);
+  assert.match(line, /^slop 2026-11-09: code 150 \+50 \(\+50\.0 %\) in 7 d, tests 10; big landings 0; branches: 0 real/);
+  assert.equal(tickSlop(p, state, { metaCmd: NORN, spawnFn, now: now + 3600e3 }), null, "today's report exists");
+  const d = digest(state, p, { now, dlv: [] });
+  assert.deepEqual(d.sections.slop, [{ id: 'slop', line }]);
+  assert.ok(renderDigest(d).includes(`## 9 SloppaChoppa (1)\n- ${line}\n`),'one row in the digest view');
+});
+
+test("K3's tool: npm >= 10's npx.cmd (the entry in a SET variable) resolves to node + npx-cli.js, no shell", () => {
+  const shim = String.raw`C:\nodejs\npx.cmd`, entry = String.raw`C:\nodejs\node_modules\npm\bin\npx-cli.js`, node = String.raw`C:\other\node.exe`;
+  const text = ['@ECHO OFF', 'SETLOCAL', String.raw`SET "NODE_EXE=%~dp0\node.exe"`, 'IF NOT EXIST "%NODE_EXE%" (', '  SET "NODE_EXE=node"', ')',
+    String.raw`SET "NPX_CLI_JS=%~dp0\node_modules\npm\bin\npx-cli.js"`, '"%NODE_EXE%" "%NPX_CLI_JS%" %*', ''].join('\r\n');
+  const vfs = { readText: () => text, isFile: p => p === entry };
+  assert.deepEqual(resolveShim(shim, ['--yes', 'eslint@10.15.0'], { platform: 'win32', execPath: node, fs: vfs }),
+    { exe: node, args: [entry, '--yes', 'eslint@10.15.0'] });
+});

@@ -27,7 +27,7 @@ const RECORDS_DOC = path.join(HERE, '..', 'prompts', 'RECORDS.md');
 const SETUP_PROMPT = path.join(HERE, '..', 'prompts', 'SETUP.md');
 export const PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
 // META-ADOPT A4: setup is machine-scoped (no project): 'set this repo up for Norn' from any MCP client
-// META-CONTROLLER C3: chat = the controller tools + meta_show / meta_cli / meta_approve, tier-gated (chatact.mjs), for Norn's chat only
+// META-CONTROLLER C3: chat = the controller tools + norn_show / norn_cli / norn_approve, tier-gated (chatact.mjs), for Norn's chat only
 export const PROFILES = ['controller', 'checkin', 'worker', 'setup', 'chat'];
 const HB_FRESH_MS = 10 * 60 * 1000;
 
@@ -84,7 +84,7 @@ const KIND_ALIAS = { Q: 'question', DEC: 'decision', DIR: 'directive', L: 'lane'
 const KIND_ORDER = ['question', 'decision', 'directive', 'lane', 'run'];
 const order = (a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || (a.kind === 'lane' ? a.id.localeCompare(b.id) : Number(a.id.replace(/\D/g, '')) - Number(b.id.replace(/\D/g, '')));
 
-// The needs-you set (HARNESS-DESIGN sec. 4 meta_inbox): open Q, answered-not-applied Q, parked lanes, unreviewed ended runs.
+// The needs-you set (HARNESS-DESIGN sec. 4 norn_inbox): open Q, answered-not-applied Q, parked lanes, unreviewed ended runs.
 export function needsYou(i) {
   if (i.kind === 'question' && i.state === 'open') return 'open question';
   if (i.kind === 'question' && i.state === 'answered') return 'answered, not applied';
@@ -99,67 +99,67 @@ const CTL = ['controller', 'chat'], CK = ['controller', 'checkin', 'chat'], ALL 
 const CONTROLLERS = ['controller', 'chat'];
 const EVENTS = ['apply', 'supersede', 'withdraw', 'park', 'unpark', 'overrule', 'revoke', 'done'];
 export const TOOLS = [
-  { name: 'meta_boot', profiles: CK, description: 'Role pack (your instructions) plus a state digest. Call first in every session.',
+  { name: 'norn_boot', profiles: CK, description: 'Role pack (your instructions) plus a state digest. Call first in every session.',
     schema: obj({ role: S.str('', { enum: ['controller', 'checkin'] }) }, ['role']), run: boot },
-  // META-PLAN R1: the plan rides on meta_status (view plan) - the controller profile is capped at 16 tools (as META-GTP-ASK on meta_run_show)
-  { name: 'meta_status', profiles: ALL, description: 'STATUS.md of the project (budget, caps, records), at most 60 lines; view plan = what happens next, and when.',
+  // META-PLAN R1: the plan rides on norn_status (view plan) - the controller profile is capped at 16 tools (as META-GTP-ASK on norn_run_show)
+  { name: 'norn_status', profiles: ALL, description: 'STATUS.md of the project (budget, caps, records), at most 60 lines; view plan = what happens next, and when.',
     schema: obj({ project: S.str('project name (optional; this server serves one project)'),
       view: S.str('status (default) | plan: up next, chains, landing next, usage forecast | instructions: the files that steer agents, ~tokens, cost today, hints (read-only)', { enum: ['status', 'plan', 'instructions'] }) }), run: status },
-  { name: 'meta_inbox', profiles: CK, description: 'Needs-you items (open / answered-unapplied questions, parked lanes, unreviewed runs) plus a cursor.',
+  { name: 'norn_inbox', profiles: CK, description: 'Needs-you items (open / answered-unapplied questions, parked lanes, unreviewed runs) plus a cursor.',
     schema: obj({ project: S.str(), since_seq: S.int(0), since_runs_seq: S.int(0) }), run: inbox },
-  { name: 'meta_records', profiles: CK, description: 'Record rows: questions, decisions, directives, lanes, runs (filter by kind / state / id / lane).',
+  { name: 'norn_records', profiles: CK, description: 'Record rows: questions, decisions, directives, lanes, runs (filter by kind / state / id / lane).',
     schema: obj({ kind: S.str('', { enum: ['question', 'decision', 'directive', 'lane', 'run', 'Q', 'DEC', 'DIR', 'L', 'RUN'] }), state: S.str(), id: S.str(), lane: S.str(), limit: S.int(1, 50) }), run: records },
-  { name: 'meta_answer', profiles: CTL, description: "Record the OWNER's answer to Q-n, in the owner's own words (verbatim).",
+  { name: 'norn_answer', profiles: CTL, description: "Record the OWNER's answer to Q-n, in the owner's own words (verbatim).",
     schema: obj({ q: S.str('Q-n'), text: S.str('owner words verbatim'), choice: S.str('option key') }, ['q', 'text']), run: answer },
-  { name: 'meta_directive', profiles: CTL, description: "Record an OWNER directive (owner's words verbatim), optionally scoped to lanes.",
+  { name: 'norn_directive', profiles: CTL, description: "Record an OWNER directive (owner's words verbatim), optionally scoped to lanes.",
     schema: obj({ text: S.str('owner words verbatim'), scope: S.strs, expires: S.str('UTC time') }, ['text']), run: directive },
-  { name: 'meta_question_add', profiles: CK, description: 'Ask the owner one question (options with cost, a recommendation); parks the lanes it blocks. owner_only = a taste / owner pick no check-in may rule.',
+  { name: 'norn_question_add', profiles: CK, description: 'Ask the owner one question (options with cost, a recommendation); parks the lanes it blocks. owner_only = a taste / owner pick no check-in may rule.',
     schema: obj({ lane: S.str(), title: S.str(), body: S.str(), options: { type: 'array', items: obj({ key: S.str(), text: S.str(), cost: S.str() }, ['key', 'text']) },
       recommend: obj({ key: S.str(), why: S.str() }, ['key', 'why']), class: S.str('', { enum: ['i', 'ii', 'iii', 'iv', 'v'] }), blocks: S.strs, source: S.str(), owner_only: S.bool }, ['lane', 'title', 'options']), run: questionAdd },
-  { name: 'meta_decision_add', profiles: CK, description: 'Record a controller decision (question, choice, why, cost, source).',
+  { name: 'norn_decision_add', profiles: CK, description: 'Record a controller decision (question, choice, why, cost, source).',
     schema: obj({ lane: S.str(), question: S.str(), choice: S.str(), why: S.str(), cost: S.str(), source: S.str(), answers: S.str('Q-n it answers (with owner_words: closes it in the same step)'), owner_words: S.str("the owner's words, verbatim (with answers)"), not_an_answer: S.bool, notify: S.bool }, ['lane', 'question', 'choice', 'why']), run: decisionAdd },
-  { name: 'meta_record_event', profiles: CK, description: `One event on a record: ${EVENTS.join(' | ')} (role-gated by the records core).`,
+  { name: 'norn_record_event', profiles: CK, description: `One event on a record: ${EVENTS.join(' | ')} (role-gated by the records core).`,
     schema: obj({ id: S.str('Q-n | DEC-n | DIR-n | L:name'), event: S.str('', { enum: EVENTS }), fields: { type: 'object' } }, ['id', 'event']), run: recordEvent },
-  { name: 'meta_run', profiles: CK, description: 'Start a supervised run (lane, brief, executor or work class). Error code 4 = cap full, do it later.',
+  { name: 'norn_run', profiles: CK, description: 'Start a supervised run (lane, brief, executor or work class). Error code 4 = cap full, do it later.',
     schema: obj({ lane: S.str(), brief: S.str('brief file'), class: S.str('work class'), executor: S.str(), model: S.str(), effort: S.str(), budget_min: S.int(1),
       parent: S.str('RUN-n'), worktree: S.str(), notes: S.str() }, ['lane', 'brief']), run: startRunTool },
-  { name: 'meta_stop', profiles: CK, description: 'Kill a running run (whole process tree) with a reason.',
+  { name: 'norn_stop', profiles: CK, description: 'Kill a running run (whole process tree) with a reason.',
     schema: obj({ run: S.str('RUN-n'), why: S.str() }, ['run', 'why']), run: stop },
-  { name: 'meta_run_show', profiles: ALL, description: 'One run: state, outcome, usage, log / NOTES tails. ask = a question to the ENDED run (norn ask; checkin + controller).',
+  { name: 'norn_run_show', profiles: ALL, description: 'One run: state, outcome, usage, log / NOTES tails. ask = a question to the ENDED run (norn ask; checkin + controller).',
     schema: obj({ run: S.str('RUN-n'), log_tail: S.int(0, 200), notes_tail: S.int(0, 100), ask: S.str('question to the ENDED run: norn ask (fork of its session, else a cold helper)'),
       executor: S.str('cold helper executor (ask)'), max_s: S.int(0, 540) }, ['run']), run: runShow },
-  { name: 'meta_tick', profiles: CTL, description: 'Start one detached check-in tick now.',
+  { name: 'norn_tick', profiles: CTL, description: 'Start one detached check-in tick now.',
     schema: obj({ reason: S.str() }, ['reason']), run: tickTool },
-  { name: 'meta_pause', profiles: CTL, description: 'Set or clear the PAUSED flag (paused = no new dispatches, no check-ins).',
+  { name: 'norn_pause', profiles: CTL, description: 'Set or clear the PAUSED flag (paused = no new dispatches, no check-ins).',
     schema: obj({ on: S.bool }, ['on']), run: pause },
-  { name: 'meta_settings', profiles: CK, description: 'Read Settings; the controller may also set one (validated, dry_run shows the diff).',
+  { name: 'norn_settings', profiles: CK, description: 'Read Settings; the controller may also set one (validated, dry_run shows the diff).',
     schema: obj({ get: S.strs, set: obj({ key: S.str(), value: {} }, ['key', 'value']), dry_run: S.bool }), run: settings },
   // META-GTP-MAIL delivery (b): the mailbox of the run this server serves (META_RUN_ID) - for executors without the mail hook
-  { name: 'meta_mail', profiles: ['worker'], description: 'Your mail: check (takes delivery of unread mail), send (to your parent, role:checkin, role:controller or your epic), ack MAIL-n.',
+  { name: 'norn_mail', profiles: ['worker'], description: 'Your mail: check (takes delivery of unread mail), send (to your parent, role:checkin, role:controller or your epic), ack MAIL-n.',
     schema: obj({ action: S.str('', { enum: ['check', 'send', 'ack'] }), to: S.str('RUN-n | role:checkin | role:controller'), subject: S.str(), body: S.str('<= 2 KB'), urgent: S.bool, id: S.str('MAIL-n (ack)') }, ['action']), run: mailTool },
-  { name: 'meta_ledger', profiles: CK, description: 'Last lines of the project ledger.',
+  { name: 'norn_ledger', profiles: CK, description: 'Last lines of the project ledger.',
     schema: obj({ tail: S.int(1, 40) }), run: ledger },
   // META-CONTROLLER C3 (SPEC sec. 3): the three verbs the chat needs to do what the chat controller does today (profile chat only)
-  { name: 'meta_show', profiles: CHAT, description: "Show a file or image inline in the owner's thread (the project root, its state, the briefs dir, run / lane worktrees and NOTES folders only).",
+  { name: 'norn_show', profiles: CHAT, description: "Show a file or image inline in the owner's thread (the project root, its state, the briefs dir, run / lane worktrees and NOTES folders only).",
     schema: obj({ path: S.str('absolute path'), caption: S.str() }, ['path']), run: showTool },
-  { name: 'meta_cli', profiles: CHAT, description: 'One allow-listed meta subcommand as an argument list (never a shell): ' + CLI_ALLOWED.filter(c => !c.startsWith('rec ')).join(', ') + ', rec <verb>. Norn sets the role, project and via.',
+  { name: 'norn_cli', profiles: CHAT, description: 'One allow-listed meta subcommand as an argument list (never a shell): ' + CLI_ALLOWED.filter(c => !c.startsWith('rec ')).join(', ') + ', rec <verb>. Norn sets the role, project and via.',
     schema: obj({ args: { type: 'array', items: S.str() } }, ['args']), run: cliTool },
   // the chat CLI's --permission-prompt-tool: the owner answers it (a card), never the model; extra fields of the CLI's call are kept
-  { name: 'meta_approve', profiles: CHAT, description: 'The permission prompt of the chat CLI: waits for the OWNER to tap Approve once / Deny on a card (30 min, then deny). It is not yours to answer.',
+  { name: 'norn_approve', profiles: CHAT, description: 'The permission prompt of the chat CLI: waits for the OWNER to tap Approve once / Deny on a card (30 min, then deny). It is not yours to answer.',
     schema: { type: 'object', properties: { tool_name: S.str(), input: { type: 'object' }, tool_use_id: S.str() }, required: ['tool_name'] }, run: approveTool },
   // META-ADOPT A4 (SPEC meta-adopt sec. 5 MCP): thin front ends over the norn adopt verbs; decide / apply carry the human's words
-  { name: 'meta_setup_status', profiles: SETUP, description: 'Is Norn set up here: machine.json, the projects, each one\'s setup draft (ADP-n) and its next step.',
+  { name: 'norn_setup_status', profiles: SETUP, description: 'Is Norn set up here: machine.json, the projects, each one\'s setup draft (ADP-n) and its next step.',
     schema: obj({}), run: setupStatus },
-  { name: 'meta_adopt_scan', profiles: SETUP, description: 'Look at a git repo (free, no model, writes nothing): commands with file:line, plans, branches, agent files, new / adopt.',
+  { name: 'norn_adopt_scan', profiles: SETUP, description: 'Look at a git repo (free, no model, writes nothing): commands with file:line, plans, branches, agent files, new / adopt.',
     schema: obj({ root: S.str('the repo path') }, ['root']), run: adoptScanTool },
-  { name: 'meta_adopt_start', profiles: SETUP, description: 'Register the repo as a project when new (says what it writes), then draft: read true = one paid read-only run, false = facts only.',
+  { name: 'norn_adopt_start', profiles: SETUP, description: 'Register the repo as a project when new (says what it writes), then draft: read true = one paid read-only run, false = facts only.',
     schema: obj({ root: S.str('the repo path'), read: S.bool, answers: { type: 'object', description: 'goal, month, first, tests, priority, never (all optional)' } }, ['root']), run: adoptStartTool },
-  { name: 'meta_adopt_show', profiles: SETUP, description: 'The setup draft: the parts and their state; with part = its lines, each with its id and source.',
+  { name: 'norn_adopt_show', profiles: SETUP, description: 'The setup draft: the parts and their state; with part = its lines, each with its id and source.',
     schema: obj({ project: S.str('project name'), part: S.str('', { enum: PARTS }) }, ['project']), run: adoptShowTool },
-  { name: 'meta_adopt_decide', profiles: SETUP, description: "Approve or skip one part as the HUMAN ruled it (owner_words verbatim; the profile is always the human's pick).",
+  { name: 'norn_adopt_decide', profiles: SETUP, description: "Approve or skip one part as the HUMAN ruled it (owner_words verbatim; the profile is always the human's pick).",
     schema: obj({ project: S.str('project name'), part: S.str('', { enum: PARTS }), verdict: S.str('', { enum: ['approve', 'skip'] }), off: S.strs, on: S.strs,
       pick: S.str('the one line of a pick part (profile, first)'), owner_words: S.str("the human's sentence, verbatim") }, ['project', 'part', 'verdict']), run: adoptDecideTool },
-  { name: 'meta_adopt_apply', profiles: SETUP, description: 'Write the approved parts (records + files beside project.json; never the repo, never the scheduler) on the human\'s words.',
+  { name: 'norn_adopt_apply', profiles: SETUP, description: 'Write the approved parts (records + files beside project.json; never the repo, never the scheduler) on the human\'s words.',
     schema: obj({ project: S.str('project name'), owner_words: S.str("the human's sentence, verbatim") }, ['project']), run: adoptApplyTool },
 ];
 
@@ -215,7 +215,7 @@ function status(a, ctx) {
     const plan = JSON.parse(p.out);
     return { text: formatPlan(plan), data: { plan } };
   }
-  if (a.view === 'instructions') {   // META-INSTRUCTIONS R1: rides on meta_status (the controller profile is capped at 16 tools)
+  if (a.view === 'instructions') {   // META-INSTRUCTIONS R1: rides on norn_status (the controller profile is capped at 16 tools)
     if (!ctx.project) bad('view instructions needs a project (start the server with --project <project.json>)');
     const r = ctx.cliRun(['instructions', '--json']);
     if (r.code) throw new ToolError(r.err || r.out, r.code);
@@ -243,12 +243,12 @@ function records(a, ctx) {
   return { text: rows.map(i => `${i.id}  ${i.state}  ${i.data.lane ?? ''}  ${title(i)}`).join('\n') || '(none)', data: { rows } };
 }
 function answer(a, ctx) {
-  guard(ctx, a.text, 'meta_answer');
+  guard(ctx, a.text, 'norn_answer');
   const e = write(ctx, { kind: 'question', ev: 'answer', id: a.q, data: { text: a.text, ...(a.choice !== undefined ? { choice: a.choice } : {}) } }, 'owner');
   return { text: `${e.id} answered`, data: { id: e.id, state: 'answered' } };
 }
 function directive(a, ctx) {
-  guard(ctx, a.text, 'meta_directive');
+  guard(ctx, a.text, 'norn_directive');
   const e = write(ctx, { kind: 'directive', ev: 'create', data: { text: a.text, ...(a.scope ? { scope: a.scope } : {}), ...(a.expires ? { expires_utc: a.expires } : {}) } }, 'owner');
   return { text: e.id, data: { id: e.id } };
 }
@@ -265,7 +265,7 @@ function decisionAdd(a, ctx) {
 }
 function recordEvent(a, ctx) {
   const kind = kindOfId(a.id) || bad(`${a.id} is not a record id (Q-n, DEC-n, DIR-n, L:name)`);
-  if (kind === 'run') bad('run events are written by the launcher / meta_stop');
+  if (kind === 'run') bad('run events are written by the launcher / norn_stop');
   const e = write(ctx, { kind, ev: a.event, id: a.id, data: a.fields || {} });
   return { text: `${e.id} ${st(ctx).items[e.id].state}`, data: { id: e.id, state: st(ctx).items[e.id].state } };
 }
@@ -288,7 +288,7 @@ function stop(a, ctx) {
   if (r.code) throw new ToolError(r.err || r.out, r.code);
   return { text: r.out, data: { run: a.run, state: 'killed' } };
 }
-// META-GTP-ASK (GT-PARITY-PLAN 2.6): the ask rides on meta_run_show - the controller profile is capped at 16 tools (tests/mcp.test.mjs)
+// META-GTP-ASK (GT-PARITY-PLAN 2.6): the ask rides on norn_run_show - the controller profile is capped at 16 tools (tests/mcp.test.mjs)
 function askTool(a, ctx) {
   if (!['checkin', ...CONTROLLERS].includes(ctx.profile)) bad(`ask is for the checkin / controller profiles, not ${ctx.profile}`);
   const args = ['ask', a.run, '--q', a.ask, ...(a.executor ? ['--executor', a.executor] : []), ...(a.max_s !== undefined ? ['--max-s', String(a.max_s)] : [])];
@@ -366,7 +366,7 @@ function ledger(a, ctx) {
 
 function mailTool(a, ctx) {
   const run = ctx.env?.META_RUN_ID;
-  if (!run) bad('meta_mail serves a supervised run: META_RUN_ID is not set');
+  if (!run) bad('norn_mail serves a supervised run: META_RUN_ID is not set');
   if (a.action === 'check') {
     const got = checkMail(ctx.state, { by: mailRole(ctx.state, ctx.env), run, via: 'mcp' });
     return { text: got.length ? got.map(formatMail).join('\n\n') : 'no new mail', data: { mail: got.map(m => ({ id: m.id, from: m.data.from, subject: m.data.subject, urgent: !!m.data.urgent, body: m.text })) } };
@@ -397,26 +397,26 @@ function machineOf(ctx) {
 const needMachine = ctx => machineOf(ctx) || bad(`no machine.json at ${fwd(machinePath(ctx))}: run \`norn setup\` in a terminal first (the install step; it asks before it installs anything)`);
 function projectNamed(ctx, name) {
   const mm = needMachine(ctx), x = mm.projects.find(y => y.name === name);
-  if (!x) bad(`no project ${name} (registered: ${mm.projects.map(y => y.name).join(', ') || 'none'}; meta_adopt_start {root} registers one)`);
+  if (!x) bad(`no project ${name} (registered: ${mm.projects.map(y => y.name).join(', ') || 'none'}; norn_adopt_start {root} registers one)`);
   if (!x.p) bad(`${name}: ${x.error}`);
   return x.p;
 }
 function nextOf(p, prop) {
-  if (!prop) return `meta_adopt_start {root: "${p.root}"}: draft its setup`;
-  if (prop.state === 'open') return prop.undecided.length ? `review with the human: meta_adopt_show, then meta_adopt_decide for ${prop.undecided.join(', ')}` : 'every part is decided: meta_adopt_apply on the human\'s word';
+  if (!prop) return `norn_adopt_start {root: "${p.root}"}: draft its setup`;
+  if (prop.state === 'open') return prop.undecided.length ? `review with the human: norn_adopt_show, then norn_adopt_decide for ${prop.undecided.join(', ')}` : 'every part is decided: norn_adopt_apply on the human\'s word';
   if (prop.state === 'applied') return 'set up: give it work (norn lane new, or the dashboard)';
-  return 'closed: meta_adopt_start drafts it again';
+  return 'closed: norn_adopt_start drafts it again';
 }
 function setupStatus(a, ctx) {
   const mm = machineOf(ctx);
-  if (!mm) return { text: `Norn is not set up on this machine (no ${fwd(machinePath(ctx))}): run \`norn setup\` in a terminal first, then meta_adopt_scan {root}.`, data: { machine: false, projects: [], next: 'norn setup' } };
+  if (!mm) return { text: `Norn is not set up on this machine (no ${fwd(machinePath(ctx))}): run \`norn setup\` in a terminal first, then norn_adopt_scan {root}.`, data: { machine: false, projects: [], next: 'norn setup' } };
   const projects = mm.projects.map(x => {
     const prop = x.p ? proposalOf(x.p.state) : null;
     return { name: x.name, root: x.p?.root ?? null, ...(x.error ? { error: x.error } : {}), adopt: prop ? { id: prop.id, state: prop.state, undecided: prop.undecided } : null,
       next: x.p ? nextOf(x.p, prop) : `fix ${fwd(x.config)}: ${x.error}` };
   });
   const lines = [`machine ${fwd(mm.file)}: ${projects.length} project(s)`, ...projects.map(r => `${r.name}  ${r.root ?? '-'}  setup ${r.adopt ? `${r.adopt.id} ${r.adopt.state}` : 'not drafted'}  next: ${r.next}`)];
-  if (!projects.length) lines.push('No project yet: meta_adopt_scan {root: "<repo path>"} looks at a repo (free, writes nothing); meta_adopt_start registers it and drafts its setup.');
+  if (!projects.length) lines.push('No project yet: norn_adopt_scan {root: "<repo path>"} looks at a repo (free, writes nothing); norn_adopt_start registers it and drafts its setup.');
   return { text: lines.join('\n'), data: { machine: true, file: fwd(mm.file), projects } };
 }
 function adoptScanTool({ root }, ctx) {
@@ -427,7 +427,7 @@ function adoptScanTool({ root }, ctx) {
     `commands: ${f.commands.map(c => `${c.id} ${c.cmd} [${c.source}${c.ci ? '; CI ' + c.ci : ''}]`).join('; ') || 'none found'}`,
     `plans: ${f.plans.map(p => `${p.file} (${p.items} items)`).join(', ') || 'none'}; agent files: ${f.agent_files.map(a => a.file).join(', ') || 'none'}; branches in flight: ${f.branches.filter(b => !b.merged).length}`,
     ...qs.map(q => `question ${q.id}: ${q.text} (${q.why})`),
-    `scan took ${f.scan_ms} ms; nothing was written. ${x ? `It is project ${x.name}.` : 'Not a project yet.'} Next: ask the human read or facts only, then meta_adopt_start.`];
+    `scan took ${f.scan_ms} ms; nothing was written. ${x ? `It is project ${x.name}.` : 'Not a project yet.'} Next: ask the human read or facts only, then norn_adopt_start.`];
   return { text: lines.join('\n'), data: { facts: f, questions: qs, project: x?.name ?? null } };
 }
 async function adoptStartTool(a, ctx) {
@@ -443,16 +443,16 @@ async function adoptStartTool(a, ctx) {
   if (a.read !== undefined) args.push(a.read ? '--read' : '--no-read');
   const r = await ctx.cliRunAsync(args), head = wrote.length ? wrote.join('\n') + '\n' : '';
   const choose = r.code === 2 && /choose: (.*)/.exec(r.err);
-  if (choose) return { text: `${head}Ask the human first. ${choose[1]}\nThen meta_adopt_start again with read: true (that read) or read: false (the free facts-only draft).`, data: { project: p.name, choose: true, consent: choose[1], wrote } };
+  if (choose) return { text: `${head}Ask the human first. ${choose[1]}\nThen norn_adopt_start again with read: true (that read) or read: false (the free facts-only draft).`, data: { project: p.name, choose: true, consent: choose[1], wrote } };
   if (r.code) throw new ToolError(r.err || r.out, r.code);
   const id = /^(ADP-[\w-]+)/m.exec(r.out)?.[1] ?? null;
-  return { text: `${head}${r.out}\nnext: meta_adopt_show {project: "${p.name}"}${a.read ? ' when the read has ended (minutes; it is capped)' : ''}`, data: { project: p.name, id, read: !!a.read, wrote } };
+  return { text: `${head}${r.out}\nnext: norn_adopt_show {project: "${p.name}"}${a.read ? ' when the read has ended (minutes; it is capped)' : ''}`, data: { project: p.name, id, read: !!a.read, wrote } };
 }
 function adoptShowTool(a, ctx) {
   const p = projectNamed(ctx, a.project), prop = proposalOf(p.state);
-  if (!prop) return { text: `${p.name} has no setup draft yet: meta_adopt_start {root: "${p.root}"}`, data: { project: p.name, id: null } };
+  if (!prop) return { text: `${p.name} has no setup draft yet: norn_adopt_start {root: "${p.root}"}`, data: { project: p.name, id: null } };
   let lines = renderProposal(prop, { part: a.part });
-  if (!a.part) lines = [...lines.filter(l => !/^ {4}\S/.test(l)), 'meta_adopt_show {project, part} lists the lines of one part.'];
+  if (!a.part) lines = [...lines.filter(l => !/^ {4}\S/.test(l)), 'norn_adopt_show {project, part} lists the lines of one part.'];
   const parts = prop.parts.filter(x => !a.part || x.id === a.part).map(x => ({ id: x.id, title: x.title, status: x.applied ? 'applied' : x.status, ...(x.pick ? { pick: true } : {}),
     ...(x.empty ? { empty: x.empty } : {}), lines: a.part ? x.lines.map(l => ({ id: l.id, text: l.text, source: l.source, ...(l.already ? { already: true } : {}), ...(l.unverified ? { unverified: true } : {}) })) : x.lines.length }));
   return { text: lines.join('\n'), data: { project: p.name, id: prop.id, state: prop.state, path: prop.path, undecided: prop.undecided, parts } };
@@ -483,7 +483,7 @@ async function adoptDecideTool(a, ctx) {
   let r;
   try { r = adoptDecide(p.state, { part: a.part, verdict: a.verdict, off: a.off, on: a.on, pick, by: 'owner', extra: { owner_words: words, via: ctx.via } }); } catch (e) { if (e instanceof AdoptError) bad(e.message); throw e; }
   const left = proposalOf(p.state).undecided;
-  return { text: `${r.id} ${a.part}: ${a.verdict === 'approve' ? 'approved' : 'skipped'}${pick && a.verdict === 'approve' ? ` (${pick})` : ''}; ${left.length ? `to review: ${left.join(', ')}` : 'every part is decided: meta_adopt_apply on the human\'s word'}`,
+  return { text: `${r.id} ${a.part}: ${a.verdict === 'approve' ? 'approved' : 'skipped'}${pick && a.verdict === 'approve' ? ` (${pick})` : ''}; ${left.length ? `to review: ${left.join(', ')}` : 'every part is decided: norn_adopt_apply on the human\'s word'}`,
     data: { id: r.id, part: a.part, verdict: a.verdict, ...(pick ? { pick } : {}), undecided: left } };
 }
 async function adoptApplyTool(a, ctx) {
@@ -499,7 +499,7 @@ async function adoptApplyTool(a, ctx) {
     }
     if (!words) bad(NO_WORDS);
     const r = await adoptApply(p.state, { project: p, by: 'owner', metaRoot: root, extra: { owner_words: words, via: ctx.via } });
-    return { text: [...r.lines, `${r.id} ${r.complete ? 'applied' : 'partly applied (parts left to review: meta_adopt_show)'}`].join('\n'), data: { id: r.id, complete: r.complete, lines: r.lines } };
+    return { text: [...r.lines, `${r.id} ${r.complete ? 'applied' : 'partly applied (parts left to review: norn_adopt_show)'}`].join('\n'), data: { id: r.id, complete: r.complete, lines: r.lines } };
   } catch (e) { if (e instanceof AdoptError) bad(e.message); throw e; }
 }
 
@@ -510,7 +510,7 @@ const PROMPTS = [
   { name: 'checkin', profiles: CK, description: 'One check-in pass (the check-in role pack).' },
 ];
 
-// ---------- META-CONTROLLER C3: the chat profile - verbatim guard, meta_show / meta_cli / meta_approve, the tier gate ----------
+// ---------- META-CONTROLLER C3: the chat profile - verbatim guard, norn_show / norn_cli / norn_approve, the tier gate ----------
 // the verbatim guard (SPEC sec. 3): owner words are recorded only when the owner wrote them in this thread (profile chat; the other
 // profiles keep the rule as prose in their role packs)
 function guard(ctx, text, what) {
@@ -556,17 +556,17 @@ async function approveTool(a, ctx) {
 // what a tier-2 card says (a Settings change shows its diff first: a dry run)
 function cardOf(t, a, ctx) {
   const who = ctx.project?.name ?? 'the project';
-  if (t.name === 'meta_pause') return a.on ? { title: `Pause ${who}`, text: 'No new dispatches and no check-ins until you resume.' } : { title: `Resume ${who}`, text: 'Dispatches and check-ins start again.' };
-  if (t.name === 'meta_settings') return { title: `Change setting ${a.set.key}`, text: settings({ ...a, dry_run: true }, ctx).text };
-  if (t.name === 'meta_cli') return { title: `norn ${cliPlan(a.args).sub}`, command: 'norn ' + a.args.join(' '),
+  if (t.name === 'norn_pause') return a.on ? { title: `Pause ${who}`, text: 'No new dispatches and no check-ins until you resume.' } : { title: `Resume ${who}`, text: 'Dispatches and check-ins start again.' };
+  if (t.name === 'norn_settings') return { title: `Change setting ${a.set.key}`, text: settings({ ...a, dry_run: true }, ctx).text };
+  if (t.name === 'norn_cli') return { title: `norn ${cliPlan(a.args).sub}`, command: 'norn ' + a.args.join(' '),
     text: a.args.includes('--batching') ? 'The merge-queue kill switch.' : 'Builds and gates a merge batch; its MERGE run moves main.' };
   return { title: t.name, text: clip(JSON.stringify(a), 600) };
 }
 // the done card of an act, with an Undo where the verb has one (SPEC sec. 8 C3: requeue / stop of a queued run / revoke)
 function doneCard(t, a, r, ctx) {
-  if (t.name === 'meta_directive') return emit(ctx.state, { kind: 'done', title: `${r.data.id} saved in your words`, lines: [a.text], undo: { verb: 'revoke', id: r.data.id } });
-  if (t.name === 'meta_answer') return emit(ctx.state, { kind: 'done', title: `${a.q} answered in your words`, lines: [a.text] });
-  if (t.name !== 'meta_cli') return undefined;
+  if (t.name === 'norn_directive') return emit(ctx.state, { kind: 'done', title: `${r.data.id} saved in your words`, lines: [a.text], undo: { verb: 'revoke', id: r.data.id } });
+  if (t.name === 'norn_answer') return emit(ctx.state, { kind: 'done', title: `${a.q} answered in your words`, lines: [a.text] });
+  if (t.name !== 'norn_cli') return undefined;
   const out = r.data.out ?? '', q = out.match(/^QUEUED (RUN-\d+)/m), rq = out.match(/^REQUEUED (RUN-\d+) -> (RUN-\d+)/m), d = out.match(/^directive (DIR-\d+).*$/m);
   if (q) emit(ctx.state, { kind: 'done', title: `${q[1]} queued`, lines: [q.input.split('\n').find(l => l.startsWith('QUEUED'))], undo: { verb: 'stop', run: q[1] } });
   if (rq) emit(ctx.state, { kind: 'done', title: `${rq[1]} re-queued as ${rq[2]}`, lines: [rq[0]], undo: { verb: 'requeue', run: rq[2], from: rq[1] } });
@@ -593,14 +593,14 @@ function gated(t, a, ctx) {
 }
 
 // ---------- META-CONTROLLER C4 (SPEC sec. 2 item 1): a controller's act on a lane sets or extends its hold ----------
-// the lane an act writes on (null = none / not a lane act); meta_cli lane claim / release are the hold itself
+// the lane an act writes on (null = none / not a lane act); norn_cli lane claim / release are the hold itself
 function actLane(name, a, ctx) {
   const ofId = id => (!id ? null : String(id).startsWith('L:') ? String(id).slice(2) : st(ctx).items[id]?.data?.lane ?? null);
-  if (['meta_run', 'meta_decision_add', 'meta_question_add'].includes(name)) return a.lane ?? null;
-  if (name === 'meta_stop') return ofId(a.run);
-  if (name === 'meta_answer') return ofId(a.q);
-  if (name === 'meta_record_event') return ofId(a.id);
-  if (name !== 'meta_cli') return null;
+  if (['norn_run', 'norn_decision_add', 'norn_question_add'].includes(name)) return a.lane ?? null;
+  if (name === 'norn_stop') return ofId(a.run);
+  if (name === 'norn_answer') return ofId(a.q);
+  if (name === 'norn_record_event') return ofId(a.id);
+  if (name !== 'norn_cli') return null;
   const [c, s, x] = a.args, flag = f => { const i = a.args.indexOf(f); return i >= 0 ? a.args[i + 1] ?? null : null; };
   if (c === 'lane') return s === 'new' ? x ?? null : null;
   if (c === 'run') return flag('--lane');
@@ -634,8 +634,8 @@ export function handle(msg, ctx) {
     ctx.clientCaps = params.capabilities || {};   // META-ADOPT A4: elicitation is used only when the client declares it
     const v = PROTOCOLS.includes(params.protocolVersion) ? params.protocolVersion : PROTOCOLS[0];
     return ok({ protocolVersion: v, capabilities: { tools: { listChanged: false }, prompts: { listChanged: false } },
-      serverInfo: { name: 'meta', version: '1.0.0' }, instructions: ctx.profile === 'setup' ? 'norn setup server (machine-scoped). Start with meta_setup_status; the adopt prompt walks "set this repo up for Norn".'
-        : `norn ${ctx.profile} server for ${ctx.project?.name ?? fwd(ctx.state)}. Start with meta_boot (or meta_status for workers).` });
+      serverInfo: { name: 'norn', version: '1.0.0' }, instructions: ctx.profile === 'setup' ? 'norn setup server (machine-scoped). Start with norn_setup_status; the adopt prompt walks "set this repo up for Norn".'
+        : `norn ${ctx.profile} server for ${ctx.project?.name ?? fwd(ctx.state)}. Start with norn_boot (or norn_status for workers).` });
   }
   if (method === 'ping') return ok({});
   if (method === 'tools/list') return ok({ tools: TOOLS.filter(t => t.profiles.includes(ctx.profile)).map(t => ({ name: t.name, description: t.description, inputSchema: t.schema })) });
@@ -671,7 +671,7 @@ export function handle(msg, ctx) {
  * { approvalMs (default 30 min), pollMs, notifyFn({ id, title, body }) (default: norn notify --class ask) }.
  */
 export function context(o) {
-  // setup (machine-scoped) writes as the controller acting in the human's chat; its decide / apply carry the human's words (meta_answer pattern)
+  // setup (machine-scoped) writes as the controller acting in the human's chat; its decide / apply carry the human's words (norn_answer pattern)
   const writer = CONTROLLERS.includes(o.profile) || o.profile === 'setup' ? 'controller' : o.profile === 'checkin' ? 'checkin' : null;
   const where = o.project ? ['--project', o.project.file] : o.state ? ['--state', o.state] : [];
   const run = async (argv, extra = {}) => { const out = [], err = []; const code = (await o.cli([...argv, ...where], { ...o.env, ...extra }, s => out.push(s), s => err.push(s))) ?? 0; return { code, out: out.join('\n'), err: err.join('\n') }; };

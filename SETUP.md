@@ -18,12 +18,24 @@ variables only. The scheduler is the only thing it puts on your machine, and onl
 
 ## 1. Prerequisites and setup
 
-You need node >= 22, git and the claude CLI. codex and gh are optional. Check node first:
+You need node >= 22, git and the claude CLI, signed in to your Claude account. codex and gh are optional. Check node first:
 
 <!-- guide:run expect=/v(2[2-9]|[3-9]\d)\./ -->
 ```
 node --version
 ```
+
+If that prints an error or a version below 22, install node with your OS's line (the vendor's own command; agents: only with
+the human's consent), open a new terminal and check again. Setup below names the line for git and claude the same way.
+
+| OS | Install node 22 |
+|---|---|
+| Windows | `winget install OpenJS.NodeJS.LTS` |
+| macOS | `brew install node` |
+| Linux | `curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.41.0/install.sh \| bash`, then in a new terminal `nvm install 22` |
+
+Sign in to claude once before your first real run: `claude auth login` (or start `claude` and follow its prompt). Until then
+step 5's `doctor` prints `PROBLEM claude: not logged in`; the free rehearsal in step 6 does not need it.
 
 Then run setup. It finds every prerequisite and writes `local/machine.json` (your machine's discovered values, never typed by
 hand) and, when it has none yet, `local/budget.json` with the starter caps of the `try-it` profile: 1 Claude worker, no Codex,
@@ -40,7 +52,7 @@ node engine/bin/norn.mjs setup --non-interactive
 
 If a prerequisite is missing, setup prints `error: <tool> not found` and, under it, `install: <command>   (<source page>)` for
 your OS, then stops with nothing written. Agents: show the human that line, run it only if they agree, in their shell, then run
-setup again. Setup also puts the `norn` launcher (and `meta`, its old name) in `~/.local/bin`; it never points them at a linked git worktree unless you pass `--force`. Until that dir is on PATH, keep typing
+setup again. Setup also puts the `norn` launcher in `~/.local/bin`; it never points it at a linked git worktree unless you pass `--force`. Until that dir is on PATH, keep typing
 `node engine/bin/norn.mjs`.
 
 ## 2. Check the install

@@ -5,7 +5,7 @@ const dq = s => `"${String(s).replace(/(["\\])/g, '\\$1')}"`;
 export function plan(o) {
   const dir = `${o.home}/.config/systemd/user`, svc = `${dir}/${o.name}.service`, tmr = `${dir}/${o.name}.timer`;
   const service = `[Unit]
-Description=meta-controller tick (norn status + one check-in per project)
+Description=Norn tick (norn status + one check-in per project)
 
 [Service]
 Type=oneshot
@@ -15,7 +15,7 @@ KillMode=process
 TimeoutStartSec=55min
 `;
   const timer = `[Unit]
-Description=meta-controller tick every ${o.interval_min} min
+Description=Norn tick every ${o.interval_min} min
 
 [Timer]
 OnBootSec=2min

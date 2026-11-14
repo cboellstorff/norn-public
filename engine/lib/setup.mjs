@@ -9,12 +9,13 @@ import crypto from 'node:crypto';
 import { discover, resolveShim, which } from './paths.mjs';
 import { PREREQS, hint, nodeOk } from './prereqs.mjs';
 import { loadState } from './records.mjs';
-import { adapterFor as schedAdapter, realIo as schedIo, schedName, schedState, normDir, LEGACY_NAME } from './sched/index.mjs';
+import { adapterFor as schedAdapter, realIo as schedIo, schedName, schedState, normDir, isOldName, liveName, oldTasks } from './sched/index.mjs';
 import { spawnSync } from 'node:child_process';
 import { loadMachine, loadProject, validate, portable, metaRoot, fwd, ConfigError, MACHINE_SCHEMA, PROJECT_SCHEMA, readCompat } from './config.mjs';
 import { fileURLToPath } from 'node:url';
 import { providersOf, keySet, isCli } from './executors.mjs';
 import { ADAPTERS } from './harness/index.mjs';
+import { oldServerProblems } from './harness/oldnames.mjs';
 import { listProcs, runFacts, strays, strayLine } from './strays.mjs';
 import { readDash, dashRows } from './dashlive.mjs';
 import { starterPolicy, allowedExecutors, ROLE_AGENTS } from './policy.mjs';
@@ -398,6 +399,8 @@ export function projectRemove({ name, purgeState = false, dryRun = false, env = 
     if (ss?.foreign) out(`scheduler ${sc.kind} '${sc.name}': belongs to the install at ${ss.owner} - kept`);
     else if (ss?.installed) { out(`${W}remove scheduler ${sc.kind} '${sc.name}'`); if (!dryRun) { a.remove(o, io); out(`scheduler ${sc.kind} '${sc.name}' removed (no project left)`); } }
     else if (a) out(`scheduler ${sc.kind} '${sc.name}': not installed`);
+    // META-NAME-W2: a pre-rename task of this install goes too
+    if (a && !ss?.foreign) for (const n of oldTasks(a, o, io)) { out(`${W}remove old scheduler ${sc.kind} '${n}'`); if (!dryRun) a.remove({ ...o, name: n }, io); }
   } else out(`scheduler: kept (${left} project(s) left)`);
   // 5. state
   if (purgeState) { out(`${W}delete state ${f.state}`); if (!dryRun) fs.rmSync(f.state, { recursive: true, force: true }); }
@@ -468,13 +471,14 @@ export function notifyFinish(r, { meta, env = process.env, interactive = false, 
 }
 
 /** OOTB F-4: { old (machine.json scheduler or null), meta, adapter, io, node, home } -> { name, notes }. The recorded name stays unless
- *  ANOTHER install owns its task (then this install's derived name); a fresh install derives its own; the legacy-named task of another
- *  install is named in a note. Read-only: it only asks the OS scheduler. */
+ *  ANOTHER install owns its task (then this install's derived name); a fresh install derives its own. META-NAME-W2: a recorded
+ *  pre-rename name moves to this install's norn-tick name; a pre-rename task still installed is named with the command that moves
+ *  it. Read-only: it only asks the OS scheduler. */
 export function schedChoice({ old, meta, adapter, io = schedIo, node, home }) {
   const own = schedName(meta), notes = [], o = name => ({ name, interval_min: 15, node, meta: fwd(meta), home });
   const theirs = n => { const s = schedState(adapter, o(n), io); if (s.foreign) notes.push(`scheduled task '${n}' belongs to the install at ${s.owner} - not this one (this install's task: '${own}')`); return s.foreign; };
-  const name = old?.name && !theirs(old.name) ? old.name : own;
-  if (name !== LEGACY_NAME && old?.name !== LEGACY_NAME) theirs(LEGACY_NAME);
+  const name = old?.name && !isOldName(old.name) && !theirs(old.name) ? old.name : own;
+  for (const n of oldTasks(adapter, o(name), io)) notes.push(`old scheduled task '${n}' of this install is still installed - norn sched install moves it to '${name}'`);
   return { name, notes };
 }
 
@@ -493,7 +497,7 @@ export function setup({ force = false, nonInteractive = false, projects = [], as
   const interactive = !nonInteractive && (!!process.stdin.isTTY || env.META_INTERACTIVE === '1');
   const nr = notifyChoice({ old: old?.notify, choice: notify, server, interactive, ask, out });
   // OOTB F-4: the task name of THIS install (a recorded name stays unless another install owns its task); --no-scheduler asks no OS
-  let sc = { name: old?.scheduler?.name || schedName(meta), notes: [] };
+  let sc = { name: liveName(old?.scheduler?.name, meta), notes: [] };
   if (!noScheduler) {
     try { sc = schedChoice({ old: old?.scheduler, meta, adapter: schedAdapter(d.scheduler.kind), node: d.node.exe, home: fwd(home) }); }
     catch (e) { sc.notes.push(`scheduler: ${e.message}`); }
@@ -555,6 +559,14 @@ export function setup({ force = false, nonInteractive = false, projects = [], as
   return rc;
 }
 
+// META-NAME-W2: a pre-rename task of this install left installed = a PROBLEM with the one command that moves it (never two ticks)
+export function oldSchedProblems({ machine, meta, io = schedIo }) {
+  let a; try { a = schedAdapter(machine.scheduler.kind); } catch { return []; }
+  const sc = machine.scheduler, name = isOldName(sc.name) ? schedName(meta) : sc.name;
+  const o = { name, interval_min: sc.interval_min, node: machine.node, meta: fwd(meta), home: machine.home };
+  return oldTasks(a, o, io).map(n => `scheduler: old task '${n}' of this install is still installed - run: norn sched install (moves it to '${name}')`);
+}
+
 export function doctor({ env = process.env, out }) {
   const meta = metaRoot(env), problems = [];
   const bad = s => { problems.push(s); out('PROBLEM ' + s); };
@@ -591,6 +603,8 @@ export function doctor({ env = process.env, out }) {
       else bad(`codex: ${cmd} --version failed (exit ${r.status}${r.error ? ' ' + r.error.message : ''})`);
     } catch (e) { bad(`codex: ${e.message}`); }
   }
+  for (const t of oldSchedProblems({ machine: m, meta })) bad(t);
+  for (const t of oldServerProblems({ home: m.home, env })) bad(t);   // META-NAME-W2: an MCP server registered under the old name
   // OOTB F-14: one cheap auth probe of the found claude (`claude auth status --json`, local, no turn): logged in or not + the method
   // only - never the account fields; no answer (an old claude, offline, a hang) = a note, never a problem
   if (m.claude?.exe && exists(m.claude.exe)) {
@@ -661,7 +675,8 @@ export function checkoutOf(root) {
 }
 
 // `norn` on PATH (design 3.5): launchers in ~/.local/bin (the pipx / uv tool convention) that run THIS engine's norn.mjs with this
-// node: `norn` first, then `meta` (the old name, same entry, kept while running work and rules still call it). Written when
+// node: `norn`; `meta` (the old name, same entry) only where a `meta` launcher already exists - an upgrade, never a fresh install
+// (META-NAME-W2). Written when
 // absent or already ours (it names engine/bin/norn.mjs or the old meta.mjs); a foreign file is kept. Warns when the dir is not on PATH.
 // META-RENAME R1: never pointed at a linked git worktree (a worker's checkout: it goes away, and its code is not the owner's) unless
 // force - the line names the main checkout to run setup from.
@@ -673,7 +688,8 @@ export function installShim({ home, root = path.resolve(ENGINE, '..'), force = f
   }
   const files = { norn: `#!/bin/sh\nexec "${fwd(node)}" "${fwd(cli)}" "$@"\n` };
   if (platform === 'win32') files['norn.cmd'] = `@"${node}" "${cli}" %*\r\n`;
-  for (const n of Object.keys(files)) files[n.replace(/^norn/, 'meta')] = files[n];   // the old name: the same entry
+  const upgrade = Object.keys(files).some(n => fs.existsSync(path.join(bin, n.replace(/^norn/, 'meta'))));
+  if (upgrade) for (const n of Object.keys(files)) files[n.replace(/^norn/, 'meta')] = files[n];   // the old name: the same entry
   fs.mkdirSync(bin, { recursive: true });
   for (const [n, text] of Object.entries(files)) {
     const f = path.join(bin, n);
@@ -687,7 +703,9 @@ export function installShim({ home, root = path.resolve(ENGINE, '..'), force = f
   }
   const sep = platform === 'win32' ? ';' : ':', norm = p => path.resolve(p).toLowerCase().replace(/[\\/]+$/, '');
   const on = (env.PATH || env.Path || '').split(sep).filter(Boolean).some(p => norm(p) === norm(bin));
-  out(`norn launcher: ${fwd(bin)}/norn (old name: meta)${on ? '' : ` - ${fwd(bin)} is not on PATH: add it (or alias norn='node ${fwd(cli)}')`}`);
+  // the stop-gap in the user's own shell: PowerShell's Set-Alias cannot carry arguments, so Windows gets a function
+  const stopgap = platform === 'win32' ? `in PowerShell: function norn { node "${fwd(cli)}" @args }` : `alias norn='node ${fwd(cli)}'`;
+  out(`norn launcher: ${fwd(bin)}/norn${upgrade ? ' (old name: meta)' : ''}${on ? '' : ` - ${fwd(bin)} is not on PATH: add it (or ${stopgap})`}`);
 }
 
 // `norn gen [--check] [--project <project.json>]` (H3): regenerate (or, with --check, only drift-check) every harness target of the

@@ -44,13 +44,13 @@ test('modes: read-only and no-tools per family; a mode a family lacks is refused
 });
 
 test('MCP attach: claude by flag (strict, once), codex by -c overrides, cli / fake refuse (config / none)', () => {
-  const mcp = { name: 'meta', command: 'C:/Program Files/nodejs/node.exe', args: ['C:/m/norn.mjs', 'mcp', '--profile', 'worker'] };
+  const mcp = { name: 'norn', command: 'C:/Program Files/nodejs/node.exe', args: ['C:/m/norn.mjs', 'mcp', '--profile', 'worker'] };
   const a = adapterFor('claude').command({ ...O, readonly: true, mcp }).args;
-  assert.deepEqual(JSON.parse(at(a, '--mcp-config')), { mcpServers: { meta: { command: mcp.command, args: mcp.args } } });
+  assert.deepEqual(JSON.parse(at(a, '--mcp-config')), { mcpServers: { norn: { command: mcp.command, args: mcp.args } } });
   assert.equal(a.filter(x => x === '--strict-mcp-config').length, 1);
   const x = adapterFor('codex').command({ ...O, mcp }).args;
-  assert.ok(x.includes(`mcp_servers.meta.command=${JSON.stringify(mcp.command)}`));
-  assert.ok(x.includes(`mcp_servers.meta.args=${JSON.stringify(mcp.args)}`));
+  assert.ok(x.includes(`mcp_servers.norn.command=${JSON.stringify(mcp.command)}`));
+  assert.ok(x.includes(`mcp_servers.norn.args=${JSON.stringify(mcp.args)}`));
   assert.equal(x.at(-1), '-');
   assert.throws(() => adapterFor('cli').command({ ...G, mcp }), /norn harness install --family grok/);
   assert.throws(() => adapterFor('fake').command({ ...O, mcp }), /no MCP/);
@@ -109,7 +109,7 @@ test('checkinExecutor: claude by default; another executor only under the trial 
   const c = checkinExecutor({ B: { ...B, checkin_executor: 'codex-astra', checkin_executor_trial: true }, machine, p });
   assert.equal(c.executor, 'codex-astra'); assert.equal(c.trial, 'codex-astra'); assert.equal(c.exe, 'codex.exe');
   assert.equal(c.model, 'gpt-6-astra'); assert.equal(c.effort, 'medium');
-  assert.equal(c.mcp.name, 'meta'); assert.deepEqual(c.mcp.args.slice(-4), ['--project', 'C:/p/project.json', '--profile', 'checkin']);
+  assert.equal(c.mcp.name, 'norn'); assert.deepEqual(c.mcp.args.slice(-4), ['--project', 'C:/p/project.json', '--profile', 'checkin']);
   assert.ok(c.writable_roots.includes(ST), 'records + locks under the state root');
   assert.deepEqual(c.fallback, { executor: 'claude', exe: 'claude.exe', model: 'claude-opus-5-5', effort: 'medium' });
   assert.equal(checkinExecutor({ B: { ...B, checkin_executor: 'codex-sol', checkin_executor_trial: true }, machine, p }).model, 'gpt-6.1-sol');

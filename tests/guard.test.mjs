@@ -37,7 +37,7 @@ function runFile(pdir, sid, { n, ctx0 = 20000, grow = 500, tool = READ, result =
 test('trace + sources: each turn\'s context growth split into tool output by tool (test runners apart), the model\'s text and injected text; the share of cache reads each causes', () => {
   assert.equal(toolKey('Bash', { command: 'cd x && uv run --no-sync pytest tests/a.py -q' }), 'test runner');
   assert.equal(toolKey('Bash', { command: 'git status' }), 'Bash');
-  assert.equal(toolKey('mcp__norn__meta_status', {}), 'MCP');
+  assert.equal(toolKey('mcp__norn__norn_status', {}), 'MCP');
   const dir = mkTmp('meta-guard-src-');
   const f = w(path.join(dir, 's.jsonl'), [
     asst(1, ts(1), { cc: 10000, cr: 0, text: 'y'.repeat(400), tool: READ }), res(1, ts(1), 4000),

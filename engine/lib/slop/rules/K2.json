@@ -1,0 +1,13 @@
+{
+  "id": "K2", "level": "BLOCK", "kind": "swallow",
+  "title": "a new empty or comment-only catch with no reason",
+  "how": "JS files the diff touches: a catch block or .catch(() => {}) whose body is empty or only comments; the comment is a reason only when it says what happens next (two words or more) and does not start with a deny-list word",
+  "files": ["**/*.mjs", "**/*.js", "**/*.cjs"],
+  "deny": ["ignore", "ignored", "ok", "okay", "best effort", "nothing", "noop", "no-op", "empty", "todo", "fine", "whatever", "swallow"],
+  "fixture": {
+    "hit": { "base": { "src/io.mjs": "export const read = f => f();\n" },
+      "head": { "src/io.mjs": "export const read = f => { try { return f(); } catch { /* ignore */ } };\nexport const quiet = p => p.catch(() => {});\nexport function last(f) {\n  try { f(); } catch (e) {}\n}\nexport const meh = f => { try { f(); } catch { /* best effort, it is fine */ } };\n" } },
+    "miss": { "base": { "src/io.mjs": "export function old(f) {\n  try { f(); } catch (e) {}\n}\n" },
+      "head": { "src/io.mjs": "export function old(f) {\n  try { f(); } catch (e) {}\n}\nexport const read = f => { try { return f(); } catch { /* gone: the file was removed meanwhile, nothing left to read */ } };\nexport const loud = p => p.catch(e => { throw e; });\nexport const text = 'try { f(); } catch (e) {}';\n" } }
+  }
+}

@@ -146,6 +146,12 @@ export const KINDS = {
     rule: { from: ['open'], to: 'ruled', roles: [...CK, ...OWNER] },
     close: { from: ['open', 'ruled'], to: 'closed', roles: ['launcher', ...CK, ...OWNER] },
   } },
+  // META-SLOP-A (SPEC 3.4.2): a slop finding waived - { rule, scope (a fingerprint or a path glob), why, until? } in its own file
+  // (waivers.jsonl). The owner or the controller; a check-in never waives. Past `until` it no longer counts (derived, no event).
+  waiver: { prefix: 'WVR-', file: 'waivers', events: {
+    create: { from: null, to: 'active', roles: [...OWNER, 'controller'] },
+    revoke: { from: ['active'], to: 'revoked', roles: [...OWNER, 'controller'] },
+  } },
 };
 // META-ROADMAP S1: a roadmap link is a kind:id term (the --after grammar); existence is checked by roadmap.mjs checkLinks
 const NID = p => `${p}-(?:[a-z][a-z0-9]{0,15}-)?\\d+`;
@@ -279,6 +285,14 @@ const isOwnerRecord = it => it && (it.kind === 'directive' || (it.kind === 'ques
   || (it.kind === 'decision' && OWNER.includes(authorOf(it))));
 
 function validateData(kind, ev, d, target, st, by) {
+  if (kind === 'waiver') {
+    if (ev === 'create') {
+      str(d.rule, 'rule'); if (!/^[A-Z]+\d+$/.test(d.rule)) fail('rule must be a slop rule id (K2, T1, ...)');
+      str(d.scope, 'scope', { max: 300 }); str(d.why, 'why', { max: 600 }); str(d.until, 'until', { req: false });
+      if (d.until !== undefined && !Number.isFinite(Date.parse(d.until))) fail(`until must be an ISO time (got ${JSON.stringify(d.until)})`);
+    }
+    return;
+  }
   if (kind === 'guard') {
     if (ev === 'create') { str(d.run, 'run'); if (!/^RUN-/.test(d.run)) fail('run must be RUN-n'); oneOf(d.cls, 'cls', ['runaway', 'over-handoff', 'tool-spam']); str(d.why, 'why'); }
     if (ev === 'rule') { oneOf(d.action, 'action', ['let-run', 'mail', 'stop']); str(d.why, 'why'); }

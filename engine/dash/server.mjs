@@ -611,7 +611,7 @@ export function createDashboard(o) {
   // (no .. or link escapes); anything else is refused.
   const IMAGE = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
   const realOf = f => { try { return fs.realpathSync.native(path.resolve(f)); } catch { return null; } };
-  // C3: the same roots meta_show may show (chatact.showRoots: + the briefs dir and lane worktrees / NOTES folders)
+  // C3: the same roots norn_show may show (chatact.showRoots: + the briefs dir and lane worktrees / NOTES folders)
   const fileRoots = p => showRoots(p.state, p);
   function fileOf(p, url) {
     const raw = url.searchParams.get('path');

@@ -168,11 +168,11 @@ test('norn tick / norn status CLI on a project (dry), norn runs --unreviewed + r
   assert.equal(r.stdout.trim(), '');
 });
 
-const SCHED = { name: 'meta-controller-tick', interval_min: 15, node: '/opt/node/bin/node', meta: '/srv/meta-controller', home: '/srv/hm' };
+const SCHED = { name: 'norn-tick', interval_min: 15, node: '/opt/node/bin/node', meta: '/srv/norn', home: '/srv/hm' };
 test('scheduler goldens per OS (dry render: nothing installed)', () => {
   assert.deepEqual(Object.keys(ADAPTERS).sort(), ['cron', 'launchd', 'systemd', 'windows-task']);
   for (const kind of Object.keys(ADAPTERS)) {
-    const o = kind === 'windows-task' ? { ...SCHED, node: 'C:/Program Files/nodejs/node.exe', meta: 'C:/meta-controller', home: 'C:/home', user: 'HOST\\owner' } : SCHED;
+    const o = kind === 'windows-task' ? { ...SCHED, node: 'C:/Program Files/nodejs/node.exe', meta: 'C:/norn', home: 'C:/home', user: 'HOST\\owner' } : SCHED;
     const plan = adapterFor(kind).plan(o);
     const flat = plan.files.map(f => `=== ${f.path}\n${f.content}`).join('') + plan.install.map(c => '$ ' + c.join(' ')).join('\n') + '\n--- remove\n' + plan.remove.map(c => '$ ' + c.join(' ')).join('\n') + '\n';
     const g = path.join(GOLD, kind + '.txt');
@@ -191,17 +191,17 @@ test('scheduler install / remove go through the injected runner (cron keeps fore
     write: (f, c) => { files[f] = c; }, rm: f => { delete files[f]; } };
   const cron = adapterFor('cron');
   cron.install(SCHED, io);
-  assert.match(tab, /^0 1 \* \* \* \/usr\/bin\/backup\n\*\/15 \* \* \* \* .*tick --reason schedule .*# meta:meta-controller-tick\n$/);
+  assert.match(tab, /^0 1 \* \* \* \/usr\/bin\/backup\n\*\/15 \* \* \* \* .*tick --reason schedule .*# norn:norn-tick\n$/);
   cron.install(SCHED, io);
-  assert.equal(tab.split('\n').filter(l => l.includes('# meta:')).length, 1, 'idempotent');
+  assert.equal(tab.split('\n').filter(l => l.includes('# norn:')).length, 1, 'idempotent');
   cron.remove(SCHED, io);
   assert.equal(tab, '0 1 * * * /usr/bin/backup\n');
   const sd = adapterFor('systemd');
   sd.install(SCHED, io);
-  assert.deepEqual(Object.keys(files).sort(), ['/srv/hm/.config/systemd/user/meta-controller-tick.service', '/srv/hm/.config/systemd/user/meta-controller-tick.timer']);
+  assert.deepEqual(Object.keys(files).sort(), ['/srv/hm/.config/systemd/user/norn-tick.service', '/srv/hm/.config/systemd/user/norn-tick.timer']);
   sd.remove(SCHED, io);
   assert.deepEqual(files, {});
-  assert.ok(calls.includes('systemctl --user enable --now meta-controller-tick.timer') && calls.includes('systemctl --user disable --now meta-controller-tick.timer'));
+  assert.ok(calls.includes('systemctl --user enable --now norn-tick.timer') && calls.includes('systemctl --user disable --now norn-tick.timer'));
 });
 
 test('status: CI main line from gh run list, cached 10 min, a gh failure reads unknown', () => {
@@ -305,7 +305,7 @@ test('usage + nodes: the weekly estimate and the 2 h rate add the cache_read of 
   assert.equal(weeklyEstimate(o, new Date(now)).weekly, after.weekly, 're-import = the same estimate (idempotent, never twice)');
 });
 
-// META-CONTROLLER C1 (C0 finding: meta_status took ~58 s on an empty state): with no usage calibration the status shows no usage
+// META-CONTROLLER C1 (C0 finding: norn_status took ~58 s on an empty state): with no usage calibration the status shows no usage
 // figure, so it reads no transcript - a cold state (no usage-cache.json) used to parse every transcript under projects_dir since the
 // epoch (the anchor of an unset calibration is no date), ~5.5 GB on the owner's machine, for a number it then did not print.
 test('status: no usage calibration = no transcript read (no usage-cache written), the chat cache-read line still there', () => {

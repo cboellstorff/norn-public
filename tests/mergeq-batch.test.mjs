@@ -117,6 +117,8 @@ test('batch: a green gate -> ONE MERGE brief for the batch (one revert per branc
   fs.unlinkSync(lockPath(f.locks, f.repo));
   const n2 = await mergeqRun({ stateDir: f.state, project: f.project, locksDir: f.locks });
   assert.equal(loadBatch(f.state, 1).status, 'merged');
+  assert.equal(g(f.repo, 'branch', '--list', 'mq/batch-1'), '', 'landed: Norn deletes its batch branch (META-SLOP-A)');
+  assert.equal(g(f.repo, 'rev-parse', 'mq/batch-2'), n2.batch.merge_tip, 'a green batch waiting for its MERGE stage keeps its branch');
   assert.deepEqual(n2.batch.members.map(m => m.id), ['DLV-3']);
   assert.ok(n2.batch.ui, 'engine/dash/** changed: the brief takes shots');
   assert.match(fs.readFileSync(n2.batch.brief, 'utf8'), /SHOTS AFTER/);
@@ -184,6 +186,7 @@ test('main-red: no row shown to fix main -> the same member set is not rebuilt a
   const r1 = await mergeqRun({ stateDir: f.state, project: f.project, locksDir: f.locks });
   assert.deepEqual(r1.batch.members.map(m => m.id), ['DLV-1', 'DLV-2', 'DLV-3', 'DLV-4']);
   assert.equal(r1.batch.result, 'main-red'); assert.equal(r1.batch.status, 'main-red');
+  assert.equal(g(f.repo, 'branch', '--list', 'mq/batch-1'), '', 'abandoned (no green prefix): Norn deletes its batch branch (META-SLOP-A)');
   assert.equal(r1.fix, null); assert.deepEqual(loadMq(f.state).red, {}, 'a red main pins nobody');
   assert.deepEqual(r1.batch.main_reds, [{ file: 'bad-main.txt', name: 'in the tree' }], 'the base gate log names the reds of main');
   const r2 = await mergeqRun({ stateDir: f.state, project: f.project, locksDir: f.locks });

@@ -152,11 +152,15 @@ test('shot: removeProfile waits for the process holding the profile to exit, the
   const profile = path.join(mkTmp('meta-shot-'), 'prof'); fs.mkdirSync(profile); fs.writeFileSync(path.join(profile, 'Local State'), '{}');
   const h = holder(profile);
   await new Promise(r => h.once('spawn', r));
-  if (process.platform === 'win32') assert.throws(() => fs.rmSync(profile, { recursive: true, force: true }), e => ['EPERM', 'EBUSY'].includes(e.code), 'the bare rmSync throws while held');
-  const r = await removeProfile(profile);
-  assert.deepEqual(r, { ok: true, why: null });
-  assert.ok(!fs.existsSync(profile), 'profile removed');
-  await exited(h);
+  // the test owns its holder: on Linux / macOS a cwd does not block rm, so removeProfile removes the dir at once and never kills
+  // the holder - a bare `await exited(h)` then waited on a process that never ends (CI 43518267986: the Linux job hung 1 h here).
+  // On Windows the dir cannot go while the holder lives, so "profile removed" below is the proof removeProfile ended it.
+  try {
+    if (process.platform === 'win32') assert.throws(() => fs.rmSync(profile, { recursive: true, force: true }), e => ['EPERM', 'EBUSY'].includes(e.code), 'the bare rmSync throws while held');
+    const r = await removeProfile(profile);
+    assert.deepEqual(r, { ok: true, why: null });
+    assert.ok(!fs.existsSync(profile), 'profile removed');
+  } finally { h.kill('SIGKILL'); await exited(h); }
 });
 test('shot: closeBrowser never throws - a holder that will not die comes back as { ok: false, why } naming it, for the caller to report after its body', async () => {
   const profile = path.join(mkTmp('meta-shot-'), 'prof'); fs.mkdirSync(profile);

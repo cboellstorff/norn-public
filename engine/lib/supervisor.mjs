@@ -15,11 +15,13 @@ import { buildCommand, parseOutcome, hbPath, refreshLock, releaseLock, startRun,
 import { resolveShim } from './paths.mjs';
 import { onRunDone } from './deliverables.mjs';
 import { ingestRead } from './adopt.mjs';
-import { holdJob, reapJob, reapGroup } from './jobguard.mjs';
+import { holdJob, reapJob, reapGroup, spawnOutside } from './jobguard.mjs';
 import { usageRefusal, onAccount } from './usageguard.mjs';
 import { nodeUsage } from './fed.mjs';
 import { readGate, noteCheckin } from './gate.mjs';
 import { ledgerStep } from './ledger.mjs';
+import { checkBranch, slopPrompt } from './slop/runend.mjs';
+import { hostWrite } from './slop/host.mjs';
 
 const spec = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const { run, state } = spec;
@@ -179,9 +181,16 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   let resumed = false;
   if (outcome === 'handoff') resumed = autoResume();
   else if (outcome === 'nudged') resumed = nudgeResume();
+  else if (outcome === 'done') resumed = slopEnd();
   try { for (const f of fillQueue(state)) logLine(`queue: ${f.queued} -> ${f.next}`); } catch (e) { logLine(`queue fill failed: ${e.message}`); }
   if (!resumed && spec.tick && spec.policy?.trigger_on_exit !== false) {
-    try { spawn(spec.tick[0], spec.tick.slice(1), { detached: true, stdio: 'ignore', windowsHide: true }).unref(); logLine('tick triggered'); }
+    // CI-RED-319CAF8: born inside this run's job, the tick died with this exit whenever the supervisor had spawned a console child
+    // before holdJob (the jobguard compile in a fresh TEMP - every ci-suite file's first run): it breaks away like a queue-filled run
+    try {
+      const away = job ? spawnOutside(spec.tick[0], spec.tick.slice(1)) : null;
+      if (!away) spawn(spec.tick[0], spec.tick.slice(1), { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+      logLine(`tick triggered${away ? (away.breakaway ? ' (breakaway)' : ' (inside)') : ''}`);
+    }
     catch (e) { logLine(`tick failed: ${e.message}`); }
   }
   process.exit(0);
@@ -274,6 +283,31 @@ function autoResume() {
     try { fs.appendFileSync(spec.ledger, `- auto ${utc}: lane ${spec.lane} HANDOFF -> auto-resumed (${count + 1}/${max}, same brief, ${spec.executor} ${spec.model ?? '-'} ${spec.effort ?? '-'}) ${next}\n`); }
     catch (e) { logLine(`ledger append failed: ${e.message}`); }
   }
+  return !!next;
+}
+
+// META-SLOP-A (REVIEW-FABLE 3): the run-end backstop. A lane run ending DONE is checked on its branch's diff against main; open
+// BLOCK findings (no waiver) hold the branch's merge and go back to the SAME lane once, as a resume with the list (the same session
+// where the executor resumes by flag). The resumed run is never resumed again for slop: a second BLOCK is the check-in's to decide.
+function slopEnd() {
+  if (spec.kind === 'checkin' || spec.role === 'helper' || spec.readonly || !spec.worktree || spec.policy?.slop?.run_end === false || killedByMeta()) return false;
+  let c;
+  try { c = checkBranch({ repo: spec.worktree, state }); } catch (e) { logLine(`slop: check failed: ${e.message.split('\n')[0]}`); return false; }
+  if (!c) return false;   // no lane branch (on main, detached, no main to diff against)
+  const write = resumed => hostWrite(state, { type: 'check', branch: c.branch, lane: spec.lane, run, base: c.base, head: c.result.head, blocks: c.result.blocks, findings: c.result.findings, resumed });
+  const open = write(null).open;
+  logLine(`slop: ${open.length} open BLOCK finding(s) on ${c.branch} (${c.result.ran.join(' ')}${c.result.skipped.length ? '; skipped ' + c.result.skipped.map(s => s.rule).join(' ') : ''})`);
+  if (!open.length) return false;
+  if (spec.slopOf) { logLine(`slop: BLOCK again after the slop resume of ${spec.slopOf}: no second resume, the check-in decides`); return false; }
+  let next = null, refused = null;
+  try {
+    const { run: _r, log: _l, final: _f, session_id: sid, lockFile: _k, nudge: _n, resumeSid: _rs, ...rest } = spec;
+    next = startRun({ ...rest, resumeOf: run, slopOf: run, ...(nudgeable() ? { resumeSid: sid } : {}), promptText: slopPrompt(open, spec.brief) }).run;
+  } catch (e) { refused = e instanceof RunRefused ? `${e.code === 3 ? 'writer' : 'worker cap'}: ${e.message}` : `error: ${e.message}`; }
+  try { record(state, { kind: 'run', ev: 'resume', id: run, by: 'launcher', data: next ? { next, slop: open.length } : { refused, slop: open.length } }); }
+  catch (e) { if (!(e instanceof RecordError)) throw e; logLine(`resume not recorded: ${e.message}`); }
+  if (next) write(next);
+  logLine(next ? `slop: resumed ${next} with ${open.length} BLOCK finding(s)` : `slop: resume refused: ${refused}`);
   return !!next;
 }
 

@@ -13,6 +13,7 @@ import { makeGit, globToRe } from './dlvgit.mjs';
 import { acquireLock, laneWriter, killTree } from './runs.mjs';
 import { renderBatchBrief, suiteMode } from './mergebrief.mjs';
 import { spawnOutside } from './jobguard.mjs';
+import { openBlocks } from './slop/host.mjs';
 
 const H = 3600e3;
 const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
@@ -72,7 +73,8 @@ export function mergeQueue({ stateDir, project = {}, now = Date.now(), git = mak
     const retries = retriesOf(runs, stateDir, r, since);
     rows.push({ ...r, score: mrScore({ epicHours: epic_hours, priority, retries, dlvHours: dlv_hours }), priority, epic: ep?.id ?? null,
       epic_hours: +epic_hours.toFixed(1), dlv_hours: +dlv_hours.toFixed(1), retries, gate: gateKind(r, cfg), word: rehearsalWord(r) || '?',
-      into, red: red[r.id] && (red[r.id] === r.tip || red[r.id] === r.done_tip) ? red[r.id] : null });
+      into, red: red[r.id] && (red[r.id] === r.tip || red[r.id] === r.done_tip) ? red[r.id] : null,
+      slop: openBlocks(stateDir, r.branch).length });   // META-SLOP-A: open BLOCK findings hold the branch out of a batch
   }
   rows.sort((a, b) => b.score - a.score || Number(a.id.slice(4)) - Number(b.id.slice(4)));
   return { rows, cfg };
@@ -81,7 +83,7 @@ export function mergeQueue({ stateDir, project = {}, now = Date.now(), git = mak
 /** one `norn mergeq` line: id, score, priority / epic, gate kind, rehearsal, behind, target, branch, what it delivers */
 export function formatMq(r) {
   return [r.id, pad(r.score, 5), pad(r.priority + (r.epic ? ' ' + r.epic : ''), 8), pad(r.gate, 5), pad(r.word, 18), pad(r.behind === null ? '' : `-${r.behind}`, 5),
-    r.into === 'main' ? '' : `-> ${r.into}`, r.red ? 'RED' : '', pad(r.branch, 30), String(r.delivers || '').slice(0, 70)].filter(x => x !== '').join(' ').trimEnd();
+    r.into === 'main' ? '' : `-> ${r.into}`, r.red ? 'RED' : '', r.slop ? `SLOP ${r.slop}` : '', pad(r.branch, 30), String(r.delivers || '').slice(0, 70)].filter(x => x !== '').join(' ').trimEnd();
 }
 
 // ---------- 2. auto-UPDATE (not rebase; GitHub merge queue "update branch" / Gas Town done_rebase.go:28-46 aborts on conflict) ----------
@@ -219,7 +221,7 @@ export function runGate(gate, { cwd, log }) {
 export function pickBatch(rows, { cfg, mq, stateDir, locksDir, writer = laneWriter }) {
   const pick = [];
   for (const r of rows) {
-    if (r.gate !== 'batch' || r.word !== 'clean') continue;
+    if (r.gate !== 'batch' || r.word !== 'clean' || r.slop) continue;
     const live = writer({ state: stateDir, locksDir, lane: r.lane, worktree: null });
     const sha = live ? r.done_tip : r.tip;
     if (!sha || mq.red[r.id] === sha) continue;
@@ -340,6 +342,17 @@ function finish(stateDir, rec, k, { cfg, project, git }) {
   rec.dispatch = ['run', '--lane', 'mq', '--stage', 'MERGE', '--brief', rec.brief, '--worktree', cfg.repo, '--notes', rec.notes, '--executor', 'claude', '--queue'];
 }
 
+// META-SLOP-A (Fable: Norn's own mess is fixed in Norn): a batch that landed or was abandoned leaves no mq/batch-<n> behind
+// (31 were left on 11-14). The scratch worktree is detached first: git refuses to delete a branch a worktree has checked out.
+const BATCH_OVER = new Set(['merged', 'stale', 'red', 'main-red', 'empty']);
+function dropBatchBranch(stateDir, rec, { cfg, git }) {
+  if (!BATCH_OVER.has(rec?.status) || rec.branch_deleted) return;
+  git(cfg.scratch, ['checkout', '--quiet', '--force', '--detach'], { allowFail: true });
+  if (git(cfg.repo, ['branch', '-D', `mq/batch-${rec.n}`], { allowFail: true }) === null) return;   // already gone or never built: retried next pass
+  rec.branch_deleted = true;
+  writeJ(batchFile(stateDir, rec.n), rec);
+}
+
 const WHY = {
   green: (rec) => `batch-${rec.n} GREEN (${rec.members.length} branches, ${rec.gate_runs} gate run): ${rec.brief ? `MERGE brief ${rec.brief}` : rec.pushed ? `pushed ${rec.pushed}` : rec.why}`,
   flaky: (rec, m) => `batch-${rec.n} red, then GREEN on its one retry: merged as green, counted unpinned (${m.unpinned} in a row); MERGE brief ${rec.brief}`,
@@ -390,6 +403,7 @@ async function mergeqPass({ stateDir, project = {}, locksDir, git = makeGit(), n
       let { rows } = mergeQueue({ stateDir, project, now, git });
       // MQ-STARVE: the last batch found its target red at a base that is still the target's tip -> the rows that fix it go first
       const last = mq.n ? loadBatch(stateDir, mq.n) : null;
+      dropBatchBranch(stateDir, last, { cfg, git });   // a green batch the MERGE stage landed (or main moved past it): its branch goes
       const redBase = last?.status === 'main-red' && intoSha(cfg, last.into, git) === last.base ? last : null;
       let fixers = [];
       if (redBase) {
@@ -411,7 +425,7 @@ async function mergeqPass({ stateDir, project = {}, locksDir, git = makeGit(), n
       const fx = b.members.filter(m => fixers.includes(m.id)).map(m => m.id);
       if (fx.length) rec.fixes_main = fx;   // MQ-STARVE: put first because their diff touches main's failing test files
       writeJ(batchFile(stateDir, n), rec);
-      if (!b.members.length) { rec.status = 'empty'; writeJ(batchFile(stateDir, n), rec); return { ...out, batch: rec, why: `batch-${n}: every pick conflicts` }; }
+      if (!b.members.length) { rec.status = 'empty'; writeJ(batchFile(stateDir, n), rec); dropBatchBranch(stateDir, rec, { cfg, git }); return { ...out, batch: rec, why: `batch-${n}: every pick conflicts` }; }
       let k = 0;
       const gateAt = async (commit, label) => {
         git(cfg.scratch, ['checkout', '--quiet', '--force', '--detach', commit]);
@@ -442,6 +456,7 @@ async function mergeqPass({ stateDir, project = {}, locksDir, git = makeGit(), n
       else rec.status = res.status === 'main-red' ? 'main-red' : 'red';
       rec.done_at = new Date().toISOString();   // the gate probe dates its facts by this
       writeJ(batchFile(stateDir, n), rec);
+      dropBatchBranch(stateDir, rec, { cfg, git });   // red / main-red with no green prefix, or an integration push: over now
       return { ...out, batch: rec, why: WHY[res.status](rec, m2) + (m2.batching.off ? `; batching now OFF: ${m2.batching.why}` : '') };
     } finally { clearInterval(hb); }
   } finally { slock?.release(); lock.release(); }

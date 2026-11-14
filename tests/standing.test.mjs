@@ -31,7 +31,7 @@ function firstRequest({ agent = 'kestrel-implementer', ts = '2026-11-13T10:00:00
   const system = [{ type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." }, { type: 'text', text: 'You are an implementer.' + 'a'.repeat(600) + '\n\n' + HEADLESS }];
   const tools = [{ name: 'Bash', description: 'b'.repeat(1000), input_schema: {} }, { name: 'Read', description: 'r'.repeat(400), input_schema: {} },
     { name: 'Skill', description: 'Execute a skill', input_schema: {} }, { name: 'Agent', description: 'Available agent types: kestrel-runner ...' + 'g'.repeat(200), input_schema: {} },
-    { name: 'mcp__norn__meta_status', description: 'n'.repeat(150), input_schema: {} }];
+    { name: 'mcp__norn__norn_status', description: 'n'.repeat(150), input_schema: {} }];
   const u = { role: 'user', content: [{ type: 'text', text: CLAUDEMD }, { type: 'text', text: CTX }, { type: 'text', text: PROMPT }] };
   const s = { role: 'system', content: [{ type: 'text', text: HOOK + ENV + MCP + SKILLS }] };
   return [...(agent ? [L({ type: 'agent-setting', agentSetting: agent, sessionId: 's1' })] : []),
@@ -80,7 +80,7 @@ test('explain: the standing context split into its parts from the first request,
   assert.equal(by.base.ours, false, 'the harness base prompt + tool schemas: shown, not ours to trim');
   assert.ok(by.skills.items.some(i => i.name === 'kestrel-tests')); assert.ok(by.plugins.items.some(i => i.name === 'superpowers:brainstorming'));
   assert.ok(by.memory.items.some(i => /MEMORY\.md$/.test(i.name))); assert.ok(by.claude_md.items.some(i => /CLAUDE\.md$/.test(i.name)));
-  assert.ok(by.mcp.items.some(i => i.name === 'mcp__norn__meta_status'));
+  assert.ok(by.mcp.items.some(i => i.name === 'mcp__norn__norn_status'));
   assert.equal(s.parts.reduce((n, p) => n + p.tokens, 0), 22002, 'the parts add up to the measured turn 1 (rounding aside)');
   assert.equal(s.method, 'request'); assert.match(STANDING_METHOD, /first API call/); assert.ok(PARTS.every(p => p.key && p.label));
   // no request shape (an older CLI): the parts from the attachments, the rest is the harness base

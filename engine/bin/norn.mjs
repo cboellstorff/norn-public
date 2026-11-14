@@ -33,7 +33,7 @@ import { digest, tryDigest } from '../lib/digest.mjs';
 import { renderDigest } from '../lib/views.mjs';
 import { tick, quietFlag } from '../lib/tick.mjs';
 import { POLICY_DEFAULTS, withDefaults, applySettings, merged, split, writeBudget, capsMissing } from '../lib/policy.mjs';
-import { adapterFor, schedState } from '../lib/sched/index.mjs';
+import { adapterFor, schedState, liveName, oldTasks, schedApply } from '../lib/sched/index.mjs';
 import { serve, refusal } from '../lib/mcp.mjs';
 import { installPlan, applyPlan, FAMILIES } from '../lib/harness.mjs';
 import { writeDash, clearDash, dashRestart, DashError } from '../lib/dashlive.mjs';
@@ -57,11 +57,14 @@ import { nodeRun } from '../lib/fednode.mjs';
 import { guardScan, guardWatch, openGuards, formatGuard, contextSources, GUARD_ACTIONS, SOURCES_METHOD, M as mTok } from '../lib/guard.mjs';
 import { runTranscript, transcriptTrace } from '../lib/standing.mjs';
 import { usageWeek, formatUsageWeek } from '../lib/usageweek.mjs';
+import { slopCmd } from '../lib/slop/cli.mjs';
+import { openBlocks, findingLine } from '../lib/slop/host.mjs';
 
 const USAGE = {
   'add question': 'norn rec add question --lane L --title T [--body TEXT | --body-file F] [--option "key|text|cost"]... [--recommend "key|why"] [--class i..v] [--blocks a,b] [--source S] [--owner-only]',
   'add decision': 'norn rec add decision --lane L --question Q --choice C --why W [--cost C] [--source S] [--answers Q-n --owner-words "<owner words, verbatim>" | --not-an-answer] [--notify] [--on-runs RUN-1,RUN-2]    (exit 3 = an owner pick on a lane with an open Q: name it with --answers, or --not-an-answer)',
   'add directive': 'norn rec add directive --text T --via dashboard|talk|chat [--scope a,b] [--expires UTC]    (owner contexts only)',
+  'add waiver': 'norn rec add waiver --rule K2 --scope <fingerprint | path glob> --why W [--until ISO]    (owner / controller: a slop finding that may stay)',
   'add lane': 'norn rec add lane --name N [--worktree W] [--notes F] [--branch B] [--brief-dir D] [--stage S] [--round-estimate R] [--executor-hint E] [--item RM-n (links lane:N to the roadmap item)]',
   answer: 'norn rec answer Q-n --text "<owner words>" --via dashboard|chat [--choice key]  |  norn rec answer Q-n --from DEC-m (the owner words the DEC recorded; + apply)  |  norn rec answer --each "Q-50=a,Q-51=b" --text "<owner words>" --via chat',
   apply: 'norn rec apply Q-n --refs DEC-n,RUN-n',
@@ -85,13 +88,14 @@ const FLAGS = {
   'add question': ['lane', 'title', 'body', 'body-file', 'option*', 'recommend', 'class', 'blocks', 'source', 'owner-only!'],
   'add decision': ['lane', 'question', 'choice', 'why', 'cost', 'source', 'answers', 'owner-words', 'not-an-answer!', 'notify!', 'on-runs'],
   'add directive': ['text', 'via', 'scope', 'expires'],
+  'add waiver': ['rule', 'scope', 'why', 'until'],
   'add lane': ['name', 'worktree', 'notes', 'branch', 'brief-dir', 'stage', 'round-estimate', 'executor-hint', 'item'],
   answer: ['text', 'via', 'choice', 'each', 'from'], apply: ['refs'], 'not-an-answer': ['q', 'why'], supersede: ['by', 'why'], withdraw: ['why'], reopen: [],
   overrule: ['text', 'rework-lane'], done: ['refs'], revoke: [], park: ['why', 'q'], unpark: [], archive: [], unarchive: [],
   list: ['open!', 'kind', 'lane', 'json!'], show: ['json!'], views: [],
 };
 const KIND_ALIAS = { Q: 'question', DEC: 'decision', DIR: 'directive', L: 'lane', RUN: 'run' };
-const ALL_USAGE = 'usage: norn rec <add question|add decision|add directive|add lane|answer|apply|not-an-answer|supersede|withdraw|reopen|overrule|done|revoke|park|unpark|archive|unarchive|list|show|views> ...';
+const ALL_USAGE = 'usage: norn rec <add question|add decision|add directive|add lane|add waiver|answer|apply|not-an-answer|supersede|withdraw|reopen|overrule|done|revoke|park|unpark|archive|unarchive|list|show|views> ...';
 
 class Usage extends Error { constructor(msg, cmd) { super(msg); this.cmd = cmd; } }
 
@@ -128,6 +132,7 @@ function addData(what, f, cmd) {
   }
   if (what === 'decision') return drop({ lane: f.lane, question: f.question, choice: f.choice, why: f.why, cost: f.cost, source: f.source, answers: f.answers, owner_words: f['owner-words'], not_an_answer: f['not-an-answer'] ? true : undefined, notify: f.notify ? true : undefined, on_runs: csv(f['on-runs']) });
   if (what === 'directive') return drop({ text: f.text, via: f.via, scope: csv(f.scope), expires_utc: f.expires });
+  if (what === 'waiver') return drop({ rule: f.rule, scope: f.scope, why: f.why, until: f.until });
   if (what === 'lane') return drop({ name: f.name, worktree: f.worktree, notes: f.notes, branch: f.branch, brief_dir: f['brief-dir'], stage: f.stage, round_estimate: f['round-estimate'], executor_hint: f['executor-hint'] });
   throw new Usage(`unknown kind ${what}`, cmd);
 }
@@ -304,6 +309,8 @@ const RUN_USAGE = {
   requeue: 'norn requeue RUN-n --after "<conditions as norn run --after> | none" --why W --as owner|dashboard|controller|checkin [--project project.json | --state D]    (a QUEUED run re-queued with new conditions: same launch args; the old one withdrawn naming the new one; every queued run waiting on it rewired onto it; exit 3 = not queued)',
   hook: 'norn hook session --state D | --project project.json    (Claude Code SessionStart / SessionEnd hook; payload on stdin; always exits 0)',
 };
+// SHIP-READY minor: a misused `norn run` says the short form, never the full option list with its record-id syntax
+const RUN_SHORT = 'norn run --executor E --lane L --brief F [options]    (every option: norn run --help)';
 const RUN_FLAGS = ['executor', 'labels', 'after', 'inputs', 'epic', 'priority', 'parent', 'via', 'lane', 'brief', 'worktree', 'notes', 'stage', 'round', 'budget-min', 'agent', 'model', 'effort', 'project', 'state', 'locks', 'machine', 'budget', 'no-tick!', 'queue!', 'as', 'why', 'wait!', 'item'];
 function runFlags(cmd, argv) {
   const flags = {}, pos = [];
@@ -436,7 +443,7 @@ function runCmd(argv, env, out, err) {
       if (o.after?.length || o.labels?.length) for (const q of fillQueue(state)) out(`queue: ${q.queued} -> STARTED ${q.next}`);   // S4: met now = starts now; FED: served here = starts now
       return 0;
     }
-    out(`STARTED ${r.run} lane ${o.lane} ${ex} ${o.model} ${o.effort} supervisor pid ${r.pid} log ${r.log}`);
+    out(`STARTED ${r.run} lane ${o.lane} ${ex}${o.model === ex ? '' : ' ' + o.model} ${o.effort} supervisor pid ${r.pid} log ${r.log}`);
     for (const w of r.warnings || []) out(`WARNING ${r.run}: ${w}`);   // NORN-WATCH S5 durable lane output
     if (flags.wait) {   // META-OOTB F-1: block until the run ends and say how (the first-task walk-through; exit 1 unless DONE)
       delegateWait({ state, runs: [r.run], maxS: 24 * 3600 });
@@ -457,7 +464,7 @@ function runCmd(argv, env, out, err) {
     return 0;
   } catch (e) {
     if (e instanceof RunRefused) { out('REFUSED: ' + e.message); return e.code; }
-    if (e instanceof RunError || e instanceof ConfigError || (e instanceof RecordError && e.code === 2)) { err('error: ' + e.message); err('usage: ' + (RUN_USAGE[cmd] || RUN_USAGE.run)); return 2; }
+    if (e instanceof RunError || e instanceof ConfigError || (e instanceof RecordError && e.code === 2)) { err('error: ' + e.message); err('usage: ' + (cmd === 'run' ? RUN_SHORT : RUN_USAGE[cmd] || RUN_USAGE.run)); return 2; }
     if (e instanceof RecordError) { err('error: ' + e.message); return e.code; }
     throw e;
   }
@@ -549,17 +556,21 @@ function s5Cmd(argv, env, out, err) {
     const m = machineOf(flags, env);
     if (cmd === 'sched') {
       if (!m.machine) throw new RunError('no machine.json: run norn setup first');
-      const sc = m.machine.scheduler, a = adapterFor(sc.kind);
+      // META-NAME-W2: a recorded pre-rename name runs as this install's norn-tick name; install / remove record it (schedApply removes the old task)
+      const sc = { ...m.machine.scheduler, name: liveName(m.machine.scheduler.name, m.root) }, a = adapterFor(sc.kind);
       const o = { name: sc.name, interval_min: sc.interval_min, node: m.machine.node, meta: m.root.replace(/\\/g, '/'), home: m.machine.home };
-      if (pos[0] === 'show' || !pos.length) { const p = a.plan(o); for (const f of p.files) out(`=== ${f.path}\n${f.content}`); for (const c of p.install) out('$ ' + c.join(' ')); const s = schedState(a, o); out(`installed: ${s.installed && !s.foreign ? 'yes' : s.foreign ? `no (task '${sc.name}' belongs to the install at ${s.owner})` : 'no'}`); return 0; }
+      if (pos[0] === 'show' || !pos.length) { const p = a.plan(o); for (const f of p.files) out(`=== ${f.path}\n${f.content}`); for (const c of p.install) out('$ ' + c.join(' ')); const s = schedState(a, o); out(`installed: ${s.installed && !s.foreign ? 'yes' : s.foreign ? `no (task '${sc.name}' belongs to the install at ${s.owner})` : 'no'}`); for (const n of oldTasks(a, o)) out(`old task '${n}' still installed: norn sched install moves it`); return 0; }
       // OOTB F-4: never install over / remove the task of ANOTHER install (schtasks /F would overwrite it)
       if (['install', 'remove'].includes(pos[0])) { const s = schedState(a, o); if (s.foreign) throw new RunError(`task '${sc.name}' belongs to the install at ${s.owner}, not this one (${o.meta}): rerun norn setup to derive this install's own task name`); }
       if (pos[0] === 'install' && !m.machine.projects.length) throw new RunError('no project registered: add a project first (norn project new --root <repo>)');
       // META-OOTB F-3: no unattended check-ins before the caps are set (unset = no limit); one line, no usage text
       const miss = pos[0] === 'install' ? capsMissing(m.budget) : [];
       if (miss.length) { err(`error: no caps set in ${m.budgetFile.replace(/\\/g, '/')} (missing ${miss.join(', ')}): run norn setup (writes the starter caps when the file is absent) or set them in the dashboard Settings (Workers & budget), then sched install again`); return 2; }
-      if (pos[0] === 'install') { a.install(o); out(`scheduler ${sc.kind} '${sc.name}' installed (every ${sc.interval_min} min)`); return 0; }
-      if (pos[0] === 'remove') { a.remove(o); out(`scheduler ${sc.kind} '${sc.name}' removed`); return 0; }
+      if (['install', 'remove'].includes(pos[0])) {
+        for (const l of schedApply(pos[0], a, o, sc.kind)) out(l);
+        if (sc.name !== m.machine.scheduler.name) { const raw = JSON.parse(fs.readFileSync(m.mf, 'utf8')); raw.scheduler.name = sc.name; fs.writeFileSync(m.mf + '.tmp', JSON.stringify(raw, null, 1) + '\n'); fs.renameSync(m.mf + '.tmp', m.mf); }
+        return 0;
+      }
       throw new RunError(`sched needs show | install | remove (got ${pos[0]})`);
     }
     if (cmd === 'tick') {
@@ -811,6 +822,9 @@ function mergeBriefCmd(argv, env, out, err) {
       const w = laneWriter({ state: p.state, locksDir: f.locks || path.join(path.dirname(path.resolve(p.state)), 'locks'), lane: f.lane, worktree: f.worktree });
       if (w) { out(`REFUSED: merge-brief ${f.lane}: ${w} - the brief would rebase under it; pass --sha <READY sha> (a staged merge in the main checkout)`); return 3; }
     }
+    // META-SLOP-A: open BLOCK findings of the branch's last slop check hold its merge until fixed (a clean check) or waived
+    const held = openBlocks(p.state, f.branch);
+    if (held.length) { out(`REFUSED: merge-brief ${f.branch}: ${held.length} open slop BLOCK finding(s) - fix them (norn slop check in its worktree) or waive each (norn rec add waiver):`); for (const b of held) out('  ' + findingLine(b)); return 3; }
     const txt = renderMergeBrief(p, { lane: f.lane, branch: f.branch, worktree: f.worktree, notes: f.notes, ui: !!f.ui, ...(f.sha ? { sha: f.sha } : {}) });
     fs.mkdirSync(path.dirname(path.resolve(f.out)), { recursive: true });
     fs.writeFileSync(f.out, txt);
@@ -824,8 +838,8 @@ function mergeBriefCmd(argv, env, out, err) {
 
 // ---------- H1: norn mcp (stdio MCP server) / norn harness install ----------
 const H1_USAGE = {
-  mcp: 'norn mcp --project <project.json> | --state <dir>  --profile controller|checkin|worker|chat (chat: the Norn chat only - controller tools + meta_show / meta_cli / meta_approve, by tier) | (machine-scoped, no project) --profile setup [--client <name> (stamps via chat:<name>; default mcp)]',
-  harness: 'norn harness install --family claude|codex|opencode|<configured cli name> --project <project.json> | --state <dir> [--profile controller|checkin|worker] | --profile setup (machine-scoped: no project; server meta-setup) [--scope local|user|project] [--codex-config F] [--opencode-config F] [--dry-run]',
+  mcp: 'norn mcp --project <project.json> | --state <dir>  --profile controller|checkin|worker|chat (chat: the Norn chat only - controller tools + norn_show / norn_cli / norn_approve, by tier) | (machine-scoped, no project) --profile setup [--client <name> (stamps via chat:<name>; default mcp)]',
+  harness: 'norn harness install --family claude|codex|opencode|<configured cli name> --project <project.json> | --state <dir> [--profile controller|checkin|worker] | --profile setup (machine-scoped: no project; server norn-setup) [--scope local|user|project] [--codex-config F] [--opencode-config F] [--dry-run]',
 };
 function h1Flags(argv, names) {
   const flags = {};
@@ -863,6 +877,7 @@ function harnessCmd(argv, env, out, err) {
     const f = h1Flags(argv.slice(1), ['family', 'project', 'state', 'profile', 'scope', 'codex-config', 'opencode-config', 'dry-run!']);
     const plan = installPlan({ family: f.family, node: fwd(process.execPath), meta: fwd(fileURLToPath(import.meta.url)), project: f.project && fwd(path.resolve(f.project)), state: f.state && fwd(path.resolve(f.state)),
       profile: f.profile || 'controller', scope: f.scope, codexConfig: f['codex-config'], opencodeConfig: f['opencode-config'], home: env.USERPROFILE || env.HOME || '',
+      claudeJson: path.join(env.CLAUDE_CONFIG_DIR || env.USERPROFILE || env.HOME || '', '.claude.json'), cwd: fwd(process.cwd()),
       executors: f.project && !FAMILIES.includes(f.family) ? loadProject(f.project).executors : undefined });
     applyPlan(plan, { dry: !!f['dry-run'], out });
     out(`${f['dry-run'] ? 'would register' : 'registered'} MCP server "${plan.name}" (${f.profile || 'controller'}) for ${plan.family}`);
@@ -1125,7 +1140,7 @@ function laneHold(sub, pos, f, env, out, err) {
 
 // ---------- OOTB F-5: norn / norn help / norn --help = this screen (grouped by job, the newcomer commands first); norn <cmd> --help = its usage ----------
 // META-RENAME R1 (DIR-22): the commands a person types; the plumbing and the in-run trio are listed by `norn help --all` (they all still work)
-const HELP = `Norn - a local controller for headless coding agents. Command: norn (old name: meta).
+const HELP = `Norn - a local controller for headless coding agents. Command: norn.
 
 Start here:
   norn init <repo>                 setup when needed + project new + a drafted roadmap, rules, commands and first task to review
@@ -1256,6 +1271,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'mail') return mailCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'cv') return cvCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'guard') return guardCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'slop') return slopCmd(argv.slice(1), { env, out, err, where: f => (f.project || f.state || env.META_STATE || env.META_PROJECT ? where(f, env) : null) });
   if (argv[0] === 'usage') return usageCmd(argv.slice(1), env, out, err);
   try {
     if (argv[0] !== 'rec') { err(`error: unknown command ${argv[0]} - see norn help`); return 2; }

@@ -65,7 +65,7 @@ test('the demo fixture project.json validates and expands with no unresolved var
 test('machine.json: schema checked, ${meta} / ${home} expanded in project configs', () => {
   const d = tmp(), f = path.join(d, 'machine.json');
   const m = { schema: 1, home: H, claude: { exe: '/bin/claude', version: null, projects_dir: H + '/.claude/projects', config_dir: H + '/.claude' },
-    node: '/bin/node', scheduler: { kind: 'cron', name: 'meta-controller-tick', interval_min: 15 }, dash: { port: 8737, bind: '127.0.0.1' },
+    node: '/bin/node', scheduler: { kind: 'cron', name: 'norn-tick', interval_min: 15 }, dash: { port: 8737, bind: '127.0.0.1' },
     projects: [{ name: 'demo', config: '${meta}/projects/demo/project.json' }] };
   fs.writeFileSync(f, JSON.stringify(m));
   assert.equal(loadMachine(f, { meta: M }).projects[0].config, '/mm/meta/projects/demo/project.json');

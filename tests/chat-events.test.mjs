@@ -24,15 +24,15 @@ test('chatEvents claude: one long-lived stream-json process, 3 turns, one sessio
 
 test('chatEvents claude: the MCP tool call, its result and the permission decision of the prompt tool', () => {
   const evs = replay('claude', 'claude-stream.jsonl');
-  const call = kinds(evs, 'tool').find(t => t.name === 'mcp__norn__meta_status');
-  assert.ok(call, 'tool call mcp__norn__meta_status');
+  const call = kinds(evs, 'tool').find(t => t.name === 'mcp__norn__norn_status');
+  assert.ok(call, 'tool call mcp__norn__norn_status');
   const res = kinds(evs, 'result').find(r => r.id === call.id);
   assert.equal(res.is_error, false);
   assert.match(res.text, /STATUS\.md/);
   assert.deepEqual(res.permission, { decision: 'accept', source: 'user_temporary' });
-  // the --permission-prompt-tool side: the stub meta_approve was called for exactly that tool use
+  // the --permission-prompt-tool side: the stub norn_approve was called for exactly that tool use
   const asked = fx('claude-approvals.jsonl').split('\n').filter(Boolean).map(l => JSON.parse(l));
-  assert.deepEqual(asked.map(a => [a.args.tool_name, a.args.tool_use_id, a.verdict.behavior]), [['mcp__norn__meta_status', call.id, 'allow']]);
+  assert.deepEqual(asked.map(a => [a.args.tool_name, a.args.tool_use_id, a.verdict.behavior]), [['mcp__norn__norn_status', call.id, 'allow']]);
 });
 
 test('chatEvents claude: a killed session resumed by id keeps the conversation', () => {

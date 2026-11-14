@@ -66,7 +66,7 @@ test('CLI: answer --each writes one answer per Q with mapped_from and echoes eve
   assert.equal(nokey.status, 2, '--each needs Q-n=key pairs');
 });
 
-test('MCP: meta_question_add takes owner_only', async () => {
+test('MCP: norn_question_add takes owner_only', async () => {
   const s = tmp();
   const p = spawn(process.execPath, [META, 'mcp', '--state', s, '--profile', 'checkin'], { env: env(), stdio: ['pipe', 'pipe', 'pipe'] });
   let buf = '';
@@ -74,7 +74,7 @@ test('MCP: meta_question_add takes owner_only', async () => {
   const send = m => p.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...m }) + '\n');
   send({ id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 't', version: '0' } } });
   send({ method: 'notifications/initialized' });
-  send({ id: 2, method: 'tools/call', params: { name: 'meta_question_add', arguments: { lane: 'gen', title: 'Art pick', owner_only: true, options: [{ key: 'a', text: 'A' }] } } });
+  send({ id: 2, method: 'tools/call', params: { name: 'norn_question_add', arguments: { lane: 'gen', title: 'Art pick', owner_only: true, options: [{ key: 'a', text: 'A' }] } } });
   await got; p.stdin.end(); await new Promise(r => p.on('exit', r));
   assert.equal(loadState(s).items['Q-1'].data.owner_only, true, buf);
 });

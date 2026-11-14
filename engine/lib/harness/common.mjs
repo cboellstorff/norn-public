@@ -54,9 +54,10 @@ export function detectExe(exe) {
 
 // the per-family HEADLESS snippet core: the outcome contract is the same for every harness (the NOTES end marker)
 export const HEADLESS_CORE = 'You run headless: nobody answers questions and your process ends with your turn. Decide under the '
-  + "brief's DECISION-RULES or stop. Write only your NOTES file; its last line is exactly `## DONE`, `## STOPPED: <why>` or `## HANDOFF`.";
+  + "brief's DECISION-RULES or stop. Write only your NOTES file; its last line is exactly `## DONE`, `## STOPPED: <why>` or `## HANDOFF`."
+  + ' Before you write `## DONE`, run `norn slop check` in your worktree and fix every BLOCK it lists.';
 // META-GTP-MAIL delivery (b): the line for executors WITHOUT the mail hook (a claude run gets its mail from a PostToolUse hook)
-export const HEADLESS_MAIL = ' Mail: check your mail between steps (MCP meta_mail check, else `norn mail check --run $META_RUN_ID`), act on it, and ack each one (meta_mail ack / norn mail ack MAIL-n).';
+export const HEADLESS_MAIL = ' Mail: check your mail between steps (MCP norn_mail check, else `norn mail check --run $META_RUN_ID`), act on it, and ack each one (norn_mail ack / norn mail ack MAIL-n).';
 
 // ---------- live feed (LANE-MAP-DESIGN 2): the shared tail + the normalised event; each adapter owns its record parsing ----------
 // Normalised event: { ts, kind: 'tool'|'text'|'step'|'usage'|'marker'|'error', name?, summary, ctx?, id?, done?, at } where

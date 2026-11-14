@@ -49,7 +49,7 @@ test('setup --non-interactive writes local/machine.json from discovered values',
   assert.equal(m.git.exe, fwd(path.join(sb.bin, WIN ? 'git.exe' : 'git')));
   assert.equal(m.node, fwd(process.execPath));
   assert.equal(m.codex, null); assert.ok(!Object.hasOwn(m, 'grok'), 'no grok slot in machine.json');
-  assert.match(m.scheduler.name, /^meta-controller-tick-[0-9a-f]{8}$/, 'derived per install (OOTB F-4)'); assert.equal(m.scheduler.interval_min, 15);
+  assert.match(m.scheduler.name, /^norn-tick-[0-9a-f]{8}$/, 'derived per install (OOTB F-4)'); assert.equal(m.scheduler.interval_min, 15);
   assert.deepEqual(m.dash, { port: 8737, bind: '127.0.0.1' }); assert.deepEqual(m.projects, []);
   assert.match(r.out, /codex: not found \(optional, disabled\)/);
 });
@@ -156,29 +156,36 @@ test('install renders ${meta} / ${home} / ${root} / ${name} in agent and skill t
   const d2 = sb.run('doctor'); assert.equal(d2.code, 1); assert.match(d2.out, /demo-impl\.md: stale/);
 });
 
-test('setup puts a `meta` shim in ~/.local/bin (design 3.5 "on PATH after setup"); a foreign file is kept (S9)', () => {
+test('setup puts a `norn` shim in ~/.local/bin (design 3.5 "on PATH after setup"); a foreign file is kept (S9)', () => {
   const sb = sandbox();
   const r = sb.run('setup', '--non-interactive', '--no-scheduler', '--force');
   assert.equal(r.code, 0, r.err + r.out);
   const bin = path.join(sb.home, '.local', 'bin');
-  const sh = fs.readFileSync(path.join(bin, 'meta'), 'utf8');
+  const sh = fs.readFileSync(path.join(bin, 'norn'), 'utf8');
   assert.match(sh, /^#!\/bin\/sh\n/); assert.ok(sh.includes(fwd(META)), sh);
-  if (WIN) assert.ok(fs.readFileSync(path.join(bin, 'meta.cmd'), 'utf8').includes(META), 'meta.cmd');
+  if (WIN) assert.ok(fs.readFileSync(path.join(bin, 'norn.cmd'), 'utf8').includes(META), 'norn.cmd');
   assert.match(r.out, /not on PATH/);  // the sandbox PATH is only the fake bin dir
-  const own = spawnSync(WIN ? path.join(bin, 'meta.cmd') : path.join(bin, 'meta'), ['rec', 'list', '--state', path.join(sb.root, 'st')],
+  const own = spawnSync(WIN ? path.join(bin, 'norn.cmd') : path.join(bin, 'norn'), ['rec', 'list', '--state', path.join(sb.root, 'st')],
     { env: { ...process.env, META_ROLE: 'owner' }, encoding: 'utf8', shell: WIN });
   assert.equal(own.status, 0, own.stderr);
-  fs.writeFileSync(path.join(bin, 'meta'), 'mine\n');
+  fs.writeFileSync(path.join(bin, 'norn'), 'mine\n');
   assert.equal(sb.run('setup', '--non-interactive', '--no-scheduler', '--force').code, 0);
-  assert.equal(fs.readFileSync(path.join(bin, 'meta'), 'utf8'), 'mine\n');
+  assert.equal(fs.readFileSync(path.join(bin, 'norn'), 'utf8'), 'mine\n');
 });
 
-test('setup writes the `norn` launcher and `meta` (old name) beside it: both run engine/bin/norn.mjs; a foreign `norn` is kept (META-RENAME R1)', () => {
+test('setup writes the `norn` launcher; `meta` (old name) beside it only on an upgrade: both run engine/bin/norn.mjs; a foreign `norn` is kept (META-RENAME R1, NAME-W2)', () => {
   const sb = sandbox();
+  const bin = path.join(sb.home, '.local', 'bin');
+  // a fresh install: norn only, the old name never said
+  const f = sb.run('setup', '--non-interactive', '--no-scheduler', '--force');
+  assert.equal(f.code, 0, f.out + f.err);
+  assert.match(fs.readFileSync(path.join(bin, 'norn'), 'utf8'), /engine\/bin\/norn\.mjs/, 'norn runs norn.mjs');
+  for (const n of ['meta', 'meta.cmd']) assert.equal(fs.existsSync(path.join(bin, n)), false, `${n}: not on a fresh install`);
+  assert.doesNotMatch(f.out, /old name|\.local\/bin\/meta/);
+  // an upgrade: a meta launcher exists -> rewritten to the same entry as norn
+  fs.writeFileSync(path.join(bin, 'meta'), `#!/bin/sh\nexec "node" "${fwd(path.resolve(META, '..', '..', '..'))}/engine/bin/meta.mjs" "$@"\n`);
   const r0 = sb.run('setup', '--non-interactive', '--no-scheduler', '--force');
   assert.equal(r0.code, 0, r0.out + r0.err);
-  const bin = path.join(sb.home, '.local', 'bin');
-  assert.match(fs.readFileSync(path.join(bin, 'norn'), 'utf8'), /engine\/bin\/norn\.mjs/, 'norn runs norn.mjs');
   assert.equal(fs.readFileSync(path.join(bin, 'meta'), 'utf8'), fs.readFileSync(path.join(bin, 'norn'), 'utf8'), 'meta = the same entry');
   if (WIN) assert.equal(fs.readFileSync(path.join(bin, 'meta.cmd'), 'utf8'), fs.readFileSync(path.join(bin, 'norn.cmd'), 'utf8'));
   assert.match(r0.out, /^norn launcher: .*\/norn \(old name: meta\)/m);
@@ -224,6 +231,19 @@ test('a launcher of THIS install written before the rename (names engine/bin/met
   fs.writeFileSync(path.join(bin, 'meta'), `#!/bin/sh\nexec "node" "${fwd(main)}/engine/bin/meta.mjs" "$@"\n`);
   installShim({ home, root: main, platform: 'linux', env: {}, out: () => {} });
   for (const n of ['meta', 'norn']) assert.match(fs.readFileSync(path.join(bin, n), 'utf8'), /\/engine\/bin\/norn\.mjs/, n);
+});
+
+// SHIP-READY R1 (a stranger's Windows install): the "not on PATH" hint was sh syntax (alias norn='...') on Windows too, where
+// PowerShell's alias cannot carry arguments. Each OS gets a line its own shell runs.
+test('the launcher\'s "not on PATH" hint is in the shell of the OS: PowerShell on Windows, sh elsewhere', async () => {
+  const { installShim } = await import('../engine/lib/setup.mjs');
+  const said = platform => { const t = mkTmp('meta-shimhint-'), lines = []; installShim({ home: path.join(t, 'home'), root: fakeInstall(t), platform, env: {}, out: s => lines.push(s) }); return { t, s: lines.join('\n') }; };
+  const w = said('win32');
+  assert.match(w.s, /not on PATH/);
+  assert.doesNotMatch(w.s, /alias norn=/, w.s);
+  assert.ok(w.s.includes(`function norn { node "${fwd(w.t)}/main/engine/bin/norn.mjs" @args }`), w.s);
+  const l = said('linux');
+  assert.ok(l.s.includes(`alias norn='node ${fwd(l.t)}/main/engine/bin/norn.mjs'`), l.s);
 });
 
 // META-ONBOARD S1 (3-OS smoke, macOS red): the CLI started through a symlinked / junction path (macOS /var -> /private/var) must

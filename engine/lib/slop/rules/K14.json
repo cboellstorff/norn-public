@@ -1,0 +1,13 @@
+{
+  "id": "K14", "level": "BLOCK", "kind": "command",
+  "title": "generated files out of date",
+  "how": "norn gen --check (the machine's generated harness files): each PROBLEM line is a finding; the base side is the check's last run on main (written by the daily report), so drift no branch made never blocks",
+  "argv": ["gen", "--check"],
+  "line": "^PROBLEM (\\S+): (.*)$",
+  "fixture": {
+    "hit": { "base": {}, "head": {}, "recorded": { "base": "note C:/p/.claude/agents/planner.md: edited to the same bytes as generated\ngen --check: ok\n",
+      "head": "PROBLEM C:/p/.claude/agents/implementer.md: stale (sources changed since generation; run norn gen)\ngen --check: 1 problem(s)\n" } },
+    "miss": { "base": {}, "head": {}, "recorded": { "base": "PROBLEM C:/p/AGENTS.md: drift (edited after generation; never overwritten)\ngen --check: 1 problem(s)\n",
+      "head": "note C:/p/.claude/agents/planner.md: edited to the same bytes as generated\nPROBLEM C:/p/AGENTS.md: drift (edited after generation; never overwritten)\ngen --check: 1 problem(s)\n" } }
+  }
+}

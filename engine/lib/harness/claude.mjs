@@ -22,7 +22,7 @@ function command(o) {
   return { exe: o.exe, stdin: null, stdout: 'final', parse: 'claude', args: [
     '-p', o.promptText || prompt(o), ...(o.agent && !ro ? ['--agent', o.agent] : []),
     ...tools, '--model', o.model, '--effort', o.effort, ...(o.resumeSid && !o.fork_of ? ['--resume', o.resumeSid] : ['--session-id', o.session_id]), ...(o.fork_of ? ['--resume', o.fork_of, '--fork-session'] : []),
-    '--permission-mode', 'bypassPermissions', ...(remote ? ['--remote-control', `${o.project || 'meta'}-${o.lane}`] : []), '--output-format', 'json',
+    '--permission-mode', 'bypassPermissions', ...(remote ? ['--remote-control', `${o.project || 'norn'}-${o.lane}`] : []), '--output-format', 'json',
     ...(o.headless ? ['--append-system-prompt', o.headless] : []), ...[o.worktree, ...(o.addDirs || [])].flatMap(d => ['--add-dir', d]),
     ...(o.mail_hook ? ['--settings', JSON.stringify(mailSettings(o.mail_hook))] : []),
     ...extra] };
@@ -160,13 +160,13 @@ export function chatEvents(line) {
  * Read-only file tools (the shell / edit / subagent tools refused), MCP only from --mcp-config and its tools allowed without a prompt
  * (C3 adds the approval tool). o: { exe, model, effort, session_id, resume?, mcp? { name, command, args }, system? (the role pack),
  * cwd, addDirs?, rawShell? off | ask | on (C5 Settings: off = the shell / edit tools refused by flag; ask / on = they reach the permission
- * prompt, where meta_approve shows a card or allows) } -> { exe, args, cwd, stdin: 'stream' }.
+ * prompt, where norn_approve shows a card or allows) } -> { exe, args, cwd, stdin: 'stream' }.
  */
 function chatCommand(o) {
   if (!o.session_id) throw new Error('chat needs a session_id');
   // META-CONTROLLER C3: every prompt of the CLI goes to the owner's approval card (C0 fact 2: the tool is called in -p mode)
   const mcp = o.mcp ? ['--mcp-config', JSON.stringify({ mcpServers: { [o.mcp.name]: { command: o.mcp.command, args: o.mcp.args } } }), '--allowedTools', `mcp__${o.mcp.name}`,
-    '--permission-prompt-tool', `mcp__${o.mcp.name}__meta_approve`] : [];
+    '--permission-prompt-tool', `mcp__${o.mcp.name}__norn_approve`] : [];
   const chatOwn = [...(o.rawShell && o.rawShell !== 'off' ? [] : ['--disallowedTools', CLAUDE_RO_NOPE.join(',')]), ...mcp, '--strict-mcp-config'], chatExtra = mergeArgs(chatOwn, profileArgs(o.profile));   // the chat is always strict
   return { exe: o.exe, cwd: o.cwd, stdin: 'stream', args: ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
     '--model', o.model, '--effort', o.effort, ...(o.resume ? ['--resume', o.session_id] : ['--session-id', o.session_id]),

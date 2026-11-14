@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { guardRows } from './guard.mjs';
 import { runDrift } from './drift.mjs';
+import { digestRow } from './slop/daily.mjs';
 
 const H = 3600e3;
 export const WINDOW_H = 72;
@@ -178,6 +179,9 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   // META-GUARD R1: the open usage alarms (runaway / over the hand-off line / tool spam) - the check-in rules each; only while any is open
   const g = [...guardRows(stateDir), ...driftRows(runs, { now, git, main })];   // + item 3: the brief drift of an ended, unreviewed run
   if (g.length) sections.guard = g;
+  // META-SLOP-A: ONE line - the last daily slop report + the branches slop holds now
+  const sl = digestRow(stateDir, now);
+  if (sl) sections.slop = [sl];
   const counts = Object.fromEntries(Object.entries(sections).map(([k, v]) => [k, v.length]));
   return { project: project?.name ?? null, at: new Date(now).toISOString(), window_h: WINDOW_H, sections, counts };
 }
@@ -195,7 +199,7 @@ function fallbackDlv(stateDir) {
 export function tryDigest(stateDir, project = {}, opts = {}) {
   try { return digest(stateDir, project || {}, opts); } catch { return null; }
 }
-/** { section: [ids] } - the compact form for meta_boot's state digest */
+/** { section: [ids] } - the compact form for norn_boot's state digest */
 export const digestIds = d => (d ? Object.fromEntries(Object.entries(d.sections).map(([k, v]) => [k, v.map(r => r.id)])) : null);
 
 // META-GUARD R1 item 3: the brief drift of each run that ended (exited) in the window and has no review yet - a hint row for the

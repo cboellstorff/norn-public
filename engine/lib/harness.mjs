@@ -9,11 +9,10 @@ import { PROFILES } from './mcp.mjs';
 import { which, resolveShim } from './paths.mjs';
 import { isCli } from './executors.mjs';
 import { mcpAddCommand } from './harness/cli.mjs';
+import { normDir } from './sched/index.mjs';
+import { SERVER_NAME, SETUP_NAME, OLD_SERVER, runsNorn, oldRegistrations } from './harness/oldnames.mjs';
 
 export const FAMILIES = ['claude', 'codex', 'opencode'];
-export const SERVER_NAME = 'meta';
-// META-ADOPT A4: the machine-scoped setup server sits beside a project's "meta" server, under its own name
-export const SETUP_NAME = 'meta-setup';
 const NO_MCP = { pi: 'pi has no MCP (by design): use the CLI door (norn ...)' };
 
 export function serverArgs({ node, meta, project, state, profile, family }) {
@@ -46,17 +45,23 @@ export function installPlan(o) {
   const setup = o.profile === 'setup', name = setup ? SETUP_NAME : SERVER_NAME;
   if (setup && (o.project || o.state)) throw new Error('profile setup is machine-scoped: no --project / --state');
   if (!setup && !o.project && !o.state) throw new Error('--project <project.json> or --state <dir> is required');
-  const [command, ...args] = serverArgs(o);
-  if (o.family === 'claude') return { family: o.family, name, commands: [['claude', 'mcp', 'add', '--scope', o.scope || (setup ? 'user' : 'local'), name, '--', command, ...args]], files: [] };
+  const [command, ...args] = serverArgs(o), old = OLD_SERVER[name];
+  if (o.family === 'claude') {
+    const scope = o.scope || (setup ? 'user' : 'local');
+    const gone = oldRegistrations({ claudeJson: o.claudeJson, cwd: o.cwd }).filter(r => r.name === old && r.scope === scope && (scope === 'user' || normDir(r.dir) === normDir(o.cwd)));
+    return { family: o.family, name, commands: [['claude', 'mcp', 'add', '--scope', scope, name, '--', command, ...args], ...(gone.length ? [['claude', 'mcp', 'remove', '--scope', scope, old]] : [])], files: [] };
+  }
   if (cli) return { family: o.family, name, commands: [mcpAddCommand(cli, { name, scope: o.scope, command, args })], files: [] };
   if (o.family === 'codex') {
     const file = o.codexConfig || path.join(o.home, '.codex', 'config.toml');
     const before = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
-    return { family: o.family, name, commands: [], files: [{ path: file, content: upsertToml(before, name, tomlBlock(name, { command, args })) }] };
+    const mid = oldRegistrations({ codexConfig: file }).some(r => r.name === old) ? upsertToml(before, old, '') : before;
+    return { family: o.family, name, commands: [], files: [{ path: file, content: upsertToml(mid, name, tomlBlock(name, { command, args })) }] };
   }
   const file = o.opencodeConfig || path.join(o.home, '.config', 'opencode', 'opencode.json');
   const cfg = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, '')) : { $schema: 'https://opencode.ai/config.json' };
   cfg.mcp = { ...(cfg.mcp || {}), [name]: { type: 'local', command: [command, ...args], enabled: true } };
+  if (runsNorn(cfg.mcp[old]?.command)) delete cfg.mcp[old];
   return { family: o.family, name, commands: [], files: [{ path: file, content: JSON.stringify(cfg, null, 2) + '\n' }] };
 }
 
