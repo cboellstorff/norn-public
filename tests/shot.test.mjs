@@ -138,9 +138,23 @@ test('shot: killProfileProcs takes the profile processes AND their descendants (
   const procs = [{ pid: 10, ppid: 1, cmd: 'edge --user-data-dir=C:\\T\\meta-shot-x' }, { pid: 11, ppid: 10, cmd: 'node -e x' }, { pid: 12, ppid: 11, cmd: 'gpu' },
     { pid: 20, ppid: 1, cmd: 'other' }, { pid: 21, ppid: 20, cmd: 'other kid' }];
   const killed = [];
-  const left = await killProfileProcs('C:/T/meta-shot-x', { list: () => procs.filter(p => !killed.includes(p.pid)), kill: pid => killed.push(pid) });
+  // a killed child is out of the list (orphaned: no profile, no parent link) before it is gone (CI 43766573125 Linux): it counts until then
+  const esrch = () => { throw Object.assign(new Error('no such process'), { code: 'ESRCH' }); };
+  let probes = 0;
+  const left = await killProfileProcs('C:/T/meta-shot-x', { list: () => procs.filter(p => !killed.includes(p.pid)), kill: pid => killed.push(pid),
+    probe: pid => { if (!killed.includes(pid) || (pid === 11 && ++probes < 3)) return true; esrch(); } });
   assert.equal(left, 0);
-  assert.deepEqual(killed.sort(), [10, 11, 12]);
+  assert.equal(probes, 3, 'waited for the killed child until it was gone');
+  assert.deepEqual([...new Set(killed)].sort(), [10, 11, 12]);
+});
+
+test('shot: killProfileProcs waits while an exited process is still listed on the profile (Windows rundown: kill says ESRCH, Win32_Process still shows it holding the files; CI 43766573125 home C2)', async () => {
+  let lists = 0, kills = 0;
+  const listed = () => ++lists <= 8 ? [{ pid: 30, ppid: 1, cmd: 'msedge --type=utility --user-data-dir=C:\\T\\meta-shot-y' }] : [];
+  const left = await killProfileProcs('C:/T/meta-shot-y', { list: listed, kill: () => { kills++; }, probe: () => { throw Object.assign(new Error('exited'), { code: 'ESRCH' }); } });
+  assert.equal(left, 0, 'it left the list: no survivor');
+  assert.ok(lists > 8, `waited until it left the list (${lists} lists)`);
+  assert.equal(kills, 0, 'an exited process is not killed again');
 });
 
 // META-OOTB-FIX HOME-TEARDOWN (RUN-575 FINDING): a browser process still holding the profile made a bare rmSync throw EPERM in a

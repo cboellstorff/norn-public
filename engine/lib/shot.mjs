@@ -120,19 +120,23 @@ async function until(fn, ms, what) {
   for (;;) { const v = await fn(); if (v) return v; if (Date.now() > end) throw new ShotError(`timed out waiting for ${what}`, 1); await sleep(100); }
 }
 
-/** kill the browser's whole process tree (Windows: taskkill /T; else its process group) and wait for its exit */
-export async function killTree(child, platform = process.platform) {
+/** gone = no such process (ESRCH): a killed process stays visible until its parent (or, orphaned, init) reaps it */
+const exists = (pid, probe = p => process.kill(p, 0)) => { try { probe(pid); return true; } catch (e) { return e.code !== 'ESRCH'; } };
+/** kill the browser's whole process tree (Windows: taskkill /T; else its process group) and wait for its exit - outside Windows
+ * for the whole group's: the leader's exit says nothing of its children, which an init reaps on its own time */
+export async function killTree(child, platform = process.platform, { probe } = {}) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
-  const gone = new Promise(r => child.once('exit', r));
+  const gone = new Promise(r => child.once('exit', r)), end = Date.now() + 10000;
   try {
     if (platform === 'win32') spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 15000 });
     else process.kill(-child.pid, 'SIGKILL');
   } catch { try { child.kill('SIGKILL'); } catch { /* gone */ } }
   await Promise.race([gone, new Promise(r => setTimeout(r, 10000).unref())]);
+  if (platform !== 'win32') while (exists(-child.pid, probe) && Date.now() < end) await sleep(50);
 }
 /** kill every process whose command line names the (unique) temp profile: the browser a launcher handed off is outside its tree.
  * Their descendants too: a browser child need not name the profile, and outside Windows (libuv's kill-on-close job) it outlives its parent */
-export async function killProfileProcs(profile, { platform = process.platform, list = listProcs, kill = pid => process.kill(pid, 'SIGKILL') } = {}) {
+export async function killProfileProcs(profile, { platform = process.platform, list = listProcs, kill = pid => process.kill(pid, 'SIGKILL'), probe } = {}) {
   const norm = s => String(s || '').replace(/\\/g, '/').toLowerCase(), key = norm(profile);
   const mine = () => {
     const all = list({ platform }).filter(p => p.pid !== process.pid);
@@ -140,14 +144,21 @@ export async function killProfileProcs(profile, { platform = process.platform, l
     for (let grew = true; grew;) { grew = false; for (const p of all) if (!hit.has(p.pid) && hit.has(p.ppid)) { hit.add(p.pid); grew = true; } }
     return all.filter(p => hit.has(p.pid));
   };
-  for (let round = 0; round < 5; round++) {
-    const left = mine();
-    if (!left.length) return 0;
-    for (const p of left) { try { kill(p.pid); } catch { /* gone */ } }
+  // a killed one counts until it is gone: orphaned, it loses its cmd / parent link in the list long before init reaps it
+  const killed = new Set(), left = () => { const l = mine(); for (const pid of killed) if (!l.some(p => p.pid === pid) && exists(pid, probe)) l.push({ pid }); return l; };
+  // a listed one that has exited (kill(pid, 0): ESRCH) is not a survivor: on Windows it stays in the process list, its files still
+  // open, until its rundown ends (CI 43766573125: Edge's network service for > 10 s). Wait for it while it makes that progress;
+  // only a live one that 5 kill rounds did not end is a survivor. RUNDOWN_GUARD_MS is a hang guard, never a result.
+  const t0 = performance.now();
+  for (let round = 0; ;) {
+    const l = left(), live = l.filter(p => exists(p.pid, probe));
+    if (!l.length) return 0;
+    if (live.length ? round++ >= 5 : performance.now() - t0 > RUNDOWN_GUARD_MS) return l.length;
+    for (const p of live) { killed.add(p.pid); try { kill(p.pid); } catch { /* gone */ } }
     await sleep(300);
   }
-  return mine().length;
 }
+const RUNDOWN_GUARD_MS = 5 * 60000;
 /** remove the temp profile (or a dir holding it). A process still holding a file in it (EPERM / EBUSY on Windows) is the
  * browser tree: wait for every process naming the dir (and its descendants) to exit - killProfileProcs kills and re-lists until
  * none is left - then try once more. Never throws: { ok, why } (why names the survivors, or the error once no holder is left) */

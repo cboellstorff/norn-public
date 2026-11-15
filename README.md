@@ -67,6 +67,8 @@ approval. SloppaChoppa, an orc, presents the findings; you can switch him off pe
   happened and overrule it.
 - **Local and vendor-neutral.** Norn needs only Node 22 and git. It installs no npm packages, stores no API keys, and its dashboard
   listens on 127.0.0.1 only. Each run can use Claude Code, Codex or any other headless CLI.
+- **Runs from your phone too.** Notifications reach your phone, and over your own Tailscale network the full dashboard does
+  as well: answer questions and approve work from anywhere. See [On your phone](#on-your-phone).
 
 For one task you watch from start to finish, Claude Code on its own is simpler. Norn's check-ins are agent turns too and count
 toward your usage.
@@ -96,10 +98,34 @@ Around the dashboard:
 - **Adopting a repo** (`norn init`): drafts a roadmap, project rules, the test command and a first task from your repository;
   you approve each part.
 - **Done checks** (per project): see [Done checks](#done-checks) below.
-- **Notifications**: the ntfy phone app, a desktop notification or Pushover when something needs you.
-- **Phone access** (`norn remote setup`): the dashboard on your phone over your own Tailscale network, for paired devices only.
+- **Notifications** and **phone access**: see [On your phone](#on-your-phone) below.
 - **MCP server** (`norn mcp`): agents in Claude Code or Codex can use Norn's commands; `norn harness install` adds it.
 - **Screenshots** (`norn shot`): a signed-out headless browser for checking UI work.
+
+## On your phone
+
+The dashboard works at phone width. From your phone you can read the Home thread, chat with the controller, answer Inbox
+questions, approve or deny approval cards, and pause check-ins. Two pieces make that work:
+
+- **Notifications.** Setup offers the free ntfy phone app, a desktop notification or Pushover. Norn sends a notice when something
+  needs you; other news arrives as one summary every few hours. With phone access on, each notice carries an "Open Norn" link.
+- **Tailscale.** Tailscale is a free app that joins your own devices into a private network that only devices signed in to your
+  account can reach. Norn uses its Serve feature to carry the dashboard to your phone over that network. The dashboard itself
+  still listens only on 127.0.0.1, and nothing is exposed to the public internet.
+
+To set it up (about 10 minutes, Tailscale's free Personal plan is enough):
+
+1. Install Tailscale on the PC and the phone, and sign in to both with the same account.
+2. Run `node engine/bin/norn.mjs remote setup`. It checks for Tailscale and prints each command with what it does; nothing changes
+   until you run it again with `--apply`. The first time, Tailscale may print a link to turn Serve on for your account.
+3. Run `node engine/bin/norn.mjs dash restart`.
+4. On the PC, open Settings > Notifications > Reach Norn from your phone > Pair a device. Open `https://<pc>.<tailnet>.ts.net/` on
+   the phone and enter the single-use code.
+
+Norn answers only your PC's Tailscale name and only your Tailscale login. A device that is not paired sees only the pairing page,
+and every action taken from the phone, approvals included, is recorded with that device. Norn refuses requests that arrive
+through Tailscale Funnel, which is the public internet. `norn remote off --apply` turns phone access off. For a phone without
+the Tailscale app, [SETUP.md](SETUP.md#reach-norn-from-your-phone) describes a Cloudflare Tunnel alternative.
 
 ## Quick start
 
