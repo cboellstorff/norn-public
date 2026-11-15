@@ -23,14 +23,24 @@ function step(fn, producer, what, t0, capMs) {
   return null;
 }
 
+// an option the helpers do not know is a caller bug (a `timeoutMs` here was silently ignored: CI-HANG-6E54DAB)
+const KNOWN = new Set(['producer', 'what', 'capMs', 'pollMs']);
+function known(opts) {
+  const bad = Object.keys(opts).filter(k => !KNOWN.has(k));
+  if (bad.length) throw new TypeError(`waitFor: unknown option ${bad.join(', ')} (known: ${[...KNOWN].join(', ')})`);
+  return opts;
+}
+
 /** await fn() truthy while producer() is true (no producer = only the hang guard ends it) */
-export async function waitFor(fn, { producer, what = 'condition', capMs = HANG_CAP_MS, pollMs = 50 } = {}) {
+export async function waitFor(fn, opts = {}) {
+  const { producer, what = 'condition', capMs = HANG_CAP_MS, pollMs = 50 } = known(opts);
   const t0 = performance.now();   // monotonic: a wall-clock step never trips the guard
   for (;;) { const r = step(fn, producer, what, t0, capMs); if (r) return r.v; await sleep(pollMs); }
 }
 
 /** the same, blocking (for a synchronous test) */
-export function waitForSync(fn, { producer, what = 'condition', capMs = HANG_CAP_MS, pollMs = 50 } = {}) {
+export function waitForSync(fn, opts = {}) {
+  const { producer, what = 'condition', capMs = HANG_CAP_MS, pollMs = 50 } = known(opts);
   const t0 = performance.now();
   for (;;) { const r = step(fn, producer, what, t0, capMs); if (r) return r.v; nap(pollMs); }
 }
@@ -39,9 +49,9 @@ export function waitForSync(fn, { producer, what = 'condition', capMs = HANG_CAP
  * known yet (the start is being written) counts as alive. */
 export const supervisorAlive = (state, item) => () => {
   const it = item();
-  let pid = it?.end?.supervisor_pid;
-  if (!pid && it) { try { pid = JSON.parse(fs.readFileSync(hbPath(state, it.id), 'utf8')).supervisor_pid; } catch { /* no hb */ } }
-  return !pid || alive(pid);
+  let s = it?.end?.supervisor_pid ? it.end : null;
+  if (!s && it) { try { s = JSON.parse(fs.readFileSync(hbPath(state, it.id), 'utf8')); } catch { /* no hb */ } }
+  return !s?.supervisor_pid || alive(s.supervisor_pid, s.supervisor_started);
 };
 
 /** d.ended: the run has ended and its supervisor is gone (settled), while that supervisor makes progress */

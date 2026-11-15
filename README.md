@@ -1,22 +1,59 @@
 # Norn
 
-Norn runs coding agents (Claude Code, Codex or any command-line agent) on your own machine, one step after another, without a
-chat window open. It queues the work, merges finished steps through your tests, stays inside the usage limits you set and records
-every decision it makes. You answer only the questions it cannot decide.
+Norn runs coding agents (Claude Code, Codex or any command-line agent) on your own machine and keeps long work going without you.
+It hands each agent off to a fresh session before its context grows large, keeps the instruction files your agents load short and
+correct, and checks every branch before it reaches main. You answer only the questions it cannot decide.
 
 ![Norn's Home tab: the controller chat, check-ins, a question waiting for you and an approval card](docs/img/home.png)
 
 ## Why use it
 
-- **Work continues without you.** A step waits for the steps it depends on and starts when they land. A run that reaches its
-  context limit hands off to a fresh session and carries on.
+### Automatic hand-off
+
+Each agent role has three context limits: start no new step, hand off, and hard stop (90k, 110k and 150k tokens by default for
+most roles; set per role in Settings). Norn measures a run's context after every tool call and tells the agent when it
+crosses a limit. At the hand-off limit the agent writes its notes and ends with `## HANDOFF`; at the hard stop Norn ends the run
+itself. Either way Norn resumes the work in a fresh session that starts from the notes and the records, not from the old
+conversation. Queued steps start as soon as the steps they wait for land, so the work continues while you are away.
+
+### Fewer tokens spent
+
+An agent re-reads its whole context on every turn, including every instruction file it loads. Norn keeps both small:
+
+- **Context**: the hand-off above keeps each session short. The Context tab shows each role's context size, how many tokens each
+  loaded file costs per session, and whether that is growing.
+- **Markdown**: Norn checks the files your agents load on every turn (CLAUDE.md, AGENTS.md, MEMORY.md, rules) for text that costs
+  tokens without helping: history lines in an always-loaded file, a MEMORY.md over 200 lines or 25 KB, a Codex
+  AGENTS.md chain over 32 KiB, one rule kept in several files, and twin AGENTS.md and CLAUDE.md files. These checks read files
+  only; they never call a model.
+
+### Protection against drift
+
+- **Instructions that no longer match the repo**: Norn flags paths that do not exist, pointers to moved or renamed files, lanes
+  that are closed, retired model names, and memory lines that restate a rule the repo already has.
+- **Generated files**: numbers that live in Settings are written into prompt files by Norn, never copied by hand. `norn gen --check`
+  reports any generated agent file that was edited by hand, and Norn never overwrites that edit.
+- **Your instructions**: a directive you give stays in force for every check-in and every agent brief until you revoke it.
+- **An agent's word**: when an agent says it is done, Norn checks for itself that the tree is clean, the changes are inside the
+  brief's scope and the tests pass.
+
+### SloppaChoppa
+
+Before a lane's branch can merge, Norn checks its changes against main for leftovers: conflict markers, generated files out of
+date, stray logs, binaries over 1 MB, and a committed `.only` in a test that silently stops the rest of the suite. In JavaScript
+files it also finds empty catch blocks with no reason, unused variables and imports, import cycles and broken layer rules. The
+findings go back to the same agent as one resume, and the merge waits until each is fixed or waived. The Slop tab lists every open finding, from branches and from
+instruction files, grouped by the kind of fix. "Fix all" turns the selected findings into one fixer task that waits for your
+approval. SloppaChoppa, an orc, presents the findings; you can switch him off per project.
+
+![The Slop tab: SloppaChoppa and the open findings, grouped by the kind of fix](docs/img/slop.png)
+
+### Also
+
 - **Usage stays inside your plan.** Before any run starts, Norn checks the worker cap, an hourly rate cap and a weekly stop. The
   Plan tab shows when the queued work would reach the limit.
-- **Sessions stay small.** A run hands off to a fresh session at a set context size (110k tokens by default, set per agent role).
-  The new session starts from the run's notes and Norn's records, not from the whole earlier conversation.
 - **Main stays green.** Each lane has its own git worktree and one writer. Finished work merges to main one branch at a time,
-  through your test command. When an agent says it is done, Norn checks for itself: clean tree, changes inside the brief's
-  scope, tests passing.
+  through your test command.
 - **Decisions are on record.** Every question, decision and instruction is an append-only record. You can see why something
   happened and overrule it.
 - **Local and vendor-neutral.** Norn needs only Node 22 and git. It installs no npm packages, stores no API keys, and its dashboard
@@ -37,15 +74,9 @@ The dashboard (`norn dash`):
 ![The Plan tab: queued steps with start estimates, their chains and the usage forecast](docs/img/plan.png)
 
 - **Inbox**: the questions waiting for you, each with its options and a recommended answer.
-- **Slop**: findings from Norn's checks (leftover code in a branch, stale or contradicting instruction lines, paths that do not
-  exist), grouped by the kind of fix. "Fix all" turns the selected findings into one fixer task that waits for your approval.
-  SloppaChoppa, an orc, presents them; you can switch him off.
-
-![The Slop tab: open findings grouped by the kind of fix](docs/img/slop.png)
-
-- **Docs**: a reader for the project's docs and every file that instructs an agent (CLAUDE.md, AGENTS.md, rules, memory), with
-  findings next to the line.
-- **Context**: the context limits for each agent role (no new step, hand-off, hard stop) and where to change them.
+- **Slop**: every open finding, grouped by the kind of fix, with "Fix all" (see SloppaChoppa above).
+- **Docs**: a reader for the project's docs and every file that instructs an agent, with the findings next to the line.
+- **Context**: the context limits per role, the tokens per loaded file, and whether they are growing.
 - **Roadmap** (`norn road`): themes and items whose status comes from the runs and records, never typed by hand.
 - **The other tabs**: Overview (what needs you and what is running), Map and Lanes (every lane and its latest run), Agents
   (running sessions with their tokens and context), Usage (usage against the limits, and which model suits which work), Tests

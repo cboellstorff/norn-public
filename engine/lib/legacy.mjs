@@ -80,14 +80,15 @@ function spawnWatcher(specFile) {
 export async function watch(specFile, { probe = procStart, sleep = ms => new Promise(r => setTimeout(r, ms)) } = {}) {
   const spec = JSON.parse(fs.readFileSync(specFile, 'utf8'));
   const { state, run } = spec;
-  const hb = () => writeAtomic(hbPath(state, run), { run, pid: spec.pid, supervisor_pid: process.pid, legacy: true, ts: new Date().toISOString() });
+  const supStarted = procStart(process.pid);   // the watcher is the run's supervisor: (pid, start time), as supervisor.mjs
+  const hb = () => writeAtomic(hbPath(state, run), { run, pid: spec.pid, supervisor_pid: process.pid, supervisor_started: supStarted, legacy: true, ts: new Date().toISOString() });
   for (;;) {
     if (loadState(state).items[run]?.state !== 'running') return 'gone';  // killed / ended elsewhere: nothing to do
     if (!sameProcess(spec.pid, spec.startedMs, probe)) break;
     hb(); if (spec.lockFile) refreshLock(spec.lockFile, run, { pid: spec.pid });
     await sleep(spec.hbMs);
   }
-  const data = { ...legacyOutcome(spec), pid: spec.pid, supervisor_pid: process.pid, legacy: true };
+  const data = { ...legacyOutcome(spec), pid: spec.pid, supervisor_pid: process.pid, supervisor_started: supStarted, legacy: true };
   try { record(state, { kind: 'run', ev: 'end', id: run, by: 'launcher', data }); } catch { return 'gone'; }
   try { fs.unlinkSync(hbPath(state, run)); } catch { /* gone */ }
   if (spec.lockFile) releaseLock(spec.lockFile, run);

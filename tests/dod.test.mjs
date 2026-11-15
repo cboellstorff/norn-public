@@ -13,7 +13,7 @@ import { loadState } from '../engine/lib/records.mjs';
 import { agentsTree } from '../engine/lib/agents.mjs';
 import { renderTab } from '../engine/dash/ui.mjs';
 import { settled } from './helpers/settled.mjs';
-import { waitFor } from './helpers/wait.mjs';
+import { waitFor, stateBusy } from './helpers/wait.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const NORN = path.join(import.meta.dirname, '..', 'engine', 'bin', 'norn.mjs');
@@ -166,7 +166,7 @@ test('run end: a DONE whose Done check fails is STOPPED, resumed once with the e
   const { r, state } = normRun(t, wt, repo, { brief: `mode: done\n${READY}`, policy: { dod: { ready: 'refuse' }, slop: { enabled: false } }, gate: { cmd: 'node -e ""' } });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const runs = () => Object.values(loadState(state).items).filter(i => i.kind === 'run').sort((a, b) => a.id.localeCompare(b.id));
-  await waitFor(() => runs().length === 2 && runs().every(settled), { what: 'the run + its one Done resume end', timeoutMs: 60000 });
+  await waitFor(() => runs().length === 2 && runs().every(settled), { producer: stateBusy(state), what: 'the run + its one Done resume end' });
   const [first, second] = runs();
   assert.equal(first.data.dod_ready.ok, true, 'Ready recorded at dispatch');
   assert.equal(first.end.outcome, 'stopped'); assert.match(first.end.why, /^Done check failed: 1 uncommitted/);

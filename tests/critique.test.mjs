@@ -16,7 +16,7 @@ import { agentsTree } from '../engine/lib/agents.mjs';
 import { renderTab } from '../engine/dash/ui.mjs';
 import { mapGraph } from '../engine/lib/map.mjs';
 import { settled } from './helpers/settled.mjs';
-import { waitFor } from './helpers/wait.mjs';
+import { waitFor, stateBusy, supervisorAlive } from './helpers/wait.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const NORN = path.join(import.meta.dirname, '..', 'engine', 'bin', 'norn.mjs');
@@ -65,7 +65,7 @@ function planRun(p) {
 test('a planning run that ends DONE queues ONE read-only review on the policy review executor; its findings sit beside the plan', async () => {
   const p = project('queue', { canned: '- [P1] the bake reads the wrong mask - plan s.2 - read the real one\n- [P2] O(n^2) over reaches - s.4 - index them\n## DONE\n' });
   const bf = planRun(p);
-  await waitFor(() => runsOf(p.state).length === 2 && runsOf(p.state).every(settled), { what: 'the plan run + its review end', timeoutMs: 60000 });
+  await waitFor(() => runsOf(p.state).length === 2 && runsOf(p.state).every(settled), { producer: stateBusy(p.state), what: 'the plan run + its review end' });
   const [plan, rev] = runsOf(p.state);
   assert.equal(plan.end.outcome, 'done');
   assert.equal(rev.data.class, 'review'); assert.equal(rev.data.executor, 'fake'); assert.equal(rev.data.stage, 'REVIEW');
@@ -93,7 +93,7 @@ test('policy.dod.critique off: a planning run ends DONE and nothing is queued', 
 test('a build whose brief names the plan waits for the review; findings hold it for the check-in, whose review releases it; the digest shows them', async () => {
   const p = project('hold', { canned: '- [P1] the gate samples a lake as a bank - s.3 - sample the bank\n## DONE\n' });
   planRun(p);
-  await waitFor(() => runsOf(p.state).length === 2 && runsOf(p.state).every(settled), { what: 'the plan run + its review end', timeoutMs: 60000 });
+  await waitFor(() => runsOf(p.state).length === 2 && runsOf(p.state).every(settled), { producer: stateBusy(p.state), what: 'the plan run + its review end' });
   const bb = path.join(p.t, 'build-brief.md');
   fs.writeFileSync(bb, `mode: done\nbuild what ${fwd(p.plan)} says\n`);
   const b = norn(p, ['--lane', 'water', '--stage', 'BUILD', '--brief', bb, '--notes', path.join(p.t, 'BUILD-NOTES.md')]);
@@ -112,7 +112,7 @@ test('a build whose brief names the plan waits for the review; findings hold it 
 test('a clean review (No findings.) releases the build by itself; a brief that names no plan never waits', async () => {
   const p = project('clean', { canned: 'No findings.\n## DONE\n' });
   planRun(p);
-  await waitFor(() => runsOf(p.state).length === 2 && runsOf(p.state).every(settled), { what: 'the plan run + its review end', timeoutMs: 60000 });
+  await waitFor(() => runsOf(p.state).length === 2 && runsOf(p.state).every(settled), { producer: stateBusy(p.state), what: 'the plan run + its review end' });
   assert.equal(runsOf(p.state)[1].end.critique.findings, 0);
   assert.equal(makeEval(p.state)(parseAfter('run:RUN-2:reviewed')[0]).met, true);
   assert.equal(digest(p.state, { name: 'kestrel' }).sections.critique, undefined, 'nothing for the check-in');
@@ -121,7 +121,7 @@ test('a clean review (No findings.) releases the build by itself; a brief that n
   const b = norn(p, ['--lane', 'water', '--stage', 'BUILD', '--brief', bb, '--notes', path.join(p.t, 'BUILD-NOTES.md')]);
   assert.match(b.stdout, /^STARTED RUN-3 /m, b.stdout + b.stderr);
   assert.equal(loadState(p.state).items['RUN-3'].data.after, undefined);
-  await waitFor(() => settled(loadState(p.state).items['RUN-3']), { what: 'the build ends' });
+  await waitFor(() => settled(loadState(p.state).items['RUN-3']), { producer: supervisorAlive(p.state, () => loadState(p.state).items['RUN-3']), what: 'RUN-3 (the build) ends' });
 });
 
 test('Agents: the plan row shows its review (queued / running / reviewed ✓ (n findings))', () => {

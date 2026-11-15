@@ -23,6 +23,7 @@ import { nodeUsage } from './fed.mjs';
 import { readGate, noteCheckin } from './gate.mjs';
 import { ledgerStep } from './ledger.mjs';
 import { checkBranch, slopPrompt } from './slop/runend.mjs';
+import { procStart } from './legacy.mjs';
 import { doneCheck, dodPrompt, testLine } from './dod.mjs';
 import { critiqueOn, findingsCount } from './critique.mjs';
 import { hostWrite } from './slop/host.mjs';
@@ -46,10 +47,13 @@ let capTimer = null, capped = false;
 let nudging = null, nudgeTimer = null, nudgeWaitLast = null;   // META-GTP-MAIL piece 3 (nudgeCheck)
 let ctxForced = null, ctxTimer = null, ctxFile = null, ctxWaitLast = null;   // META-CTX-ENFORCE R1 (ctxCheck)
 
+// a pid alone names whatever process holds it NOW (Windows reuses a freed pid; CI-HANG-6E54DAB R2): hb + end name the supervisor
+// as (pid, OS start time) - the value procStart gives a reader, so the two compare equal while this process lives
+const supStarted = procStart(process.pid);
 const beat = () => {
   try {
     const f = hbPath(state, run), t = `${f}.${process.pid}.tmp`;
-    fs.writeFileSync(t, JSON.stringify({ run, pid: childPid, supervisor_pid: process.pid, ts: iso() }));
+    fs.writeFileSync(t, JSON.stringify({ run, pid: childPid, supervisor_pid: process.pid, supervisor_started: supStarted, ts: iso() }));
     fs.renameSync(t, f);
   } catch { /* next beat */ }
   for (const lf of lockFiles) { try { refreshLock(lf, run, { pid: process.pid }); } catch { /* next beat */ } }
@@ -137,7 +141,7 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   if (limit) outcome = 'limit';
   if (nudging) { outcome = 'nudged'; limit = null; auth = null; }   // stopped by the nudge: whatever the killed tree exited with
   if (ctxForced) { outcome = 'handoff'; limit = null; auth = null; }   // ended at the hard max: a HANDOFF whatever the killed tree exited with
-  const data = { exit: Number.isInteger(code) ? code : null, outcome, marker_line: marker.marker_line, pid: childPid, supervisor_pid: process.pid, ...(capped ? { capped: true } : {}) };
+  const data = { exit: Number.isInteger(code) ? code : null, outcome, marker_line: marker.marker_line, pid: childPid, supervisor_pid: process.pid, supervisor_started: supStarted, ...(capped ? { capped: true } : {}) };
   if (limit) { data.reset = limit.reset; data.limit_line = limit.line; }
   if (auth) { data.auth_line = auth.line; data.auth_class = auth.cls; }   // META-AUTH-VENDOR: login | vendor
   if (outcome === 'stopped') data.why = marker.why;

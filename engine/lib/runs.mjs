@@ -197,8 +197,8 @@ export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () =
     if (age <= staleMs) continue;
     const why = has ? `heartbeat ${Math.round(age / 1000)} s old` : `no heartbeat for ${Math.round(age / 1000)} s`;
     // CIRED-7b3d67d: a stall (not a death) also goes stale - the supervisor may live on; the record names it (tests/helpers/settled)
-    const sup = has ? readJson(hbPath(state, it.id))?.supervisor_pid : null;
-    try { record(state, { kind: 'run', ev: 'lost', id: it.id, by, data: drop({ why, supervisor_pid: sup }) }); lost.push(it.id); } catch (e) { if (!(e instanceof RecordError)) throw e; }
+    const hb = has ? readJson(hbPath(state, it.id)) : null;
+    try { record(state, { kind: 'run', ev: 'lost', id: it.id, by, data: drop({ why, supervisor_pid: hb?.supervisor_pid, supervisor_started: hb?.supervisor_started }) }); lost.push(it.id); } catch (e) { if (!(e instanceof RecordError)) throw e; }
   }
   return lost;
 }
