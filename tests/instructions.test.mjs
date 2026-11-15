@@ -218,14 +218,15 @@ test('the Instructions tab: in the Verdandi group next to Usage (META-TEND P1-VI
   assert.equal(d.file.text, 'x');
 });
 
-test('the dashboard API: /api/instructions lists the rows; /api/instructions/<id> opens only a listed file', async () => {
+test('the dashboard API: /api/instructions (the summary) + ?part=files lists the rows; /api/instructions/<id> opens only a listed file', async () => {
   const f = fx();
   const app = createDashboard({ projects: [f.p], machine: f.machine, budgetFile: path.join(f.base, 'budget.json'), platform: {}, sessionsDir: path.join(f.base, 'sessions') });
   await new Promise(r => app.server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${app.server.address().port}`;
   try {
-    const l = await (await fetch(`${url}/api/instructions?project=kestrel`)).json();
-    const row = byName(l.rows, 'repo/CLAUDE.md');
+    let l = await (await fetch(`${url}/api/instructions?project=kestrel`)).json();   // META-UX-BUILD S1: the scan runs in a worker, pending first
+    for (let i = 0; l.pending && i < 600; i++) { await new Promise(r => setTimeout(r, 100)); l = await (await fetch(`${url}/api/instructions?project=kestrel`)).json(); }
+    const row = byName((await (await fetch(`${url}/api/instructions?project=kestrel&part=files`)).json()).rows, 'repo/CLAUDE.md');
     assert.ok(row && l.method === TOKEN_METHOD);
     const one = await fetch(`${url}/api/instructions/${row.id}?project=kestrel`);
     assert.equal(one.status, 200); assert.match((await one.json()).text, /Repo rules/);

@@ -37,11 +37,13 @@ function costOf(cost = 'balanced') {
 export function checkChoice({ profile, cost } = {}) { if (profile !== undefined) getProfile(profile); if (cost !== undefined) costOf(cost); }
 const step = (e, n) => (e ? EFFORTS[Math.max(0, Math.min(EFFORTS.length - 1, EFFORTS.indexOf(e) + n))] : e);
 const model = (m, c) => c.model[m] ?? m;
+const OWN_CAP = { max_sol: 'codex-sol', max_astra: 'codex-astra' };
 const hasCodex = found => CODEX.some(x => found.includes(x));
 
 /** The machine budget keys of a profile: its budget + its Codex caps (0 when setup found no Codex), check-in / worker model + effort by cost. */
 export function profileBudget(p, { found = ['claude'], cost } = {}) {
-  const c = costOf(cost), b = { ...p.budget, ...Object.fromEntries(Object.entries(p.codex).map(([k, v]) => [k, hasCodex(found) ? v : 0])) };
+  const c = costOf(cost), on = k => (k === 'max_codex' ? hasCodex(found) : found.includes(OWN_CAP[k]));   // a closed / retired executor keeps 0
+  const b = { ...p.budget, ...Object.fromEntries(Object.entries(p.codex).map(([k, v]) => [k, on(k) ? v : 0])) };
   for (const k of ['checkin_model', 'claude_model']) if (b[k]) b[k] = model(b[k], c);
   for (const k of ['checkin_effort', 'claude_effort']) if (b[k]) b[k] = step(b[k], c.effort_step);
   return b;

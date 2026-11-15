@@ -289,7 +289,7 @@ test('empty states: the first-task box offers the look; an empty Roadmap offers 
   assert.match(h, /Or let Norn look at the repo and draft a roadmap, rules and a first task/); assert.match(h, /data-tab="adopt"/);
   assert.match(h, /id="setup-gaps"/);
   assert.match(h, /No project rules yet\. Workers follow the repo's own AGENTS\.md/);
-  assert.match(h, /Starter caps are in force\. Nobody chose them/); assert.match(h, /Keep the starter caps/);
+  assert.match(h, /No caps profile is on record\. Nobody chose them/); assert.doesNotMatch(h, /scheduler stays off/); assert.match(h, /Keep the starter caps/);
   assert.match(h, /Merges are not gated/); assert.match(h, /npm test/);
   const done = renderTab('overview', { overview: { ...ov, first_run: null, setup: { ...ov.setup, rules: true, caps_chosen: true, gate: 'npm test', roadmap: 3 } }, agents: { tree: [] } }, { now: Date.now(), project: 'tide' });
   assert.doesNotMatch(done, /id="setup-gaps"/, 'nothing missing: no card');

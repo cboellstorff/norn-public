@@ -241,6 +241,9 @@ test('settings get / dry-run / set through policy validation; ledger tail; check
   const set = await m.tool('norn_settings', { set: { key: 'max_claude_workers', value: 3 } });
   assert.ok(!set.isError, text(set));
   assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'local', 'budget.json'))).max_claude_workers, 3);
+  const pol0 = JSON.parse(fs.readFileSync(pf, 'utf8')).policy;   // META-PROFILE-BUG R1: only the changed key, never the defaults
+  assert.ok(!(await m.tool('norn_settings', { set: { key: 'policy.cadence.checkin_interval_min', value: 20 } })).isError);
+  assert.deepEqual(JSON.parse(fs.readFileSync(pf, 'utf8')).policy, { ...pol0, cadence: { checkin_interval_min: 20 } });
   const bad = await m.tool('norn_settings', { set: { key: 'no_such_setting', value: 1 } });
   assert.equal(bad.isError, true); assert.equal(bad.structuredContent.code, 2);
   assert.deepEqual((await m.tool('norn_ledger', { tail: 2 })).structuredContent.lines, ['l2', 'l3']);

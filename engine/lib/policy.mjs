@@ -63,6 +63,10 @@ export const POLICY_DEFAULTS={
 const CODEX_CAP={'codex-sol':'max_sol','codex-astra':'max_astra'};
 const capOpen=(caps,k)=>!(Number.isFinite(caps?.[k])&&caps[k]<=0);
 export const allowedExecutors=(found=['claude'],caps={})=>found.filter(x=>!CODEX_CAP[x]||(capOpen(caps,'max_codex')&&capOpen(caps,CODEX_CAP[x])));
+// META-PROFILE-BUG R1: a RETIRED executor = a Codex executor whose own cap is 0 while the Codex total is open (the owner closed that
+// one on purpose, e.g. codex-astra with max_astra 0); with the Codex total at 0 Codex is simply not on yet (the starter caps).
+export const retiredExecutors=(caps={})=>capOpen(caps,'max_codex')?Object.keys(CODEX_CAP).filter(x=>!capOpen(caps,CODEX_CAP[x])):[];
+export const capOfExecutor=x=>CODEX_CAP[x]??null;
 const STAND_IN_ROLE={review:'planner',diagnosis:'planner'};   // read-only classes; any other class -> implementer
 const CLAUDE_SIDE=new Set(['auto','wait','opus-xhigh','fable',...ROLE_AGENTS]);
 // the starter caps = the try-it profile's caps (engine/presets/profiles/try-it.json; tests/ootb-polish pins the two equal). norn setup
@@ -310,6 +314,11 @@ function check(s,v){
   else if(s.type==='list'){if(!Array.isArray(v)||v.some(x=>typeof x!=='string'||!(s.glob?/^[a-z0-9*][a-z0-9*-]{0,40}$/:/^[a-z0-9][a-z0-9-]{0,40}$/).test(x)))throw fail(`${s.key} must be a list of lane names${s.glob?' (globs: meta-*)':''}`);}
   else if(s.type==='text'){if(typeof v!=='string'||(s.pattern&&!new RegExp(s.pattern).test(v)))throw fail(`${s.key} has an invalid format`);}
 }
+// META-PROFILE-BUG R1: what a save writes = the raw {...budget, policy} with ONLY the changed keys set (value as validated in `updated`,
+// skipped when it equals the value in force): defaults are never written out over the project's own values.
+export function onlyChanged(b,changes,updated){const f=withDefaults(b),out={...structuredClone(b),policy:structuredClone(foldSlop(b.policy)??{})};
+  for(const k of Object.keys(changes)){const v=getPath(updated,k);if(JSON.stringify(getPath(f,k))===JSON.stringify(v))continue;setPath(out,k,v);}
+  return out;}
 // Returns the new merged {...budget, policy} object (input untouched); 400 on unknown key, bad value or broken cross-field rule.
 export function applySettings(b,changes,extra={}){const all=settingsFor(extra),pv=extra.providers||[];
   if(changes===null||typeof changes!=='object'||Array.isArray(changes)||!Object.keys(changes).length)throw fail('changes must be a non-empty object');

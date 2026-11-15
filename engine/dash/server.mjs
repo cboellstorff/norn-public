@@ -14,8 +14,8 @@ import { createStreams } from './stream.mjs';
 import { createChat, readThread, threadState, chatCost, chatPick, chatCommands, NORN_COMMANDS, CONTEXT_DEFAULT } from '../lib/chat.mjs';
 import { ActError, showRoots } from '../lib/chatact.mjs';
 import { genAfterPolicy } from '../lib/setup.mjs';
-import { profileChoices } from '../lib/profiles.mjs';
-import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudget, atomicWrite as atomic } from '../lib/policy.mjs';
+import { profileChoices, profileChanges, getProfile, loadProfiles, COSTS } from '../lib/profiles.mjs';
+import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudget, atomicWrite as atomic, onlyChanged, retiredExecutors, capOfExecutor, getPath } from '../lib/policy.mjs';
 import { record, loadState, recordsFile, readEvents, RecordError, KINDS, writeOrigin } from '../lib/records.mjs';
 import { remoteOf, classify, cookieOf, setCookie, createPairing, devicesFile, POSTS_PER_MIN } from '../lib/remote.mjs';
 import { possibleAnswers } from '../lib/qreconcile.mjs';
@@ -44,7 +44,8 @@ import { Worker } from 'node:worker_threads';
 import { ART_FILES } from './norn/assets.mjs';
 import { homeEvents } from './home.mjs';
 import { parseLedgerLine } from './ledger.mjs';
-import { instructionsView } from '../lib/instructions.mjs';
+import { insViewFile } from '../lib/guard-scan.mjs';
+import { insSummary, insPart } from './insparts.mjs';
 import { openCards } from '../lib/rules.mjs';
 import { auditsView, acceptText } from '../lib/audit.mjs';
 import { paraMarks } from '../lib/readev.mjs';
@@ -220,8 +221,47 @@ export function createDashboard(o) {
     return { project: p.name, version: s.version, files: { machine: o.budgetFile, project: p.file },
       settings: settingsView(s.view, { quietRule, quietFile: o.quietFile, ...exExtra(p) }), sections: SECTIONS, generated: generatedLines(s.view, exExtra(p)), targets,
       // F-6: each profile as Settings changes for this project's executors + role agents - the form is filled, Save stays the human step
-      profiles: profileChoices({ found: ['claude', ...['codex-sol', 'codex-astra'].filter(x => p.executors?.[x]?.enabled)], agents: exExtra(p).agents }),
+      profiles: profileChoices(profileFor(p, s)), profile_now: profileNow(p, s),
       notify: notifyInfo(p) };
+  }
+  // META-PROFILE-BUG R1: a profile routes to the Codex executors this machine has (setup found codex) and the project did not switch
+  // off, never to a retired one (retiredExecutors: its own cap 0 while Codex is open); the role names are the project's own agents
+  const CODEX_EX = ['codex-sol', 'codex-astra'];
+  const profileFor = (p, s = settingsState(p)) => { const gone = retiredExecutors(s.budget);
+    return { found: ['claude', ...CODEX_EX.filter(x => machine.codex?.exe && p.executors?.[x]?.enabled !== false && !gone.includes(x))], agents: exExtra(p).agents }; };
+  const capsRec = i => i.kind === 'decision' && i.state !== 'overruled' && /caps profile$/.test(i.data?.question ?? '');
+  /** the profile in force: the latest caps profile decision + how many of its keys (or the owner's own keys of that save) now differ */
+  function profileNow(p, s = settingsState(p)) {
+    const d = Object.values(st(p).items).filter(capsRec).sort((a, b) => Number(b.id.split('-').pop()) - Number(a.id.split('-').pop()))[0];
+    const name = d?.data?.profile ?? d?.data?.choice, prof = loadProfiles().profiles.find(x => x.name === name);
+    if (!d || !prof) return { kind: d ? 'kept' : 'none', label: d?.data?.choice ?? null, at: d?.created ?? null, own: 0 };
+    const view = withDefaults(s.view), differs = (k, v) => JSON.stringify(getPath(view, k)) !== JSON.stringify(v);
+    const own = new Set([...Object.entries(d.data.values ?? {}).filter(([k, v]) => differs(k, v)).map(([k]) => k), ...(d.data.own ?? [])]);
+    return { kind: 'profile', name: prof.name, label: prof.label, cost: d.data.cost ?? 'balanced', at: d.created, own: own.size };
+  }
+  /** Review changes: each change in plain words (the setting's label, from -> to) + flags: a recorded ruling names the key, a retired executor */
+  function reviewSettings(p, changes, version) {
+    const s = settingsState(p);
+    if (version !== s.version) throw fail(409, 'Settings changed elsewhere. Reload and review the diff again.');
+    const updated = applySettings(s.view, changes, exExtra(p)), rows = settingsView(s.view, exExtra(p)), retired = retiredExecutors(s.budget);
+    const rulings = Object.values(st(p).items).filter(i => (i.kind === 'directive' && i.state === 'active') || (i.kind === 'decision' && i.state !== 'overruled' && !capsRec(i)));
+    const words = v => (v === null || v === undefined ? 'unset' : Array.isArray(v) ? v.join(', ') || '(none)' : String(v));
+    const esc = x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const lines = Object.keys(changes).map(k => {
+      const row = rows.find(r => r.key === k), from = row ? row.value : getPath(withDefaults(s.view), k), to = getPath(updated, k), flags = [];
+      const named = new RegExp(`(^|[^a-z0-9_.])(policy\\.)?${esc(k.replace(/^policy\./, ''))}($|[^a-z0-9_])`, 'i');
+      for (const r of rulings) {
+        const t = String((r.kind === 'directive' ? r.data.text : [r.data.question, r.data.choice, r.data.why].join(' ')) ?? '').replace(/\s+/g, ' '), m = named.exec(t);
+        if (m) { const a = Math.max(0, m.index - 60), b = Math.min(t.length, m.index + 100);   // the words around the key
+          flags.push(`${r.id} names this setting: "${a ? '...' : ''}${t.slice(a, b).trim()}${b < t.length ? '...' : ''}"`); }
+      }
+      if (typeof to === 'string' && retired.includes(to) && /^policy\.(executors\.[a-z_]+\.executor|fallbacks\.)/.test(k)) flags.push(`${to} is retired (${capOfExecutor(to)} is 0)`);
+      const capX = retired.find(x => capOfExecutor(x) === k);
+      if (capX && to > 0) flags.push(`re-enables retired ${capX} (${k} is 0)`);
+      const label = row?.label ?? k;
+      return { key: k, label, from, to, text: `${label}: ${words(from)} -> ${words(to)}`, flags };
+    });
+    return { ok: true, lines };
   }
   // META-NOTIFY-SETUP R1: the Settings Notifications row - backend (+ the ntfy server; never the topic), the fyi batch hours
   function notifyInfo(p) {
@@ -468,36 +508,53 @@ export function createDashboard(o) {
     return { ...v, cached: false };
   }
   const docsList = p => (p.docs || []).map((d, i) => ({ i, tab: d.tab, path: d.path, exists: fs.existsSync(d.path) }));
-  // META-INSTRUCTIONS R1: the Instructions tab, cached 60 s per project (discovery runs git; the stream re-renders often)
-  const insViews = new Map();
-  const insOf = p => {
-    const c = insViews.get(p.name);
-    if (c && Date.now() - c.at < 60000) return c.v;
-    const v = instructionsView(p, { machine: machine.claude ? machine : null, home, remember: true });   // META-PRACTICE-P1: findings fixed since the last scan
-    insViews.set(p.name, { at: Date.now(), v });
-    return v;
-  };
-  // META-TEND P6: the Guard overview = a query over the advisory records of every phase + SloppaChoppa's open BLOCK findings (it owns
-  // no data; first_seen / new come from the one seen store, advisory.mjs crossings). A part that fails names itself and the rest shows.
-  // The instructions part is the slow one (a big project: ~18 s cold): the Guard reads the Instructions tab's fresh view when there is one, else
-  // a worker thread's scan (lib/guard-scan.mjs, this server's own home + machine), cached o.guardTtlMs (60 s; stale while it refreshes;
-  // pending before the first answer). A changed finding set reaches the page as the stream's derived event (its hash is in the sig).
-  const insGuard = new Map();
-  function insForGuard(p) {
-    const hit = insViews.get(p.name);
-    if (hit && Date.now() - hit.at < 60000) return { v: hit.v, pending: false };
-    let c = insGuard.get(p.name);
-    if (!c) { c = { at: 0, val: null, busy: false, hash: '-' }; insGuard.set(p.name, c); }
-    if (!c.busy && Date.now() - c.at > (o.guardTtlMs ?? 60000)) {
+  // META-UX-BUILD S1: the Instructions tab and the Guard read ONE instruction scan per project, never run in a request: the last view
+  // is served at once (from memory, else <state>/instructions-view.json, so a restart is not cold) and, once older than o.insTtlMs
+  // (60 s), rebuilt by a worker thread (lib/guard-scan.mjs, this server's own home + machine) - one rebuild at a time per project.
+  // A new view, or the end of a rebuild a page was shown as "refreshing", reaches the page as the stream's derived event (in the sig).
+  const ins = new Map();
+  function insCache(p) {
+    let c = ins.get(p.name);
+    if (!c) {
+      c = { at: 0, iso: null, v: null, paras: new Map(), hash: '-', busy: false, error: null, shown: false, ends: 0 }; ins.set(p.name, c);
+      try { const b = JSON.parse(fs.readFileSync(insViewFile(p.state), 'utf8')); Object.assign(c, { v: b.v, paras: new Map(b.paras), iso: b.at, at: Date.parse(b.at), hash: b.hash }); } catch { /* no view kept yet: the first scan is cold */ }
+    }
+    if (!c.busy && Date.now() - c.at > (o.insTtlMs ?? 60000)) {
       c.busy = true;
-      const fin = r => { if (!c.busy) return; c.busy = false; c.at = Date.now(); c.val = r.ok ? r.v : { error: 'instructions: ' + String(r.error).slice(0, 300) };
-        c.hash = hash(JSON.stringify([(c.val.findings || []).map(f => f.id), (c.val.rules?.advisories || []).map(f => f.id), c.val.error ?? null])); };
+      const fin = r => { if (!c.busy) return; c.busy = false; if (c.shown) { c.shown = false; c.ends++; }
+        if (r.ok) Object.assign(c, { v: r.v, paras: new Map(r.paras), iso: r.at, at: Date.parse(r.at), hash: r.hash, error: null });
+        else Object.assign(c, { at: Date.now(), error: 'instructions: ' + String(r.error).slice(0, 300) }); };
       let w;
       try { w = new Worker(new URL('../lib/guard-scan.mjs', import.meta.url), { workerData: { project: JSON.parse(JSON.stringify(p)), machine: machine.claude ? JSON.parse(JSON.stringify(machine)) : null, home } }); }
       catch (e) { fin({ ok: false, error: e?.message || e }); }
       if (w) { w.unref(); w.once('message', fin); w.once('error', e => fin({ ok: false, error: e?.message || e })); w.once('exit', code => fin({ ok: false, error: 'worker exit ' + code })); }
     }
-    return { v: c.val ?? hit?.v ?? null, pending: !c.val && !hit };
+    return c;
+  }
+  const insSig = name => { const c = ins.get(name); return c ? `${c.hash}:${c.ends}${c.error ? '!' : ''}` : '-'; };
+  // the first answer: the summary (no list, the lists' counts) + at / refreshing / pending; ?part= one capped list (insparts.mjs)
+  function insOf(p, url) {
+    const c = insCache(p), name = url.searchParams.get('part');
+    if (name !== null) { if (!c.v) throw fail(503, 'The first instruction scan of this project is still running'); return insPart(c.v, name); }
+    if (c.busy) c.shown = true;   // a page shows the chip: the rebuild's end is an event even when the view did not change
+    if (!c.v) return { project: p.name, pending: !c.error, refreshing: c.busy, error: c.error };
+    return { ...insSummary(c.v), at: c.iso, refreshing: c.busy, pending: false, error: c.error };
+  }
+  function insFile(p, id) {
+    const c = insCache(p);
+    if (!c.v) throw fail(503, 'The first instruction scan of this project is still running');
+    const v = c.v, r = v.rows.find(x => x.id === id && x.exists);
+    if (!r) throw fail(404, 'No such instruction file');
+    const ev = v.evidence?.files?.[r.id] ?? null;   // META-TEND P5: read / cite marks per paragraph; the file's own findings (the list part is capped)
+    return { ...r, text: read(r.path, null), paras: c.paras.get(r.id)?.map(x => ({ ...x, ...paraMarks(x, ev) })) || null, evidence: ev, read_days: v.evidence?.window_days ?? null,
+      findings: (v.findings || []).filter(x => x.path === r.path || x.other === r.path) };
+  }
+  // META-TEND P6: the Guard overview = a query over the advisory records of every phase + SloppaChoppa's open BLOCK findings (it owns
+  // no data; first_seen / new come from the one seen store, advisory.mjs crossings). A part that fails names itself and the rest shows.
+  // The instructions part is the shared scan above (pending before its first answer).
+  function insForGuard(p) {
+    const c = insCache(p);
+    return { v: c.v ?? (c.error ? { error: c.error } : null), pending: !c.v && !c.error };
   }
   function guardOf(p) {
     const errors = [], part = (name, f, dflt) => { try { return f(); } catch (e) { errors.push(`${name}: ${String(e.message).slice(0, 200)}`); return dflt; } };
@@ -581,8 +638,8 @@ export function createDashboard(o) {
     // what the tabs show besides records: the ledger, STATUS.md (burn), live usage, the docs, and the async caches (git-derived
     // deliverables, account usage) - one stat per file + two timestamps per poll; kick() keeps the caches fresh while watched
     sig: () => [p.ledger, path.join(p.state, 'STATUS.md'), o.liveUsage, ...(p.docs || []).map(d => d.path)].map(f => { try { const s = f && fs.statSync(f); return s ? s.mtimeMs + ':' + s.size : '-'; } catch { return '-'; } })
-      .concat([dlv.get(p.name)?.sig ?? '-', acct.sig ?? '-', rm.get(p.name)?.hash ?? '-', plans.get(p.name)?.hash ?? '-', insGuard.get(p.name)?.hash ?? '-']).join('|'),   // cache CONTENT hashes: an unchanged refresh is no event
-    kick: () => { deliverablesOf(p); accountKick(); roadmapOf(p, { kick: true }); if (plans.has(p.name)) planOf(p); if (insGuard.has(p.name)) insForGuard(p); } });   // the roadmap / plan only once a page asked
+      .concat([dlv.get(p.name)?.sig ?? '-', acct.sig ?? '-', rm.get(p.name)?.hash ?? '-', plans.get(p.name)?.hash ?? '-', insSig(p.name)]).join('|'),   // cache CONTENT hashes: an unchanged refresh is no event
+    kick: () => { deliverablesOf(p); accountKick(); roadmapOf(p, { kick: true }); if (plans.has(p.name)) planOf(p); if (ins.has(p.name)) insCache(p); } });   // the roadmap / plan only once a page asked
   function openStream(req, res, url) {
     const ps = pick(url, { all: true }), from = decodeCursor(req.headers['last-event-id'] ?? '');
     if (!streams.join(ps.map(p => p.name).join('|'), ps.map(streamSource), res, from)) throw fail(429, `Too many dashboard tabs open (max ${o.streamMax ?? 16})`);
@@ -836,7 +893,8 @@ data: ${JSON.stringify(l)}
     let roadmap = 0; try { roadmap = Object.values(loadRoadmap(p.state).items).filter(i => i.state === 'open').length; } catch { /* no roadmap */ }
     return { project: p.name, rules: !!(p.rules_read_whole || []).length || fs.existsSync(rulesFile(p)),
       caps_chosen: items.some(i => i.kind === 'decision' && /caps profile$/.test(i.data?.question ?? '')), gate: p.merge?.gate?.cmd ?? null,
-      found_gate: facts?.commands?.find(c => c.id === 'test')?.cmd ?? null, roadmap, agent_files: facts ? facts.agent_files.map(a => a.file) : null };
+      found_gate: facts?.commands?.find(c => c.id === 'test')?.cmd ?? null, roadmap, agent_files: facts ? facts.agent_files.map(a => a.file) : null,
+      caps: Object.fromEntries(['max_claude_workers', 'max_codex', 'weekly_stop_pct'].map(k => [k, withDefaults(settingsState(p).view)[k] ?? null])), profile_now: profileNow(p) };
   }
   async function adoptView(p) {
     const P = fs.existsSync(p.state) ? proposalOf(p.state) : null;
@@ -997,7 +1055,8 @@ data: ${JSON.stringify(l)}
       try { const ev = stopRun({ state: p.state, locksDir: o.locksDir ?? path.join(path.dirname(path.resolve(p.state)), 'locks'), run: r.id, by: 'dashboard', why: data.why ? line(data.why) : 'stopped from the dashboard' }); return { ok: true, seq: ev.seq }; }
       catch (e) { if (e instanceof RecordError) throw fail(409, e.message); throw e; }
     }
-    if (route === '/api/settings') return saveSettings(p, data.changes, data.version);
+    if (route === '/api/settings') return saveSettings(p, data.changes, data.version, data.profile);
+    if (route === '/api/settings/review') return reviewSettings(p, data.changes, data.version);
     if (route === '/api/audit') {   // META-TEND P5: an audit hunk card's tap - accept (a decision + the directive the check-in applies) or decline (a decision)
       if (!['accept', 'decline'].includes(data.verdict)) throw fail(400, 'verdict must be accept or decline');
       const c = auditsView(p, loadState(p.state).items).cards.find(x => x.id === data.id);
@@ -1021,14 +1080,28 @@ data: ${JSON.stringify(l)}
     throw fail(404, 'Not found');
   }
   // the Settings save path (the Settings tab, and the advice card's one tap with the version it read just now)
-  function saveSettings(p, changes, version) {
+  // META-PROFILE-BUG R1: only the changed keys are written (onlyChanged); a save filled from a profile ({ name, cost }) records the
+  // "caps profile" decision with the profile's values and the owner's own keys of that save (profileNow counts them)
+  function saveSettings(p, changes, version, profile) {
     const s = settingsState(p);
     if (version !== s.version) throw fail(409, 'Settings changed elsewhere. Reload and review the diff again.');
-    const updated = applySettings(s.view, changes, exExtra(p)), parts = split(updated), written = [];
+    let values = null, prof = null;
+    if (profile !== undefined) {
+      if (!profile || typeof profile !== 'object' || !COSTS.includes(profile.cost)) throw fail(400, `profile must be { name, cost: ${COSTS.join(' | ')} }`);
+      try { prof = getProfile(String(profile.name)); } catch (e) { throw fail(400, e.message); }
+      values = profileChanges(prof, { ...profileFor(p, s), cost: profile.cost });
+    }
+    const updated = applySettings(s.view, changes, exExtra(p)), next = onlyChanged(s.view, changes, updated), parts = split(next), written = [];
     const was = withDefaults(s.view).policy.cadence.checkin_interval_min, now = updated.policy.cadence.checkin_interval_min;
-    if (writeBudget(o.budgetFile, s.budget, updated)) written.push(o.budgetFile);
-    if (JSON.stringify(parts.policy) !== JSON.stringify(s.proj.policy)) { atomic(p.file, JSON.stringify({ ...s.proj, policy: parts.policy }, null, 2) + '\n'); written.push(p.file); }
-    return { ok: true, written, regenerated: regenerate(p, updated), gen: genAfterPolicy(p), interval: now !== was ? now : null };   // DEC-362: sources, then norn gen
+    if (writeBudget(o.budgetFile, s.budget, next)) written.push(o.budgetFile);
+    if (JSON.stringify(parts.policy) !== JSON.stringify(s.proj.policy ?? {})) { atomic(p.file, JSON.stringify({ ...s.proj, policy: parts.policy }, null, 2) + '\n'); written.push(p.file); }
+    let decision = null;
+    if (prof) {
+      const own = Object.keys(changes).filter(k => !(k in values) || JSON.stringify(values[k]) !== JSON.stringify(changes[k])), from = Object.keys(changes).length - own.length;
+      decision = rec(p, { kind: 'decision', ev: 'create', by: 'dashboard', data: { lane: 'settings', question: 'caps profile', choice: `${prof.label} (${profile.cost})`,
+        why: `saved from Settings: ${from} setting(s) from the profile${own.length ? `, ${own.length} of the owner's own` : ''}`, profile: prof.name, cost: profile.cost, values, own } }).id;
+    }
+    return { ok: true, written, decision, regenerated: regenerate(p, updated), gen: genAfterPolicy(p), interval: now !== was ? now : null };   // DEC-362: sources, then norn gen
   }
 
   // a remote device's request runs inside writeOrigin (records stamp via remote:<device>); cleared when it ends (no stamp leaks into
@@ -1067,7 +1140,7 @@ data: ${JSON.stringify(l)}
       if (req.method === 'GET') {
         if (route === '/') return send(200, read(path.join(DASH, 'index.html')).replace('__TOKEN__', JSON.stringify(token)).replace('__REMOTE__', JSON.stringify(who.device ? { device: who.device.id, name: who.device.name } : null)), 'text/html; charset=utf-8');
         if (route === '/api/remote' && remote) return send(200, remoteView(who));
-        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs') return send(200, read(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
+        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs') return send(200, read(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
         const vm = route.match(/^\/vendor\/([a-z0-9.-]+)$/);   // pinned browser libraries + font (vendor/VENDOR.md), allowlist only
         if (vm && VENDOR.includes(vm[1])) return send(200, fs.readFileSync(path.join(DASH, 'vendor', vm[1])), typeOf(vm[1]));
         const nm = route.match(/^\/norn\/([a-z.]+)$/);   // the Norn look's modules + stylesheet, allowlist only
@@ -1094,11 +1167,11 @@ data: ${JSON.stringify(l)}
         if (route === '/api/docs') return send(200, { docs: docsList(one(url)) });
         const dm = route.match(/^\/api\/docs\/(\d+)$/);
         if (dm) { const d = docsList(one(url))[Number(dm[1])]; if (!d) throw fail(404, 'No such doc'); return send(200, { ...d, text: read(d.path, null) }); }
-        if (route === '/api/instructions') return send(200, insOf(one(url)));
+        if (route === '/api/instructions') return send(200, insOf(one(url), url));
         if (route === '/api/guard') return send(200, guardOf(one(url)));   // META-TEND P6
         if (route === '/api/tests') { const p = one(url); return send(200, { project: p.name, ...testsView(p.state) }); }   // META-TEND TESTS
         const im = route.match(/^\/api\/instructions\/([\w-]+)$/);
-        if (im) { const v = insOf(one(url)), r = v.rows.find(x => x.id === im[1] && x.exists); if (!r) throw fail(404, 'No such instruction file'); const ev = v.evidence?.files?.[r.id] ?? null; return send(200, { ...r, text: read(r.path, null), paras: v.paras?.get(r.id)?.map(x => ({ ...x, ...paraMarks(x, ev) })) || null, evidence: ev, read_days: v.evidence?.window_days ?? null }); }   // META-TEND P5: read / cite marks per paragraph
+        if (im) return send(200, insFile(one(url), im[1]));
         if (route === '/api/ledger') return send(200, ledgerPage(one(url), url));
         if (route === '/api/settings') return send(200, settingsInfo(one(url)));
         if (route === '/api/feed') return openFeed(req, res, url);

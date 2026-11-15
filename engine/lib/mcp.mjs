@@ -9,7 +9,7 @@ import { record, loadState, kindOfId, RecordError, KINDS, holdOf } from './recor
 import { ConfigError, metaRoot, fwd, loadMachine, loadProject, expandVars } from './config.mjs';
 import { genAfterPolicy, projectNew, SetupError } from './setup.mjs';
 import { scan, interviewOf, proposalOf, adoptDecide, adoptApply, renderProposal, AdoptError, PARTS } from './adopt.mjs';
-import { settingsView, applySettings, withDefaults, merged, split, generatedLines, rewriteMarked, getPath, executorsFor } from './policy.mjs';
+import { settingsView, applySettings, onlyChanged, withDefaults, merged, split, generatedLines, rewriteMarked, getPath, executorsFor } from './policy.mjs';
 import { providersOf, executorExtra } from './executors.mjs';
 import { renderCheckin, CHECKIN_PROMPT } from './tick.mjs';
 import { tryDigest, digestIds } from './digest.mjs';
@@ -345,10 +345,10 @@ function settings(a, ctx) {
   const diff = [{ key: a.set.key, from: getPath(withDefaults(view), a.set.key) ?? null, to: getPath(updated, a.set.key) }];
   if (a.dry_run) return { text: `dry run: ${a.set.key} ${JSON.stringify(diff[0].from)} -> ${JSON.stringify(diff[0].to)}`, data: { diff, written: [] } };
   // the same writes as the dashboard's /api/settings: machine budget vs project policy, then the marked lines in policy targets
-  const parts = split(updated), written = [];
+  const parts = split(onlyChanged(view, { [a.set.key]: a.set.value }, updated)), written = [];   // META-PROFILE-BUG R1: the changed key only
   const atomic = (f, s) => { const t = f + '.tmp-' + process.pid; fs.writeFileSync(t, s); fs.renameSync(t, f); written.push(f); };
   if (JSON.stringify(parts.budget) !== JSON.stringify(budget)) { fs.mkdirSync(path.dirname(budgetFile(ctx)), { recursive: true }); atomic(budgetFile(ctx), JSON.stringify({ ...budget, ...parts.budget }, null, 2) + '\n'); }
-  if (JSON.stringify(parts.policy) !== JSON.stringify(proj.policy)) atomic(p.file, JSON.stringify({ ...proj, policy: parts.policy }, null, 2) + '\n');
+  if (JSON.stringify(parts.policy) !== JSON.stringify(proj.policy ?? {})) atomic(p.file, JSON.stringify({ ...proj, policy: parts.policy }, null, 2) + '\n');
   const lines = generatedLines(updated, extra);
   for (const f of p.policy_targets || []) {
     let t; try { t = fs.readFileSync(f, 'utf8'); } catch { continue; }

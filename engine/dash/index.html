@@ -393,7 +393,7 @@ details.ck .ck-full{text-align:left;margin:6px 0 2px;padding:8px 10px;border:1px
 </aside>
 <script>const TOKEN = __TOKEN__, REMOTE = __REMOTE__;</script>
 <script type="module">
-import { TABS, loadTab, renderTab, renderNav, pageTitle, needsCount, fmtTime, esc, matchText, renderFeedHead, renderFeedEvent, rmScopeNext, rmUrlHash, parseRmHash } from '/ui.mjs';
+import { TABS, loadTab, loadInsParts, insPartsKey, renderTab, renderNav, pageTitle, needsCount, fmtTime, esc, matchText, renderFeedHead, renderFeedEvent, rmScopeNext, rmUrlHash, parseRmHash } from '/ui.mjs';
 import DOMPurify from '/vendor/purify.es.mjs';
 import { renderDeliverable, renderRmEditor, rmEditBody } from '/ui.mjs';
 import { initLook, setLook, setTheme, setQuiet, look, ground, assetImg, assetUrl, motion } from '/norn/look.mjs';
@@ -486,6 +486,17 @@ function goTo(g) {
   if (g.jump) S.jump = g.jump;
   history.replaceState(null, '', `?project=${encodeURIComponent(S.project)}&tab=${S.tab}`); render();
 }
+// META-UX-BUILD S1: the Instructions parts of the painted view (one fetch per view); they paint into the page that still shows it
+async function insPartsFetch(d) {
+  const project = S.project, key = insPartsKey(project, d);
+  if (S.insPartsBusy === key) return;
+  S.insPartsBusy = key;
+  try {
+    const data = await loadInsParts(project, get);
+    S.insParts = { key, data };
+    if (S.tab === 'instructions' && S.last?.parts_loading && insPartsKey(S.project, S.last) === key) { S.last = { ...S.last, ...data, parts_loading: false }; paintMain(S.last); applyFilters(); }
+  } catch (e) { err('Instructions: a part failed: ' + e.message); } finally { if (S.insPartsBusy === key) S.insPartsBusy = null; }
+}
 async function render(force = false, why = []) {
   try {
     if (threadOnly(why, S.tab) && $('#thread')) { await paintThread(); return; }   // META-HOME-POLISH R1: a chat line repaints the thread only
@@ -496,7 +507,7 @@ async function render(force = false, why = []) {
     const nav = $('#tabs'), navX = nav.scrollLeft; nav.innerHTML = renderNav(S.tab, { inbox: S.needs }, look()); nav.scrollLeft = navX;
     if (S.navTab !== S.tab) { S.navTab = S.tab; const show = () => nav.querySelector('[aria-selected=true]')?.scrollIntoView({ inline: 'nearest', block: 'nearest' }); show(); document.fonts.ready.then(show); }
     if (!S.project) S.tab = 'adopt';
-    const d = await loadTab(S.tab, S.project, get, { allLanes: S.allLanes, doc: S.doc, ins: S.ins, insLine: S.insLine, mapMore: S.mapMore, mapAll: S.mapAll, ledgerN: S.ledgerN, adoptAdd: S.adoptAdd, adoptScan: S.adoptScan, projects: S.projects });
+    const d = await loadTab(S.tab, S.project, get, { allLanes: S.allLanes, doc: S.doc, ins: S.ins, insLine: S.insLine, mapMore: S.mapMore, mapAll: S.mapAll, ledgerN: S.ledgerN, adoptAdd: S.adoptAdd, adoptScan: S.adoptScan, projects: S.projects, insParts: S.insParts });
     // Settings: a stream re-render never wipes edits, search or scroll - re-render only on a new version (and never over unsaved edits)
     if (S.tab === 'settings' && !force && $('#main .settings')) {
       if (d.version === S.setVersion) { err(''); return; }
@@ -504,6 +515,7 @@ async function render(force = false, why = []) {
     }
     const mw = $('.mapwrap'), keep = mw ? [mw.scrollLeft, mw.scrollTop] : null;   // a re-render keeps the map's pan position
     S.last = d; S.lastTab = S.tab; if (S.tab === 'roadmap') S.rmData = d; paintMain(d);
+    if (S.tab === 'instructions' && d.parts_loading) insPartsFetch(d);   // META-UX-BUILD S1: the lists load by themselves after the summary paints
     if (S.tab === 'instructions' && S.insScroll) { S.insScroll = false; $('#main [data-focus]')?.scrollIntoView({ block: 'center' }); }   // META-TEND P3: a ladder card opens its source line
     if ($('#map-host')) await mountMap(d); else dropMap();
     if (keep && $('.mapwrap')) [$('.mapwrap').scrollLeft, $('.mapwrap').scrollTop] = keep;
@@ -845,6 +857,7 @@ document.addEventListener('click', e => {
       const el = document.querySelector(`[data-key="${CSS.escape(k)}"]:not([disabled])`); if (!el) continue;
       el.value = Array.isArray(v) ? v.join(', ') : String(v ?? ''); n++;
     }
+    S.setProfile = { name: sel.value, cost };   // META-PROFILE-BUG R1: Save records the pick (the caps profile decision)
     dirty(); $('#set-profile-note').textContent = `Filled ${n} settings from ${sel.value} (${cost}). Nothing is saved yet: Review changes, then Save.`; return; }
   if (d.act === 'set-reset') { const el = document.querySelector(`[data-key="${CSS.escape(d.for)}"]`), v = JSON.parse(d.default);
     if (el) { el.value = Array.isArray(v) ? v.join(', ') : String(v ?? ''); dirty(); el.focus(); } return; }
@@ -853,7 +866,7 @@ document.addEventListener('click', e => {
   if (d.act === 'remote-pair') { const o = $('#remote-code'); o.textContent = 'Making a code ...';   // C6: a single-use code for one phone
     post('/api/remote/pair', {}).then(r => { o.innerHTML = `<div class="rc mono">${esc(r.code)}</div><div class="small mute">On your phone open the address above and type this code. It works once, until ${esc(new Date(r.expires).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}.</div>`; }, e => { o.textContent = e.message; }); return; }
   if (d.act === 'remote-revoke' && confirm(`Revoke ${d.name}? It must be paired again to open Norn.`)) { post('/api/remote/revoke', { id: d.id }).then(() => render(true), e => err(e.message)); return; }
-  if (d.act === 'settings-discard') { S.setDirty = 0; $('#settings-diff').innerHTML = ''; render(true); return; }
+  if (d.act === 'settings-discard') { S.setDirty = 0; S.setProfile = null; $('#settings-diff').innerHTML = ''; render(true); return; }
   if (d.act?.startsWith('adopt-')) { adoptAct(b, d); return; }
   if (d.act === 'answer') act(() => post('/api/answer', { project: p, id: d.id, choice: d.choice, text: d.text }));
   if (d.act === 'advice-apply') act(() => post('/api/advice', { project: p, key: d.key, verdict: 'apply' }));   // META-TEND P4: the one tap (writes Settings + a decision)
@@ -869,17 +882,16 @@ document.addEventListener('click', e => {
   if (d.act === 'first-task') { const t = $('#first-task-text').value.trim(); if (t) act(() => post('/api/first-task', { project: d.project || p, text: t })); }
   if (d.act === 'adv-approve' && confirm('Approve: a directive asks the check-in for a task brief that adds this enforcement. Norn installs nothing itself.')) act(() => post('/api/directive', { project: d.project || p, text: d.text }));   // META-TEND P3
   if (d.act === 'directive') { const t = prompt('New directive (binds the check-in):'); if (t) act(() => post('/api/directive', { project: p, text: t })); }
-  if (d.act === 'settings-review') {
-    const changes = {}, lines = [];
-    for (const el of document.querySelectorAll('[data-key]:not([disabled])')) {
-      if (!changed(el)) continue;
-      const orig = JSON.parse(el.dataset.orig), v = valueOf(el); changes[el.dataset.key] = v; lines.push(`${el.dataset.key}: ${JSON.stringify(orig)} -> ${JSON.stringify(v)}`);
-    }
+  if (d.act === 'settings-review') {   // META-PROFILE-BUG R1: each change in plain words + a flag on a recorded ruling / a retired executor
+    const changes = {};
+    for (const el of document.querySelectorAll('[data-key]:not([disabled])')) if (changed(el)) changes[el.dataset.key] = valueOf(el);
     const box = $('#settings-diff');
-    if (!lines.length) { box.innerHTML = '<p class="small mute">No changes.</p>'; return; }
-    box.innerHTML = `<div class="card mono" style="margin-top:10px;white-space:pre-wrap"></div><button class="primary" id="settings-save" style="margin-top:8px">Save</button>`;
-    box.firstChild.textContent = lines.join('\n');
-    $('#settings-save').onclick = () => act(async () => { await post('/api/settings', { project: p, version: d.version, changes }); S.setDirty = 0; S.setVersion = null; });
+    if (!Object.keys(changes).length) { box.innerHTML = '<p class="small mute">No changes.</p>'; return; }
+    post('/api/settings/review', { project: p, version: d.version, changes }).then(r => {   // no re-render: the form keeps its edits
+      const flagged = r.lines.filter(l => l.flags.length).length;
+      box.innerHTML = `<div class="card" id="settings-review" style="margin-top:10px">${S.setProfile ? `<p class="small">From the profile <b>${esc(S.setProfile.name)}</b> (${esc(S.setProfile.cost)}); Save records the pick.</p>` : ''}<ul class="small">${r.lines.map(l => `<li>${l.flags.length ? '<span class="chip warn">check</span> ' : ''}${esc(l.text)}${l.flags.map(x => `<div class="mute">${esc(x)}</div>`).join('')}</li>`).join('')}</ul>${flagged ? `<p class="small"><b>${flagged} change${flagged === 1 ? '' : 's'} to check</b> before you Save.</p>` : ''}</div><button class="primary" id="settings-save" style="margin-top:8px">Save</button>`;
+      $('#settings-save').onclick = () => act(async () => { await post('/api/settings', { project: p, version: d.version, changes, ...(S.setProfile ? { profile: S.setProfile } : {}) }); S.setDirty = 0; S.setVersion = null; S.setProfile = null; });
+    }, e => err(e.message));
   }
 });
 $('#pause').onclick = () => act(() => post('/api/pause', { project: S.project, paused: !S.paused }));

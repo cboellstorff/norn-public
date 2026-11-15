@@ -8,6 +8,7 @@ import { renderAdopt, adoptStep } from './adopt.mjs';
 import { renderHome } from './home.mjs';
 import { bars, columns, stack, board, lines, meter } from './widgets.mjs';
 import { orcLine, badgeLabel } from './norn/orc.mjs';
+import { INS_PARTS, INS_CAPS, LADDER_ORDER, LADDER_STATES } from './insparts.mjs';
 export const TABS = [['home', 'Home'], ['overview', 'Overview'], ['inbox', 'Inbox'], ['lanes', 'Lanes'], ['agents', 'Agents'], ['map', 'Map'], ['roadmap', 'Roadmap'], ['plan', 'Plan'], ['records', 'Records'],
   ['usage', 'Usage'], ['tests', 'Tests'],
   ['docs', 'Docs'], ['instructions', 'Instructions'], ['guard', 'Guard'], ['ledger', 'Ledger'], ['settings', 'Settings']];
@@ -97,6 +98,12 @@ const art = (ctx, name, cls = '') => (ctx.look === 'norn' && ctx.art ? ctx.art(n
 const dlvGet = (get, q) => Promise.resolve().then(() => get(`/api/deliverables?${q}`)).catch(() => null);
 // META-TEND P6: the Guard rows for the chips in place (one project; a missing / failing /api/guard never breaks the tab)
 const guardGet = (get, q, all) => (all ? Promise.resolve(null) : Promise.resolve().then(() => get(`/api/guard?${q}`)).catch(() => null));
+// META-UX-BUILD S1: the Instructions parts of one view (project + its scan time), fetched in parallel after the summary paints
+export const insPartsKey = (project, v) => `${project}|${v.at}`;
+export async function loadInsParts(project, get) {
+  const q = `project=${encodeURIComponent(project)}`, xs = await Promise.all(INS_PARTS.map(k => get(`/api/instructions?${q}&part=${k}`)));
+  return Object.assign({}, ...xs);
+}
 export async function loadTab(tab, project, get, ctx = {}) {
   // META-ADOPT A3: the setup page (not a nav tab) - Add a project with no project (or "+ Add a project"), else GET /api/adopt
   if (tab === 'adopt') {
@@ -131,10 +138,10 @@ export async function loadTab(tab, project, get, ctx = {}) {
     const pickI = docs.some(d => d.i === ctx.doc && d.exists) ? ctx.doc : docs.find(d => d.exists)?.i;
     return { docs, guard, doc: pickI === undefined ? null : await get(`/api/docs/${pickI}?${q}`) };
   }
-  if (tab === 'instructions') {   // META-INSTRUCTIONS R1
-    const v = await get(`/api/instructions?${q}`);
-    const pick = ctx.ins && (v.rows || []).some(r => r.id === ctx.ins && r.exists) ? ctx.ins : null;
-    return { ...v, file: pick ? await get(`/api/instructions/${encodeURIComponent(pick)}?${q}`) : null, focus_line: pick && ctx.insLine ? ctx.insLine : null };
+  if (tab === 'instructions') {   // META-INSTRUCTIONS R1. META-UX-BUILD S1: the summary first; the parts of this view (ctx.insParts) or loading
+    const [v, file] = await Promise.all([get(`/api/instructions?${q}`), ctx.ins ? get(`/api/instructions/${encodeURIComponent(ctx.ins)}?${q}`).catch(() => null) : null]);
+    const have = !v.pending && ctx.insParts?.key === insPartsKey(project, v) ? ctx.insParts.data : null;
+    return { ...v, ...(have || {}), parts_loading: !v.pending && !v.error && !have, file, focus_line: file && ctx.insLine ? ctx.insLine : null };
   }
   if (tab === 'ledger') return get(`/api/ledger?${q}${ctx.ledgerN ? `&count=${ctx.ledgerN}` : ''}`);
   if (tab === 'settings') {   // C6: /api/remote exists only while dash.remote is on (404 = off)
@@ -246,7 +253,8 @@ function setupGaps(g) {
   if (!g.roadmap) row('roadmap', 'No roadmap yet.', `<button data-act="adopt-open" data-project="${p}">Draft it from the repository</button><button class="ghost" data-tab="roadmap">Open the roadmap</button>`);
   if (!g.rules) row('rules', `No project rules yet. Workers follow the repo's own ${esc((g.agent_files || []).join(', ') || 'instruction files')}.`,
     `<button data-act="adopt-open" data-project="${p}">Draft them</button><button class="ghost" data-act="adopt-rule" data-project="${p}">Write one rule</button>`);
-  if (!g.caps_chosen && !g.caps_kept) row('caps', 'Starter caps are in force. Nobody chose them. The scheduler stays off until then.',
+  const c = g.caps || {}, cap = (k, u) => (c[k] === null || c[k] === undefined ? `${u} unset (no limit)` : `${c[k]} ${u}`);
+  if (!g.caps_chosen && !g.caps_kept) row('caps', `No caps profile is on record. Nobody chose them: the caps in force are ${cap('max_claude_workers', 'Claude workers')}, ${cap('max_codex', 'Codex runs')}, weekly stop ${cap('weekly_stop_pct', '%')}.`,
     `<button data-tab="settings">Choose a profile</button><button class="ghost" data-act="adopt-caps-keep" data-project="${p}">Keep the starter caps</button>`);
   if (!g.gate) row('merge gate', `Merges are not gated. ${g.found_gate ? `The scan found <span class="mono">${esc(g.found_gate)}</span>.` : 'No test command is on record.'}`,
     `<button data-act="adopt-open" data-project="${p}">Set it</button>`);
@@ -298,7 +306,8 @@ function overview(d, ctx) {
     .map(r => `<tr><td class="id">${esc(r.id)}</td><td>${chip(r.state)}</td><td>${r.kind === 'decision' ? `<b>${esc(r.data.lane ?? '')}</b> ${esc(r.data.question ?? '')}<div class="small mute">${esc(r.data.choice ?? '')}${r.data.why ? ' - ' + esc(r.data.why) : ''}</div>` : esc(r.data.text)}</td><td class="small mute">${esc(r.by)} ${fmtTime(r.updated, ctx.now)}</td></tr>`).join('') : '';
   const led = d.ledger ? ledgerRows(parseLedger(d.ledger.ledger).slice(-4), d.ledger, ctx, true) : '';
   const hero = ctx.look === 'norn' && ctx.art ? `<div class="hero">${art(ctx, 'hero-night', 'hero-n')}${art(ctx, 'hero-day', 'hero-d')}<div class="lore">${NORN_GROUPS.filter(([g]) => NORN_LORE[g]).map(([g]) => `<p>${esc(NORN_LORE[g])}</p>`).join('')}</div></div>` : '';
-  return `${hero}${firstTask(o.first_run)}${setupGaps(o.setup)}<div class="glance">
+  const prof = o.setup?.profile_now ? `<p class="small" id="profile-now" style="margin:0 0 10px">Profile: <b>${esc(profileWords(o.setup.profile_now, ctx.now))}</b> <button class="ghost" data-tab="settings">Settings</button></p>` : '';
+  return `${hero}${firstTask(o.first_run)}${setupGaps(o.setup)}${prof}<div class="glance">
    <section class="card${o.needs_you ? ' needs' : ''}" id="needs"><h2>Needs you <b>${o.needs_you}</b></h2>${needs}</section>
    <section class="card" id="running"><h2>Running <b>${o.running.claude.n}/${o.running.claude.cap ?? '-'}</b> Claude · <b>${o.running.codex.n}/${o.running.codex.cap ?? '-'}</b> Codex</h2>
      <table><thead><tr><th>lane</th><th>executor</th><th>age vs time budget (mark = budget, end = 2x)</th><th>context</th><th>burn</th></tr></thead><tbody>${rows}</tbody></table></section>
@@ -655,8 +664,19 @@ const INS_LOAD = { session: 'every session', checkin: 'check-ins', chat: 'chat',
 const INS_CHIP = { session: 'warn', checkin: 'claude', chat: 'claude', role: 'prov', 'on-demand': 'idle', source: 'idle' };
 const DRIFT_CHIP = { ok: 'ok', missing: 'bad', drift: 'bad', unmanaged: 'bad', stale: 'warn', adoptable: 'idle', same: 'idle' };
 const tk = n => (!fin(n) ? '-' : n >= 1000 ? `~${(n / 1000).toFixed(1)}k` : `~${n}`);
+// META-UX-BUILD S1: a rebuild in the worker (or the first scan) shows a chip, never a blank page; a part not here yet says so
+const INS_TITLE = { files: 'Files', rules: 'The ladder', findings: 'Findings', hints: 'Hints', suggest: 'Tighten' };
+const insWait = k => `<div class="tablecard" id="ins-wait-${k}"><h3>${INS_TITLE[k]}</h3><p class="small mute inspart">loading ...</p></div>`;
+function insRefreshing(d, now) {
+  if (d.pending) return `<div class="card" id="ins-refreshing">${chip('run', 'refreshing')} <b>The first scan of ${esc(d.project ?? 'this project')} is running</b> in the background
+    <div class="small mute">Every steering file is read once (a big project: under a minute); this page fills in when it lands. Other tabs answer meanwhile.</div></div>`;
+  return `${d.refreshing ? `<div class="small" id="ins-refreshing" style="margin:0 0 6px">${chip('run', 'refreshing')} <span class="mute">the scan runs in the background; shown: the view of ${esc(fmtTime(d.at, now))}</span></div>` : ''}${d.error ? `<div class="small" style="margin:0 0 6px">${chip('bad', 'scan failed')} <span class="mute">${esc(d.error)}</span></div>` : ''}`;
+}
+const insMore = (shown, n, where) => (n > shown ? `<p class="small mute" style="padding:0 12px">showing ${int(shown)} of ${int(n)}${where ? ` · ${where}` : ''}</p>` : '');
 function instructions(d, ctx) {
   const now = ctx.now ?? Date.now();
+  if (d.pending || (d.error && !d.at)) return `${insRefreshing(d, now)}`;
+  const wait = k => d.parts_loading && (k === 'rules' ? d.rules === undefined : k === 'files' ? d.rows === undefined : d[k] === undefined);
   const load = r => r.load === 'role' ? `role ${r.role}` : r.load === 'session' && r.standing_tokens < r.tokens ? 'every session (description)' : INS_LOAD[r.load] ?? r.load;
   const rows = (d.rows || []).map(r => `<tr id="ins-row-${esc(r.id)}"${d.file?.id === r.id ? ' class="sel"' : ''}>
     <td><button class="lnk" data-ins="${esc(r.id)}"${r.exists ? '' : ' disabled'}>${esc(r.name)}</button>${r.exists || r.generated ? '' : ` ${chip('bad', 'missing')}`}${r.generated ? ` ${chip(DRIFT_CHIP[r.drift] ?? 'idle', `generated · ${r.drift || '?'}`)}` : ''}${r.stale ? ` ${chip('warn', `${r.stale} stale`)}` : ''}${r.findings ? ` ${chip('warn', `${r.findings} finding${r.findings > 1 ? 's' : ''}`)}` : ''}${insRuleChips(r.rules)}<div class="inspath mute">${esc(r.path)}</div></td>
@@ -666,27 +686,25 @@ function instructions(d, ctx) {
     <td class="num">${r.hints ? chip('warn', `${r.hints} hint${r.hints > 1 ? 's' : ''}`) : dash}</td></tr>`).join('');
   const standing = (d.standing || []).map(s => `<tr><td>${esc(s.label)}</td><td class="num">${int(s.sessions)}</td><td class="num">${tk(s.tokens)}</td></tr>`).join('');
   const hints = (d.hints || []).map(h => `<li class="inshint">${chip('warn', h.kind)} <button class="lnk" data-ins="${esc(h.id)}">${esc(h.path.split('/').pop())}:${esc(h.line)}</button> ${esc(h.text)}</li>`).join('');
-  return `${insMeasured(d.measured)}${insCheckins(d.checkins)}<div class="card"><b>${int((d.rows || []).length)} files steer the agents</b> · ${tk(d.total)} tokens loaded today by ${int(d.sessions)} session(s)
+  return `${insRefreshing(d, now)}${insMeasured(d.measured)}${insCheckins(d.checkins)}<div class="card"><b>${int(d.counts?.files ?? (d.rows || []).length)} files steer the agents</b> · ${tk(d.total)} tokens loaded today by ${int(d.sessions)} session(s)
      <div class="small mute">${esc(d.method)}. Cost today = size x the sessions that loaded it (runs.jsonl + the chat's starts). Read-only: hints are never applied.</div></div>
    ${insManaged(d.managed)}
    ${insTrend(d.measured)}
    ${insLoads(d)}
-   ${insFileMap(d)}
+   ${wait('files') ? '' : insFileMap(d)}
    ${insMemory(d.memory_map)}
-   ${insRepeats(d.rules)}
-   ${insLadder(d.rules)}
+   ${wait('rules') ? insWait('rules') : `${insRepeats(d.rules)}${insLadder(d.rules)}`}
    ${insAudits(d.audits)}
    ${d.file ? insBody(d.file, ctx, d) : ''}
-   ${insFindings(d)}
+   ${wait('findings') ? insWait('findings') : insFindings(d)}
    <div class="tablecard"><h3>Standing context per role <span class="mute small">what one session of it loads before any work</span></h3><div class="inswrap"><table><thead><tr><th>role</th><th>sessions today</th><th>~tokens / session</th></tr></thead><tbody>${standing || `<tr><td colspan="3">${dash}</td></tr>`}</tbody></table></div></div>
-   <div class="tablecard"><h3>Files</h3><div class="inswrap"><table class="instab" id="ins-table"><thead><tr><th>file</th><th>loaded</th><th class="insopt">harness</th><th>size</th><th>today</th><th class="insopt">changed</th><th>hints</th></tr></thead><tbody>${rows || `<tr><td colspan="7" class="mute">no instruction files found</td></tr>`}</tbody></table></div></div>
-   <div class="tablecard"><h3>Hints <span class="mute small">${int((d.hints || []).length)} · lint, read-only</span></h3>${hints ? `<ul id="ins-hints">${hints}</ul>` : '<p class="mute" style="padding:0 12px">none</p>'}</div>
-   ${insSuggest(d)}`;
+   ${wait('files') ? insWait('files') : `<div class="tablecard"><h3>Files</h3><div class="inswrap"><table class="instab" id="ins-table"><thead><tr><th>file</th><th>loaded</th><th class="insopt">harness</th><th>size</th><th>today</th><th class="insopt">changed</th><th>hints</th></tr></thead><tbody>${rows || `<tr><td colspan="7" class="mute">no instruction files found</td></tr>`}</tbody></table></div></div>`}
+   ${wait('hints') ? insWait('hints') : `<div class="tablecard"><h3>Hints <span class="mute small">${int(d.hints_n ?? (d.hints || []).length)} · lint, read-only</span></h3>${hints ? `<ul id="ins-hints">${hints}</ul>` : '<p class="mute" style="padding:0 12px">none</p>'}${insMore((d.hints || []).length, d.hints_n ?? 0)}</div>`}
+   ${wait('suggest') ? insWait('suggest') : insSuggest(d)}`;
 }
 // META-TEND P3 (REPORT 5.3 view 6): the ladder - every must / never rule as a card in its state's column (prose only -> repeated n
 // times -> enforced -> retired): its home (a click opens the source line), its enforcement, when that last fired. Built on board().
 const ENF_LABEL = { prose: 'prose only', hook: 'hook', deny: 'deny rule', test: 'test', lint: 'lint', gate: 'gate', 'git-hook': 'git hook' };
-const LADDER_MAX = 40;
 const baseName = p => String(p ?? '').split('/').pop();
 function insRuleChips(c) {
   if (!c?.total) return '';
@@ -703,16 +721,15 @@ function ruleCard(r) {
 }
 function insLadder(L) {
   if (!L) return '';
-  const order = { prose: (a, b) => b.homes.length - a.homes.length, repeated: (a, b) => b.repeats - a.repeats, enforced: (a, b) => String(b.fired?.at ?? '').localeCompare(String(a.fired?.at ?? '')), retired: (a, b) => String(b.retired_at ?? '').localeCompare(String(a.retired_at ?? '')) };
   const NOTE = { prose: 'every rule is enforced or retired', repeated: 'no rule said again', enforced: 'nothing enforces a rule yet', retired: 'no rule retired since the first scan' };
-  const cols = ['prose', 'repeated', 'enforced', 'retired'].map(st => { const xs = L.rules.filter(r => r.state === st).sort(order[st]);
-    return { key: st, label: st === 'prose' ? 'prose only' : st, cards: xs.slice(0, LADDER_MAX).map(ruleCard), more: Math.max(0, xs.length - LADDER_MAX), note: NOTE[st] }; });
+  const cols = LADDER_STATES.map(st => { const xs = L.rules.filter(r => r.state === st).sort(LADDER_ORDER[st]).slice(0, INS_CAPS.ladder);   // the rules part: each column capped
+    return { key: st, label: st === 'prose' ? 'prose only' : st, cards: xs.map(ruleCard), more: Math.max(0, (L.counts[st] ?? 0) - xs.length), note: NOTE[st] }; });
   const adv = L.advisories || [], by = new Map();
   for (const a of adv) { if (!by.has(a.key)) by.set(a.key, []); by.get(a.key).push(a); }
   const KEY = { 'rule-several-homes': 'one rule in several homes', 'rule-drift-claim': 'says enforced, nothing found', 'rule-drift-policy': 'line vs the policy', 'rule-drift-path': 'points at code that is gone', 'rule-path-unknown': 'path not found (a runtime file or a typo)', 'enforcement-unexplained': 'enforcement no rule explains' };
-  const finds = [...by].map(([k, xs]) => `<li><details class="rulegroup insgroup"><summary>${chip(xs[0].severity === 'medium' ? 'warn' : 'idle', xs[0].severity)} <b>${int(xs.length)}</b> × ${esc(KEY[k] ?? k)} <span class="small mute">${esc(xs[0].source)}</span><div class="small">fix: <i>${esc(xs[0].fix.action)}</i></div></summary>
-    <ul>${xs.slice(0, 60).map(a => `<li class="insfind small"><span class="mute">${esc(baseName(a.path) || a.surface)}${a.line ? `:${esc(a.line)}` : ''}</span> ${esc(a.why)}${a.fix.patch ? `<pre class="inspatch">${esc(a.fix.patch)}</pre>` : ''}</li>`).join('')}</ul></details></li>`).join('');
-  return `<div class="tablecard" id="ins-ladder"><h3>The ladder <span class="mute small">${int(L.rules.length)} must / never rules by state · prose only ${int(L.counts.prose)} → repeated ${int(L.counts.repeated)} → enforced ${int(L.counts.enforced)} → retired ${int(L.counts.retired)} · tap a home to open its line</span></h3>
+  const finds = [...by].map(([k, xs]) => `<li><details class="rulegroup insgroup"><summary>${chip(xs[0].severity === 'medium' ? 'warn' : 'idle', xs[0].severity)} <b>${int(L.adv_counts?.[k] ?? xs.length)}</b> × ${esc(KEY[k] ?? k)} <span class="small mute">${esc(xs[0].source)}</span><div class="small">fix: <i>${esc(xs[0].fix.action)}</i></div></summary>
+    <ul>${xs.slice(0, INS_CAPS.advisories).map(a => `<li class="insfind small"><span class="mute">${esc(baseName(a.path) || a.surface)}${a.line ? `:${esc(a.line)}` : ''}</span> ${esc(a.why)}${a.fix.patch ? `<pre class="inspatch">${esc(a.fix.patch)}</pre>` : ''}</li>`).join('')}</ul></details></li>`).join('');
+  return `<div class="tablecard" id="ins-ladder"><h3>The ladder <span class="mute small">${int(LADDER_STATES.reduce((n, st) => n + (L.counts[st] ?? 0), 0))} must / never rules by state · prose only ${int(L.counts.prose)} → repeated ${int(L.counts.repeated)} → enforced ${int(L.counts.enforced)} → retired ${int(L.counts.retired)} · tap a home to open its line</span></h3>
     ${board(cols, { id: 'ins-board', aria: 'rules by state' })}
     ${finds ? `<ul id="ins-rule-findings">${finds}</ul>` : ''}</div>`;
 }
@@ -800,7 +817,7 @@ function insFindings(d) {
     }).join('');
     return `<li class="insfile"><div>${id ? `<button class="lnk" data-ins="${esc(id)}">${esc(name)}</button>` : `<b>${esc(name)}</b>`} ${cnt} <span class="inspath mute">${esc(p)}</span></div><ul>${rows}</ul></li>`;
   }).join('');
-  return `<div class="tablecard"><h3>Findings <span class="mute small">${int(fs2.length)} in ${int(groups.size)} file(s) · static checks, read-only</span></h3><ul id="ins-findings">${li}</ul></div>`;
+  return `<div class="tablecard"><h3>Findings <span class="mute small">${int(d.findings_n ?? fs2.length)} · static checks, read-only</span></h3><ul id="ins-findings">${li}</ul>${insMore(fs2.length, d.findings_n ?? 0, 'the Guard lists every one')}</div>`;
 }
 // META-STANDING-CONTEXT R1: the measured standing context (median per session, last 7 days) per role + where it goes (the parts)
 const ROLE_LABEL = { worker: 'workers', merge: 'merge runs', checkin: 'check-ins', chat: 'chat' };
@@ -878,7 +895,7 @@ function insMemory(m) {
 }
 // META-TEND P1-VISUAL: the opened file's own findings above its text (the file map's click lands here)
 function insFileFindings(f, d) {
-  const xs = (d.findings || []).filter(x => x.path === f.path || x.other === f.path);
+  const xs = f.findings ?? (d.findings || []).filter(x => x.path === f.path || x.other === f.path);   // the file endpoint sends its own (the list part is capped)
   if (!xs.length) return '<div class="small mute" id="ins-file-findings">no findings on this file</div>';
   return `<ul class="small" id="ins-file-findings">${xs.map(x => `<li class="insfind">${chip(SEV_CHIP[x.severity], x.severity)} <span class="mute">C${esc(x.check)} L${esc(x.line)}${x.path !== f.path ? ` in ${esc(x.path.split('/').pop())}` : ''}</span> ${esc(x.why)} <i>fix: ${esc(x.fix.action)}</i></li>`).join('')}</ul>`;
 }
@@ -888,7 +905,7 @@ function insSuggest(d) {
   const li = s.slice(0, 30).map(x => `<li class="inssug">${chip(SUG_CHIP[x.class] ?? 'idle', x.class)} <b>${tk(x.saved_per_day)} / day</b> <span class="mute small">${esc(x.id)}</span>
     <div>${x.path ? `<button class="lnk" data-ins="${esc((d.rows || []).find(r => r.path === x.path)?.id ?? '')}">${esc(x.file)}:${esc(x.line)}</button> ` : `<b>${esc(x.file)}</b> `}<span class="mute">"${esc(x.head.slice(0, 120))}"</span>${x.owner_file ? ` ${chip('bad', 'owner file')}` : ''}</div>
     <div class="small">${esc(x.why)} · <i>${esc(x.action)}</i></div>${x.patch ? `<details><summary class="small">patch (norn instructions apply ${esc(x.id)})</summary><pre class="inspatch">${esc(x.patch)}</pre></details>` : ''}</li>`).join('');
-  return `<div class="tablecard"><h3>Tighten <span class="mute small">${int(s.length)} candidates, ranked by ~tokens saved per day · read-only; apply = the owner's tap in the chat</span></h3>${li ? `<ul id="ins-suggest">${li}</ul>` : '<p class="mute" style="padding:0 12px">none</p>'}</div>`;
+  return `<div class="tablecard"><h3>Tighten <span class="mute small">${int(d.suggest_n ?? s.length)} candidates, ranked by ~tokens saved per day · read-only; apply = the owner's tap in the chat</span></h3>${li ? `<ul id="ins-suggest">${li}</ul>` : '<p class="mute" style="padding:0 12px">none</p>'}</div>`;
 }
 
 function insBody(f, ctx, d = {}) {
@@ -1014,10 +1031,18 @@ function remotePane(r) {
 }
 // META-OOTB-POLISH F-6: start from a profile (fills the form only: Review + Save stay the human step) and a basic / all split
 // (basic = the rows flagged by policy.mjs BASIC_KEYS; the browser hides the rest, setFilter)
+// META-PROFILE-BUG R1: the profile in force in words (Overview line + the top of Settings), from the latest caps profile decision
+export function profileWords(n, now = Date.now()) {
+  if (!n || n.kind === 'none') return 'your own settings (no profile)';
+  if (n.kind === 'kept') return `${n.label}, ${fmtTime(n.at, now)}`;
+  const name = `${n.label}${n.cost && n.cost !== 'balanced' ? ` · ${n.cost}` : ''}`;
+  return n.own ? `${name} + ${n.own} of your own changes` : `${name}, saved ${fmtTime(n.at, now)}`;
+}
 function profileBar(d, level) {
+  const now = `<p class="small" id="set-profile-now" style="margin:0 0 6px;flex-basis:100%">In force: <b>${esc(profileWords(d.profile_now))}</b></p>`;
   const ps = d.profiles || [], opt = p => `<option value="${esc(p.name)}" title="${esc(p.summary)}">${esc(p.label)}${p.default ? ' (default)' : ''}</option>`;
   const lv = (v, t) => `<button class="${v === level ? 'strong' : 'ghost'}" data-set-level="${v}" aria-pressed="${v === level}">${t}</button>`;
-  return `<div class="sprofile card" id="set-profile">${ps.length ? `<label>Start from a profile <select data-set-profile data-profiles="${esc(JSON.stringify(Object.fromEntries(ps.map(p => [p.name, p.changes]))))}">${ps.map(opt).join('')}</select></label>
+  return `<div class="sprofile card" id="set-profile">${now}${ps.length ? `<label>Start from a profile <select data-set-profile data-profiles="${esc(JSON.stringify(Object.fromEntries(ps.map(p => [p.name, p.changes]))))}">${ps.map(opt).join('')}</select></label>
     <label>cost <select data-set-cost><option value="cheap">cheap</option><option value="balanced" selected>balanced</option><option value="quality">quality</option></select></label>
     <button class="ghost" data-act="set-profile">Fill in</button>` : ''}<span class="small mute" id="set-profile-note">${ps.length ? esc(ps[0].summary) : ''}</span>
     <span class="lvl">Show ${lv('basic', 'Basic')}${lv('all', 'All')}</span></div>`;
