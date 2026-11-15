@@ -1,8 +1,17 @@
 # Norn
 
 Norn runs coding agents (Claude Code, Codex or any command-line agent) on your own machine and keeps long work going without you.
-It hands each agent off to a fresh session before its context grows large, keeps the instruction files your agents load short and
-correct, and checks every branch before it reaches main. You answer only the questions it cannot decide.
+It is designed to spend fewer tokens and to guard a project against drift, bloat and slop:
+
+- **Tokens**: each agent hands off to a fresh session at a set context size, so a long task never re-reads one huge conversation
+  on every turn.
+- **Bloat**: Norn checks the instruction files agents re-read on every turn (CLAUDE.md, AGENTS.md, memory) for excess size and
+  repeated or outdated text, without calling a model.
+- **Drift**: it flags instructions that name files, lanes or models that no longer exist, and generated agent files edited by hand.
+- **Slop**: before a branch can merge, Norn checks it for leftovers such as conflict markers, stray logs, unused imports and a
+  committed `.only`, and sends the findings back to the agent.
+
+You answer only the questions it cannot decide.
 
 ![Norn's Home tab: the controller chat, check-ins, a question waiting for you and an approval card](docs/img/home.png)
 

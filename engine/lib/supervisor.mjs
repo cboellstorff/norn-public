@@ -23,7 +23,7 @@ import { nodeUsage } from './fed.mjs';
 import { readGate, noteCheckin } from './gate.mjs';
 import { ledgerStep } from './ledger.mjs';
 import { checkBranch, slopPrompt } from './slop/runend.mjs';
-import { procStart } from './legacy.mjs';
+import { procStartAsync } from './legacy.mjs';
 import { doneCheck, dodPrompt, testLine } from './dod.mjs';
 import { critiqueOn, findingsCount } from './critique.mjs';
 import { hostWrite } from './slop/host.mjs';
@@ -48,12 +48,17 @@ let nudging = null, nudgeTimer = null, nudgeWaitLast = null;   // META-GTP-MAIL 
 let ctxForced = null, ctxTimer = null, ctxFile = null, ctxWaitLast = null;   // META-CTX-ENFORCE R1 (ctxCheck)
 
 // a pid alone names whatever process holds it NOW (Windows reuses a freed pid; CI-HANG-6E54DAB R2): hb + end name the supervisor
-// as (pid, OS start time) - the value procStart gives a reader, so the two compare equal while this process lives
-const supStarted = procStart(process.pid);
+// as (pid, OS start time) - the value procStart gives a reader, so the two compare equal while this process lives.
+// CI-RED-18A9C0A R2: the probe (a PowerShell spawn on Windows) is async and the first beat comes before it - a slow runner's probe
+// blocked the first beat past staleMs and the sweep marked the healthy run lost. Until it is known, hb has no supervisor_started
+// (readers: the pid decides, tests/helpers/settled); it is added to the hb as soon as known, and the end record waits for it.
+const probeDelay = Number(process.env.META_TEST_PROBE_DELAY_MS) || 0;   // test knob: a slow probe (the CI runner's slow spawns)
+let supStarted = null;
+const supStartedP = new Promise(r => setTimeout(r, probeDelay)).then(() => procStartAsync(process.pid)).then(t => { supStarted = t; beat(); return t; });
 const beat = () => {
   try {
     const f = hbPath(state, run), t = `${f}.${process.pid}.tmp`;
-    fs.writeFileSync(t, JSON.stringify({ run, pid: childPid, supervisor_pid: process.pid, supervisor_started: supStarted, ts: iso() }));
+    fs.writeFileSync(t, JSON.stringify({ run, pid: childPid, supervisor_pid: process.pid, ...(supStarted !== null ? { supervisor_started: supStarted } : {}), ts: iso() }));
     fs.renameSync(t, f);
   } catch { /* next beat */ }
   for (const lf of lockFiles) { try { refreshLock(lf, run, { pid: process.pid }); } catch { /* next beat */ } }
@@ -110,6 +115,7 @@ if (cmd) {
 async function finish(code, signal, error) {
   if (finished) return;
   finished = true;
+  await supStartedP;   // the end names the start time: the beat timer runs on until it is known
   clearInterval(timer);
   if (nudgeTimer) clearInterval(nudgeTimer);
   if (ctxTimer) clearInterval(ctxTimer);

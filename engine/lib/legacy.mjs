@@ -6,7 +6,7 @@
 // the old worker-run.ps1 resume is switched off at the cut-over (old BUDGET.json) and a HANDOFF goes to the check-in (CHECKIN rule).
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { record, loadState } from './records.mjs';
 import { parseOutcome, hbPath, acquireLock, refreshLock, releaseLock, renameRetry, HB_MS } from './runs.mjs';
@@ -18,14 +18,24 @@ const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8').repla
 const writeAtomic = (f, o) => { const t = `${f}.${process.pid}.tmp`; fs.writeFileSync(t, JSON.stringify(o)); renameRetry(t, f); };
 
 /** Process start time (ms since epoch) of a live pid, or null when it does not run. */
+const startProbe = (pid, platform) => platform === 'win32'
+  ? ['powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')`], { encoding: 'utf8', windowsHide: true }]
+  : ['ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8', env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' } }];
+const probeable = pid => {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); } catch (e) { if (e.code !== 'EPERM') return false; }
+  return true;
+};
+const startOf = (status, stdout, platform) => { const t = Date.parse((stdout || '').trim() + (platform === 'win32' ? '' : ' UTC')); return status === 0 && Number.isFinite(t) ? t : null; };
 export function procStart(pid, platform = process.platform) {
-  if (!Number.isInteger(pid) || pid <= 0) return null;
-  try { process.kill(pid, 0); } catch (e) { if (e.code !== 'EPERM') return null; }
-  const r = platform === 'win32'
-    ? spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')`], { encoding: 'utf8', windowsHide: true })
-    : spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8', env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' } });
-  const t = Date.parse((r.stdout || '').trim() + (platform === 'win32' ? '' : ' UTC'));
-  return r.status === 0 && Number.isFinite(t) ? t : null;
+  if (!probeable(pid)) return null;
+  const r = spawnSync(...startProbe(pid, platform));
+  return startOf(r.status, r.stdout, platform);
+}
+/** procStart without blocking the event loop (a run's supervisor: its heartbeat beats through the probe; CI-RED-18A9C0A R2) */
+export function procStartAsync(pid, platform = process.platform) {
+  if (!probeable(pid)) return Promise.resolve(null);
+  return new Promise(resolve => execFile(...startProbe(pid, platform), (err, stdout) => resolve(startOf(err ? 1 : 0, stdout, platform))));
 }
 // the same process: alive and created within 120 s of the recorded start (worker.ps1's pid-reuse rule)
 export const sameProcess = (pid, startedMs, probe = procStart) => { const t = probe(pid); return t !== null && Math.abs(t - startedMs) < 120e3; };

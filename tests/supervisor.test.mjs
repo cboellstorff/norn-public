@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { startRun } from '../engine/lib/runs.mjs';
+import { startRun, sweepLost } from '../engine/lib/runs.mjs';
 import { loadState } from '../engine/lib/records.mjs';
 import { jobguardExe, jobguardExeAsync, winQuote } from '../engine/lib/jobguard.mjs';
 import { settled } from './helpers/settled.mjs';
@@ -173,4 +173,21 @@ test('trial check-in: a non-DONE tick falls back to its fallback executor (fallb
   await d.end(ok);
   await sleep(500);
   assert.equal(Object.values(loadState(d.state).items).filter(i => i.kind === 'run' && i.data.fallback_of === ok).length, 0);
+});
+
+// CI-RED-18A9C0A R2 (ask.test cold, CI: "RUN-2 lost (heartbeat 5 s old)"): the supervisor's OS start-time probe (a PowerShell
+// spawn on Windows, 0.5-2.4 s on a slow runner) ran SYNC before its first beat - until it returned only the launcher's birth hb
+// existed and a 3 s staleMs sweep marked the healthy run lost. META_TEST_PROBE_DELAY_MS makes the probe slower than staleMs.
+test('a slow start-time probe: the supervisor beats first - no lost sweep before its first beat; the end names the start time once known', async () => {
+  const d = sandbox();
+  const prev = process.env.META_TEST_PROBE_DELAY_MS;
+  process.env.META_TEST_PROBE_DELAY_MS = '4500';
+  let id;
+  try { id = d.run('mode: done\n'); } finally { if (prev === undefined) delete process.env.META_TEST_PROBE_DELAY_MS; else process.env.META_TEST_PROBE_DELAY_MS = prev; }
+  const swept = [];
+  const it = await waitFor(() => { swept.push(...sweepLost(d.state, { staleMs: 3000 })); const x = loadState(d.state).items[id]; return settled(x) && x; }, 30000);
+  assert.deepEqual(swept, [], 'never swept lost while its probe ran');
+  const end = it.history.find(h => h.ev === 'end')?.data;
+  assert.equal(end?.outcome, 'done', JSON.stringify(it.history.map(h => h.ev)));
+  assert.ok(Number.isFinite(end.supervisor_started), 'the end waits for the start time and names it');
 });

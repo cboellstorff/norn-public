@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { waitFor, waitForSync, runEnded } from './helpers/wait.mjs';
+import { waitFor, waitForSync, runEnded, stateBusy } from './helpers/wait.mjs';
+import { record } from '../engine/lib/records.mjs';
 import { alive, settled } from './helpers/settled.mjs';
 import { procStart } from '../engine/lib/legacy.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
@@ -58,4 +59,21 @@ test('a supervisor records its own OS start time beside its pid (hb + end); sett
   assert.equal(settled(it), true);
   assert.equal(settled({ ...it, end: { ...it.end, supervisor_pid: process.pid, supervisor_started: procStart(process.pid) } }), false, 'a live supervisor identity: not settled');
   assert.equal(settled({ ...it, end: { ...it.end, supervisor_pid: process.pid, supervisor_started: it.end.supervisor_started } }), true, 'its pid now names another process (this one): settled');
+});
+
+// CI-RED-18A9C0A R2 (critique cause B, 4 parallel runs under load: 7 of 47 red): stateBusy read the state once, then probed each
+// run's supervisor - a sync start-time probe of 1.1-1.5 s on a loaded box. RUN-1's supervisor started RUN-2 and exited DURING that
+// probe: the stale snapshot had no RUN-2, so "its producer is gone" while RUN-2's supervisor lived. A false answer is re-checked on
+// a fresh state until the runs did not change under it.
+test('stateBusy: a run started while the previous producer was being probed (and then exited) keeps the state busy', () => {
+  const t = mkTmp('meta-busy-'), state = path.join(t, 'state', 'demo');
+  fs.mkdirSync(state, { recursive: true });
+  const one = record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'fake', lane: 'a' } }).id;
+  let two = null;
+  const live = (_st, it) => {
+    if (it.id === one) { two ??= record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'fake', lane: 'b' } }).id; return false; }   // its successor starts, then it exits
+    return it.id === two;
+  };
+  assert.equal(stateBusy(state, { live })(), true, 'the successor RUN-2 (live) is the producer now');
+  assert.equal(stateBusy(state, { live: () => false })(), false, 'nothing lives: not busy');
 });

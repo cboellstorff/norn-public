@@ -62,8 +62,18 @@ export const runEnded = (state, id) => {
 
 /** a fill's producers: a run of the state that is still running or whose supervisor still runs its tail (a fill under queue.lock,
  * a slot not yet free). None left and the fill still holds = nothing will change. */
-export const stateBusy = state => () => Object.values(loadState(state).items).some(it => it.kind === 'run'
-  && (it.state === 'running' || it.end?.supervisor_pid) && supervisorAlive(state, () => it)());
+// The probes are slow (a sync start-time probe, 1-1.5 s on a loaded box): a run may start a successor and exit while they run, so a
+// "none" is re-checked on a fresh state until its runs did not change under the check (CI-RED-18A9C0A R2, critique cause B).
+export const stateBusy = (state, { live = (st, it) => supervisorAlive(st, () => it)() } = {}) => () => {
+  const runs = () => Object.values(loadState(state).items).filter(it => it.kind === 'run');
+  const sig = rs => rs.map(it => `${it.id}:${it.state}:${it.history.length}`).join(',');
+  for (let rs = runs(); ;) {
+    if (rs.some(it => (it.state === 'running' || it.end?.supervisor_pid) && live(state, it))) return true;
+    const now = runs();
+    if (sig(now) === sig(rs)) return false;
+    rs = now;
+  }
+};
 
 /** a child process's producer: it has not exited (child_process ChildProcess) */
 export const childAlive = p => () => p.exitCode === null && p.signalCode === null;

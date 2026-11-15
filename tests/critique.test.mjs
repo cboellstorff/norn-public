@@ -48,7 +48,7 @@ function project(tag, { critique = 'on', canned } = {}) {
   const filter = path.join(t, 'filter.txt'); fs.writeFileSync(filter, 'MEATY FILTER: real problems only.\n');
   fs.writeFileSync(pf, JSON.stringify({ schema: 1, name: 'kestrel', title: 'k', root: fwd(wt), ledger: '${root}/L.md', briefs_dir: '${root}',
     policy: { dod: { critique, critique_filter: fwd(filter) }, slop: { enabled: false }, executors: { review: { executor: 'fake', model: '', effort: '' } } } }));
-  const env = { ...process.env, META_ROOT: t, HOME: t, USERPROFILE: t, META_HB_MS: '150' };
+  const env = { ...process.env, META_ROOT: t, HOME: t, USERPROFILE: t, META_HB_MS: '150', META_FILL_SAMPLE: '{"free_gb":64,"cpu_pct":0}' };   // the resource gate is not under test: a busy box (CPU > 90 %, a full suite) held the review queued (MAIL-98)
   if (canned) { const f = path.join(t, 'canned.md'); fs.writeFileSync(f, canned); env.FAKE_RO_RESULT = f; }
   return { t, pf, state, wt, env, plan: path.join(t, 'plans', 'PLAN.md') };
 }
