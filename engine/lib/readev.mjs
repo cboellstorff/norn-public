@@ -109,7 +109,7 @@ export function readEvidence(rows, p, { items = {}, files = null, projectsDir = 
     if (!r.exists || r.generated || !['on-demand'].includes(r.load) || ev[i].reads || ev[i].cites.length) continue;
     advisories.push(advisory({ phase: 'P5', check: 20, key: 'never-read', severity: 'low', surface: r.kind === 'memory-topic' ? 'memory topic' : r.kind === 'skill' ? 'skill' : 'on-demand file', path: fwd(r.path), row: r.id,
       why: `never read in ${span < days ? `the ${span} days the transcripts cover` : `${days} days`} (${ts.length} session transcripts) and never cited by a decision: a prune candidate`, source: 'REPORT meta-practice s.3.2 check 20 (read evidence)',
-      fix: { tier: 'card', action: 'prune it, or fold what is still true into the file that points at it - an advisory: Norn deletes nothing' } }));
+      fix: { tier: 'card', action: 'prune it, or fold what is still true into the file that points at it - an advisory: Norn deletes nothing', kind: 'call', ways: ['Prune it', 'Fold it into the file that points at it'] } }));
   }
   return { window_days: days, covered_days: Math.min(span, days), transcripts: ts.length, files: Object.fromEntries(rows.map((r, i) => [r.id, ev[i]])), advisories };
 }

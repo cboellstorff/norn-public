@@ -204,6 +204,20 @@ test('DEC-107: norn requeue swaps the conditions of a QUEUED run, keeps its args
   assert.equal(d.item(live).state, 'running');
 });
 
+test('DEC-337: norn requeue --not-before none | ISO on the command line (a stale limit clock cleared; a bad value refused)', () => {
+  const d = sandbox();
+  const q = queueRun({ ...d.opts({ lane: 'meta-ci', stage: 'FIX' }), notBefore: '2026-11-18T14:02:00Z' }).run;
+  assert.equal(d.cli(['requeue', q, '--after', 'none', '--not-before', 'soon', '--why', 'DEC-337', '--as', 'controller']).code, 2);
+  assert.equal(d.cli(['stop', q, '--not-before', 'none', '--why', 'x', '--as', 'controller']).code, 2, 'only requeue takes it');
+  assert.equal(d.item(q).state, 'queued');
+  const r = d.cli(['requeue', q, '--after', 'none', '--not-before', 'none', '--why', 'DEC-337', '--as', 'controller']);
+  assert.equal(r.code, 0, r.err);
+  const next = r.out.match(/REQUEUED (RUN-\d+) -> (RUN-\d+)/)?.[2];
+  assert.ok(next, r.out);
+  assert.match(r.out, /not before: none/);
+  assert.equal(d.item(next).data.not_before, undefined);
+});
+
 // ---------- case 6 (DEC-108, ledger 23:25Z / 23:27Z / 23:46Z): RUN-381, a limit re-queue made obsolete, sat queued for hours ----------
 test('DEC-108: an obsolete limit re-queue is withdrawn by the check-in in the same pass', () => {
   const d = sandbox();

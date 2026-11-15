@@ -154,3 +154,28 @@ test('stream (META-ROADMAP S2): a roadmap append arrives as a rec event (file ro
     assert.ok(performance.now() - t0 < 1500, `append -> event -> refetched tree in ${Math.round(performance.now() - t0)} ms`);
   } finally { c.close(); await f.done(); }
 });
+
+test('stream (DEC-341): an urgent() sig change goes out at once, outside the pulse window an earlier derived took; one event per change', async () => {
+  const { createStreams } = await import('../engine/dash/stream.mjs');
+  const dir = fs.mkdtempSync(path.join(process.env.TEMP || process.env.TMPDIR || '/tmp', 'norn-urgent-'));
+  const s = createStreams({ pollMs: 20, pulseMs: 60000, lingerMs: 50 });
+  const out = [];
+  const res = { destroyed: false, writeHead() {}, on() {}, end() {}, write(t) { const m = /event: (\w+)/.exec(t); if (m) out.push(m[1]); return true; } };
+  let sig = 'a', urgent = 'u0';
+  try {
+    assert.equal(await s.join('k', [{ project: 'p', files: {}, flags: () => ({}), hbDir: path.join(dir, 'hb'), sig: () => sig, urgent: () => urgent }], res), true);
+    const n = () => out.filter(e => e === 'derived').length;
+    const until = async (pred, ms) => { const t = performance.now(); while (!pred()) { if (performance.now() - t > ms) return false; await settle(10); } return true; };
+    sig = 'b';   // an early cache landing takes the (60 s) window
+    assert.ok(await until(() => n() === 1, 2000), 'the first change goes out (the window was free)');
+    sig = 'c';   // an ordinary change inside the window waits for it
+    await settle(150);
+    assert.equal(n(), 1, 'an ordinary change inside the window waits');
+    const t0 = performance.now();
+    urgent = 'u1';   // the end of a rebuild the page shows as refreshing
+    assert.ok(await until(() => n() === 2, 1000), `the urgent change goes out within ~pollMs, not after the window (${out.join(',')})`);
+    assert.ok(performance.now() - t0 < 1000);
+    await settle(150);
+    assert.equal(n(), 2, 'one event per urgent change; the pending ordinary change rode on it');
+  } finally { s.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});

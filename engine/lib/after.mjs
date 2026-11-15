@@ -9,7 +9,7 @@ import { makeGit, isAncestor, refTip } from './dlvgit.mjs';
 export const AFTER_KINDS = {
   q: { prefix: 'Q-', def: 'answered', states: ['answered', 'applied'] },
   dlv: { prefix: 'DLV-', def: 'merged', states: ['merged'] },
-  run: { prefix: 'RUN-', def: 'done', states: ['done', 'ended', 'merged'] },   // merged: META-GTP-DAG piece 1
+  run: { prefix: 'RUN-', def: 'done', states: ['done', 'ended', 'merged', 'reviewed'] },   // merged: META-GTP-DAG piece 1; reviewed: META-DOD 3
   dir: { prefix: 'DIR-', def: 'done', states: ['done'] },
 };
 export class AfterError extends Error {}
@@ -109,6 +109,8 @@ export function makeEval(stateDir, { git = makeGit() } = {}) {
     if (landed()) return { met: true, gone: null };
     if (live(r)) return { met: false, gone: null };
     if (c.state === 'ended') return { met: true, gone: null };
+    // META-DOD 3: a plan review is settled once it ended and the check-in reviewed it, or it ended DONE with no findings (critique.mjs)
+    if (c.state === 'reviewed') return { met: !!r.review || (r.end?.outcome === 'done' && r.end?.critique?.findings === 0), gone: null };
     const first = r;
     for (let succ; !(r.state === 'exited' && r.end?.outcome === 'done') && !live(r) && (succ = successorOf(all, r, seen));) {
       r = follow(all, succ, seen);

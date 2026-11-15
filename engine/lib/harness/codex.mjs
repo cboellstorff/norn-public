@@ -2,7 +2,8 @@
 // Command lines are byte-same with the pre-H2 runs.mjs switch (tests/golden/commands/matrix.json).
 import fs from 'node:fs';
 import path from 'node:path';
-import { modeOf, readText, readHead, detectExe, HEADLESS_CORE, HEADLESS_MAIL, feedFiles, logLine, oneLine, argSummary, located, jsonObject } from './common.mjs';
+import { readdirS, readdirA } from '../fsnap.mjs';
+import { modeOf, readText, readHeadA, detectExe, HEADLESS_CORE, HEADLESS_MAIL, feedFiles, logLine, oneLine, argSummary, located, jsonObject } from './common.mjs';
 
 const caps = { modes: ['write', 'read-only'], resume: true, mcp: 'flag', output: 'log', usage: 'tokens', skills: 'agents',
   fork: true, hooks: 'settings', resume_style: 'subcommand', chat: 'none', noninteractive: 'exec' };   // codex exec fork | resume, features: hooks stable
@@ -58,11 +59,22 @@ function endData({ log }) {
 export function findRollout(sessionsDir, sid) {
   if (!sessionsDir || !sid) return null;
   const want = `-${sid}.jsonl`;
-  const sub = d => { try { return fs.readdirSync(d, { withFileTypes: true }); } catch { return []; } };
-  const walk = d => {
-    const ents = sub(d).sort((a, b) => (a.name < b.name ? 1 : -1));
+  const walk = d => {   // META-DASH-ASYNC R1: snapshot-aware (findRolloutA primes the same walk)
+    const ents = [...readdirS(d)].sort((a, b) => (a.name < b.name ? 1 : -1));
     for (const e of ents) if (e.isFile() && e.name.startsWith('rollout-') && e.name.endsWith(want)) return path.join(d, e.name);
     for (const e of ents) if (e.isDirectory()) { const f = walk(path.join(d, e.name)); if (f) return f; }
+    return null;
+  };
+  return walk(sessionsDir);
+}
+/** findRollout on fs.promises (the same walk, newest day first; primes the snapshot the sync form then reads) */
+export async function findRolloutA(sessionsDir, sid) {
+  if (!sessionsDir || !sid) return null;
+  const want = `-${sid}.jsonl`;
+  const walk = async d => {
+    const ents = [...await readdirA(d)].sort((a, b) => (a.name < b.name ? 1 : -1));
+    for (const e of ents) if (e.isFile() && e.name.startsWith('rollout-') && e.name.endsWith(want)) return path.join(d, e.name);
+    for (const e of ents) if (e.isDirectory()) { const f = await walk(path.join(d, e.name)); if (f) return f; }
     return null;
   };
   return walk(sessionsDir);
@@ -106,10 +118,10 @@ export function rolloutEvents(text) {
  * Live feed: the rollout <codex sessions>/.../rollout-*-<sid>.jsonl (session id from the run end or the log banner); before the
  * banner names a session, the run log itself. env: { codexDir, memo }.
  */
-function feed(run, cursor, env = {}) {
+async function feed(run, cursor, env = {}) {   // META-DASH-ASYNC R1: every lookup + read on fs.promises (the dash polls it)
   const d = run.data || {}, end = run.end || {};
-  const sid = end.codex_session || located(env, 'codex-sid', () => (d.log ? parseCodexLog(readHead(d.log)).session_id : null), 1000);
-  const file = sid ? located(env, 'rollout', () => findRollout(env.codexDir, sid)) : null;
+  const sid = end.codex_session || await located(env, 'codex-sid', async () => (d.log ? parseCodexLog(await readHeadA(d.log)).session_id : null), 1000);
+  const file = sid ? await located(env, 'rollout', () => findRolloutA(env.codexDir, sid)) : null;
   if (file) return feedFiles([['rollout', file]], cursor, rolloutEvents, env);
   return feedFiles([['log', d.log]], cursor, logLine, env);
 }

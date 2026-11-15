@@ -134,12 +134,12 @@ test('Usage tab: the per-kind-of-work card (cost per finished task by class, by 
   assert.match(html, /id="usage-class-model"[\s\S]*claude-fable-5-2/);
   assert.match(html, /id="usage-class-grid"[\s\S]*kestrel-implementer[\s\S]*medium/);
   assert.match(html, /id="usage-fable"[\s\S]*1 Fable run/);
-  // META-TEND P6: on the shared widgets (bars), and a Guard chip in place on the class row a model advice is about
+  // META-TEND P6: on the shared widgets (bars), and a Slop chip in place on the class row a model advice is about
   assert.match(html, /<ol class="wbars" id="usage-class-kind">/);
   const cls = classes.byClass[0].class;
   const withAdv = renderTab('usage', { parts: [{ ...p, advice: { cards: [{ id: cls, key: 'k1', severity: 'medium', title: 'on a top model at xhigh' }] } }] }, { project: 'x', now: NOW });
   assert.match(withAdv, /id="usage-class-kind"[^]*?<\/li>/);
-  assert.match(withAdv.match(/id="usage-class-kind"[^]*?<\/li>/)[0], /gchip" data-go="usage" data-gojump="usage-advice"[^>]*><span class="chip warn">1 Guard finding/);
+  assert.match(withAdv.match(/id="usage-class-kind"[^]*?<\/li>/)[0], /gchip" data-go="usage" data-gojump="usage-advice"[^>]*><span class="chip warn">1 Slop finding/);
   assert.match(html, /inferred/, 'the inferred rows are marked');
 });
 

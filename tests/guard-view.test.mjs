@@ -6,7 +6,7 @@ import { advisory } from '../engine/lib/advisory.mjs';
 import { guardRows, guardView, rankRows, GUARD_TYPES } from '../engine/lib/guardview.mjs';
 import { orcLine, bestAction } from '../engine/dash/norn/orc.mjs';
 
-const adv = (o) => advisory({ source: 'test', fix: { tier: 'flag', action: 'look' }, why: 'a finding', surface: 'x', severity: 'medium', ...o });
+const adv = (o) => advisory({ source: 'test', fix: { tier: 'flag', kind: 'drafts', action: 'look' }, why: 'a finding', surface: 'x', severity: 'medium', ...o });
 
 test('guardRows: every phase and SloppaChoppa typed, each with the tab that fixes it', () => {
   const ins = {
@@ -21,8 +21,8 @@ test('guardRows: every phase and SloppaChoppa typed, each with the tab that fixe
     holds: [{ branch: 'feat/x', run: 'RUN-9', blocks: [{ rule: 'K2', file: 'a.mjs', line: 4, msg: 'empty catch', fp: 'f00' }] }] });
   const by = Object.fromEntries(rows.map(r => [r.type + ':' + (r.path ?? r.surface), r]));
   assert.deepEqual(rows.map(r => r.type).sort(), ['code', 'docs', 'instructions', 'memory', 'models', 'rules', 'tests']);
-  assert.deepEqual(by['instructions:C:/p/CLAUDE.md'].go, { tab: 'instructions', ins: 'r-claude', line: 7 });
-  assert.deepEqual(by['memory:C:/m/MEMORY.md'].go, { tab: 'instructions', ins: 'r-mem' });
+  assert.deepEqual(by['instructions:C:/p/CLAUDE.md'].go, { tab: 'docs', ins: 'r-claude', line: 7 });   // META-UX-BUILD S4: a file is read and fixed in the Docs reader
+  assert.deepEqual(by['memory:C:/m/MEMORY.md'].go, { tab: 'docs', ins: 'r-mem' });
   assert.deepEqual(by['docs:C:\\p\\docs\\SPEC.md'].go, { tab: 'docs', doc: 2 }, 'a finding on a listed doc is fixed on the Docs tab');
   assert.equal(by['rules:C:/p/CLAUDE.md'].go.ins, 'r-claude');
   assert.deepEqual(by['models:class chores'].go, { tab: 'usage', jump: 'usage-advice' });

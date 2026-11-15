@@ -1,137 +1,147 @@
 # Norn
 
-**Stop being the scheduler for your coding agents.**
+Norn runs coding agents (Claude Code, Codex or any command-line agent) on your own machine, one step after another, without a
+chat window open. It queues the work, merges finished steps through your tests, stays inside the usage limits you set and records
+every decision it makes. You answer only the questions it cannot decide.
 
-Claude Code and Codex can each do hours of real work - but one task at a time, and only while you are there to read the result
-and start the next one. So you babysit a chat window, nothing moves overnight, and you find the usage limit by hitting it.
+![Norn's Home tab: the controller chat, check-ins, a question waiting for you and an approval card](docs/img/home.png)
 
-Norn takes over that job. Give it the work as lanes: it runs the agents headless, each in its own branch, checks in on its own,
-reviews what finished, merges what passes your tests and starts the next step inside the budget you set. It asks you, with a
-ping on your phone, only for the decisions that really are yours.
+## Why use it
 
-**Norn is built with Norn.** From 9 to 14 November 2026, building itself, it ran 218 agent tasks and 345 check-ins, landed work
-on main 106 times and recorded 305 decisions - 248 of them made by its own check-ins. Its owner gave 52 instructions and answered
-9 questions.
+- **Work continues without you.** A step waits for the steps it depends on and starts when they land. A run that reaches its
+  context limit hands off to a fresh session and carries on.
+- **Usage stays inside your plan.** Before any run starts, Norn checks the worker cap, an hourly rate cap and a weekly stop. The
+  Plan tab shows when the queued work would reach the limit.
+- **Sessions stay small.** A run hands off to a fresh session at a set context size (110k tokens by default, set per agent role).
+  The new session starts from the run's notes and Norn's records, not from the whole earlier conversation.
+- **Main stays green.** Each lane has its own git worktree and one writer. Finished work merges to main one branch at a time,
+  through your test command. When an agent says it is done, Norn checks for itself: clean tree, changes inside the brief's
+  scope, tests passing.
+- **Decisions are on record.** Every question, decision and instruction is an append-only record. You can see why something
+  happened and overrule it.
+- **Local and vendor-neutral.** Norn needs only Node 22 and git. It installs no npm packages, stores no API keys, and its dashboard
+  listens on 127.0.0.1 only. Each run can use Claude Code, Codex or any other headless CLI.
 
-![The Norn Home: the controller chat, each check-in one line, a question that needs you and an approval card](docs/img/home.png)
+For one task you watch from start to finish, Claude Code on its own is simpler. Norn's check-ins are agent turns too and count
+toward your usage.
 
-- **Work keeps moving while you sleep.** Hand-offs, resumes and a queue with dependencies: the next step starts when the last lands.
-- **You decide only what is yours.** Everything else is ruled by the check-ins, on record, and you can overrule any of it.
-- **No surprise limits.** Worker caps, an hourly usage cap and a weekly stop are checked before every start; the Plan tab
-  forecasts when you would hit the limit.
-- **Main stays green.** Each agent works in its own worktree; nothing reaches main except through a merge that runs your tests;
-  a red CI run becomes a fix task.
-- **Any agent CLI, all local.** Claude Code, Codex or any headless CLI, configured as data; Node 22 + git, no npm packages, the
-  dashboard on 127.0.0.1, no keys stored.
+## What you get
 
-## Why not just Claude Code?
+The dashboard (`norn dash`):
 
-Claude Code and Codex are the engines: one capable agent per session (Claude Code adds subagents, worktrees and hooks inside it).
-Norn is the layer above them, for work that outlives one session.
+- **Home**: a controller chat. It answers from the records and acts only through Norn's own commands; anything that needs your
+  OK waits on an approval card. Check-ins, runs and questions appear in the same thread.
+- **Plan** (`norn plan`): queued steps in start order with time estimates, the chains of steps that wait on each other, what
+  merges next, and the usage forecast up to the weekly reset.
 
-| You want | Claude Code alone | With Norn |
-|---|---|---|
-| Work to keep going when you close the laptop | The session waits for your next message | The next step starts when the last one lands; runs hand off and resume on their own |
-| Lower token cost on long work | One session grows, and every turn carries the whole conversation | Each run stops starting new steps past 90k tokens, hands off at 110k and never passes 150k (defaults, set per role in Settings), with the records as its memory, so no session gets big; `--cost cheap\|balanced\|quality` picks cheaper models for routine steps |
-| To know what was decided, and why | Scattered across chat transcripts | Every question, decision and instruction is an append-only record you can read and overrule |
-| To answer only what is yours | You answer everything the agent asks | Check-ins rule the routine; your questions wait in one inbox, with a phone or desktop ping |
-| Several agents at once without chaos | You juggle terminals and branches | One worktree and one writer per lane; merges go to main one at a time, through your tests |
-| To stay inside your plan | You find the limit by hitting it | Worker caps, an hourly rate cap and a weekly stop are checked before every start; the Plan tab forecasts the week |
-| To see a long project at a glance | Terminal output | A local dashboard: talk to the controller on Home, the Plan, the Roadmap, the Inbox |
-| More than one vendor | One vendor | Claude Code, Codex or any headless CLI, chosen per run |
+![The Plan tab: queued steps with start estimates, their chains and the usage forecast](docs/img/plan.png)
 
-When Claude Code alone is the right tool: one task you watch from start to finish. Norn pays off when the work is long, has many
-steps, or should keep going while you are away. It has its own overhead - a short check-in turn on each event and on a timer - which
-counts toward the usage caps like any other run.
+- **Inbox**: the questions waiting for you, each with its options and a recommended answer.
+- **Slop**: findings from Norn's checks (leftover code in a branch, stale or contradicting instruction lines, paths that do not
+  exist), grouped by the kind of fix. "Fix all" turns the selected findings into one fixer task that waits for your approval.
+  SloppaChoppa, an orc, presents them; you can switch him off.
+
+![The Slop tab: open findings grouped by the kind of fix](docs/img/slop.png)
+
+- **Docs**: a reader for the project's docs and every file that instructs an agent (CLAUDE.md, AGENTS.md, rules, memory), with
+  findings next to the line.
+- **Context**: the context limits for each agent role (no new step, hand-off, hard stop) and where to change them.
+- **Roadmap** (`norn road`): themes and items whose status comes from the runs and records, never typed by hand.
+- **The other tabs**: Overview (what needs you and what is running), Map and Lanes (every lane and its latest run), Agents
+  (running sessions with their tokens and context), Usage (usage against the limits, and which model suits which work), Tests
+  (which tests check real behaviour), Records and Ledger (every decision and check-in), and Settings.
+
+Around the dashboard:
+
+- **Adopting a repo** (`norn init`): drafts a roadmap, project rules, the test command and a first task from your repository;
+  you approve each part.
+- **Done checks** (per project): see [Done checks](#done-checks) below.
+- **Notifications**: the ntfy phone app, a desktop notification or Pushover when something needs you.
+- **Phone access** (`norn remote setup`): the dashboard on your phone over your own Tailscale network, for paired devices only.
+- **MCP server** (`norn mcp`): agents in Claude Code or Codex can use Norn's commands; `norn harness install` adds it.
+- **Screenshots** (`norn shot`): a signed-out headless browser for checking UI work.
 
 ## Quick start
 
+You need Node 22 or newer, git, and the `claude` CLI signed in to your Claude account. `codex` and `gh` are optional. Norn runs on
+Windows, Linux and macOS.
+
 ```
-node engine/bin/norn.mjs init <your repo>   # sets Norn up, adds your repo, drafts its setup; you approve each part
-node engine/bin/norn.mjs run --executor fake --lane <first lane> --brief <its brief> --project <name> --wait   # the free rehearsal init printed
-node engine/bin/norn.mjs dash               # the dashboard: start the first lane for real, answer what needs you
+node engine/bin/norn.mjs init <your repo>   # set up Norn and add your repo; you approve each part
+node engine/bin/norn.mjs run --executor fake --lane <first lane> --brief <its brief> --project <name> --wait   # a free rehearsal; init prints this line
+node engine/bin/norn.mjs dash               # open the dashboard and start the first lane
 ```
 
-Run these from a clone of this repository, on Windows, Linux or macOS. `init` finds your tools, adds your repository as a project
-and looks at it through git. It asks a few questions one at a time - the caps profile (`try-it` by default; `solo` and `heavy`
-allow more), whether an agent may read the repo for a better draft (one paid read-only run) or git alone drafts it (free) - and
-then drafts a roadmap, project rules, the test command and a first task. Nothing is written into your repo, and nothing is
-applied until you approve it. Setup offers a phone or desktop notification and puts the `norn` command in
-`~/.local/bin`. The full walkthrough, also in a scripted form for agents: [SETUP.md](SETUP.md).
+`init` checks your tools and adds your repository as a project. It asks which limits profile to start with (`try-it` by default,
+or `solo` / `heavy`), and whether an agent may read the repo for a better draft (one paid, read-only run) or git alone drafts it
+(free). It writes nothing into your repo and applies nothing until you approve it. Setup also offers notifications and puts a
+`norn` command in `~/.local/bin`. The full walkthrough is in [SETUP.md](SETUP.md).
 
-Platforms, honestly: SETUP covers Windows, macOS and Linux. Fresh-machine installs were walked through on Windows and Linux; macOS is
-covered by the 3-OS smoke workflow (last green 11 November), not by a walked install.
-
-## What you get
-- **A dashboard** (`norn dash`): what needs you, what is running, usage against the caps, every record; answer a question, add a
-  directive or overrule a decision from the page. Details: [engine/dash/README.md](engine/dash/README.md).
-- **A controller chat on the Home tab**: talk to Norn in plain words; it answers from the records and acts only through Norn's
-  own verbs, and an act that needs your OK waits on an approval card. Check-ins, runs and questions land in the same thread.
-- **The Plan tab** (`norn plan`): every queued step in start order with its wait and time estimate, the chains, what lands on
-  main next, and the usage forecast up to the weekly reset.
-
-![The Plan tab: what starts next, the chains behind it, and how long the usage lasts](docs/img/plan.png)
-
-- **A lean, honest agent setup** (the Instructions, Tests, Usage and Guard tabs): what each session loads and which instruction
-  lines are stale or contradict each other; tests that guard real behaviour; which model fits each kind of work, with the
-  vendor's own advice and the day it was read; one Guard page with every open finding; and SloppaChoppa, the orc who voices it
-  (switch him off per project in Settings).
-
-![The Guard page: SloppaChoppa and every open finding of every check in one list](docs/img/guard.png)
-
-- **A roadmap** (`norn road`, the Roadmap tab): themes and items whose status is derived from the runs and records, never typed.
-- **Adopting an existing repo** (`norn init` / `norn adopt`): a drafted setup in six parts, each line naming its source.
-- **Check-ins that repair their own queue** (`norn requeue`): a queued step whose conditions changed is re-queued, its
-  dependants follow.
-- **A ping when it needs you** (`norn notify`; chosen at setup): the free ntfy phone app or a desktop notification.
-- **Agents use your tools from a chat**: `norn mcp` is an MCP server, and `norn harness install` adds it to Claude Code or Codex.
-- **Screenshots without your browser** (`norn shot`): a private, signed-out headless browser for UI checks.
+Fresh installs were tested by following SETUP.md on clean Windows and Linux machines. macOS is covered only by the automated smoke
+test, which runs on all three systems.
 
 ## How it works
-- **Lanes and runs.** A lane is one line of work with its own git worktree and branch. `norn run --executor <name> --lane L
-  --brief F` starts one agent in it (`norn executors --caps` lists the executors: Claude Code, the Codex CLI when found, `fake`
-  for a free rehearsal, and any you configure). It takes the lane's lock, checks the caps, records the run and leaves a detached
-  supervisor that reads the outcome from the notes' last line (`## DONE`, `## STOPPED: <why>` or `## HANDOFF`, which resumes).
-  `--queue` / `--after` queue a run behind others; `norn stop RUN-n` stops one.
-- **Check-ins.** The scheduler (`norn sched install`) runs `norn tick`: the status, then one short headless agent turn that
-  reviews finished runs, stages the merges, starts the next steps and asks you what only you can decide.
+
+- **Lanes and runs.** A lane is one line of work with its own worktree and branch. `norn run --executor <name> --lane L --brief F`
+  starts an agent in it. Norn takes the lane's lock, checks the limits and records the run. A supervisor process then reads the
+  result from the last line of the run's notes: `## DONE`, `## STOPPED: <why>` or `## HANDOFF`. A hand-off resumes the work in a
+  fresh session. `--queue` and `--after` queue a run behind others, and `norn stop RUN-n` stops one. `norn executors --caps`
+  lists the executors.
+- **Check-ins.** A scheduled `norn tick` runs one short agent turn after each event and on a timer. It reviews finished runs,
+  queues merges, starts the next steps and asks you what only you can decide.
 - **Records.** Questions, decisions, directives, lanes and runs are append-only events, written only through `norn rec`,
-  `norn run` and the dashboard. The markdown views of them are generated: never edit them by hand.
-- **Executors are data.** A project's `project.json` names them: `claude-compatible` (Claude Code against any compatible
-  endpoint), `openai-compatible` (the Codex CLI with a custom provider) or `cli` (any headless CLI, its arguments as a template).
-  A key is only ever an environment variable name. `projects/example/project.json` has one of each.
-- **Settings.** Account-wide caps and budget in `local/budget.json`, per-project policy in `project.json`; both are edited in
-  the dashboard Settings tab.
+  `norn run` and the dashboard. The markdown views are generated from them.
+- **Executors.** A project's `project.json` defines them: `claude-compatible` (Claude Code against a compatible endpoint),
+  `openai-compatible` (the Codex CLI with a custom provider) or `cli` (any headless CLI, its arguments as a template). Norn never
+  stores an API key; the project names the environment variable that holds it. `projects/example/project.json` has one of each.
+- **Settings.** Machine-wide limits live in `local/budget.json`, per-project policy in `project.json`; the Settings tab edits both.
+
+### Done checks
+
+Each part is set per project in Settings and is off by default.
+
+- **Ready**: `norn run` refuses (or warns about) a brief without the lines `Scope:` (the paths the run may change), `Tests:` (test
+  files or a command) and `Done:` (the end marker).
+- **Done**: when a run says DONE, Norn checks that the tree is clean and the changes are inside Scope, then runs the Tests and the
+  merge gate. A failure sends the run back once with the evidence; a second failure stops it.
+- **Scope guard**: while a Claude run works, it cannot edit files outside its worktree and Scope, force-push, push to main (merge
+  runs excepted), or run destructive git, gh or rm commands outside its worktree. The agent sees the reason and can carry on; each
+  refusal is listed in the run's feed.
+- **Plan review**: a finished plan gets one fresh, read-only review before its build starts.
 
 ## Commands
-`norn help` lists them all, grouped; `norn <command> --help` shows one's usage. The ones you meet first: `init`, `setup`,
-`doctor`, `smoke`, `dash`, `status`, `runs`, `run`, `stop`, `tick`, `sched`, `rec`, `plan`, `road`, `lane`, `shot`.
+
+`norn help` lists every command; `norn <command> --help` shows one. The ones you meet first: `init`, `setup`, `doctor`, `smoke`,
+`dash`, `status`, `runs`, `run`, `stop`, `tick`, `sched`, `rec`, `plan`, `road`, `lane`, `shot`.
 
 ## Layout
-- `engine/` - the CLI (`bin/norn.mjs`), libraries (`lib/`), the dashboard (`dash/`), prompts and schemas.
-- `projects/example/` - the sample project used by the smoke test. Your projects live outside this clone (`~/.norn/projects/`).
+
+- `engine/`: the CLI (`bin/norn.mjs`), libraries (`lib/`), the dashboard (`dash/`, see [engine/dash/README.md](engine/dash/README.md)),
+  prompts and schemas.
+- `projects/example/`: the sample project the smoke test uses. Your projects live outside this clone (`~/.norn/projects/`).
 - `local/` (machine.json, budget.json) and `state/` (records, runs, logs) are per machine and not tracked.
 
 ## Tests
-`node --test "tests/*.test.mjs"` (temp dirs only; a fake executor stands in for every agent). `norn smoke` runs a fresh copy end
-to end; CI runs it on Windows, Ubuntu and macOS on pull requests
-to main and on demand (`.github/workflows/smoke.yml`).
+
+`node --test "tests/*.test.mjs"` runs the suite in temp folders, with a fake executor in place of every agent. `norn smoke` runs a
+fresh copy end to end. CI runs the smoke test on Windows, Ubuntu and macOS (`.github/workflows/smoke.yml`).
 
 ## Glossary
+
 - **Lane**: one line of work with its own git worktree and branch. One agent at a time writes in it.
-- **Directive**: a standing instruction from you that every check-in must follow until you revoke it.
-- **Check-in**: one short agent turn that reviews the state, rules on finished runs and starts the next ones. It runs by hand
-  (`norn tick`) or from the scheduler.
-- **Profile**: a starting set of limits and routing (`try-it`, `solo`, `heavy`). It is only a starting point, so change any
-  value afterwards in Settings.
-- **Urd**, **Verdandi**, **Skuld**: the dashboard's three groups in the Norn look. Urd is what was (records, ledger, docs),
-  Verdandi is what is (overview, map, agents, lanes, usage, tests, instructions), and Skuld is what shall be (plan, inbox, settings).
-- **Wyrd**: all three at once, which is the roadmap view.
+- **Run**: one agent session in a lane, until its `DONE`, `STOPPED` or `HANDOFF` line.
+- **Check-in**: one short agent turn that reviews the state, rules on finished runs and starts the next ones (`norn tick`, by hand
+  or from the scheduler).
+- **Directive**: a standing instruction from you that every check-in follows until you revoke it.
+- **Profile**: a starting set of limits and routing (`try-it`, `solo`, `heavy`); change any value later in Settings.
+- **Urd, Verdandi, Skuld, Wyrd**: the names of the dashboard's tab groups. Urd is what was (records, ledger, docs), Verdandi what
+  is (overview to slop), Skuld what shall be (plan, inbox, settings), and Wyrd all three at once (the roadmap).
 
 ## Beta feedback
-This is a beta. Tell us how it went: open this repository's **Issues** tab, choose **New issue**, then **Beta feedback**. The form
-asks what you tried, what went wrong or felt confusing, your OS, and whether to keep SloppaChoppa (the orc in the dashboard header
-who checks a branch for leftovers before it merges). He can be switched off per project: Settings, Guard voice, SloppaChoppa: off.
+
+This is a beta. Open this repository's **Issues** tab, choose **New issue**, then **Beta feedback**. The form asks what you tried,
+what went wrong or was confusing, your OS, and whether to keep SloppaChoppa (to switch him off: Settings, Slop voice, On / off).
 
 ## License
+
 MIT, see [LICENSE](LICENSE).

@@ -9,6 +9,7 @@
 // first two audits each yielded 3+ accepted hunks. Node built-ins only.
 import fs from 'node:fs';
 import path from 'node:path';
+import { readJsonS, readText as readTextS } from './fsnap.mjs';
 import { createHash } from 'node:crypto';
 import { advisory } from './advisory.mjs';
 
@@ -20,8 +21,9 @@ export const STOP_RULE_MIN = 3;
 const SOURCE = 'REPORT meta-practice s.3.3 (the vendor prompt audit: /doctor prompt-audit)';
 const fwd = p => String(p ?? '').replace(/\\/g, '/');
 const under = (f, d) => !!d && (fwd(f).toLowerCase() + '/').startsWith(fwd(d).replace(/\/+$/, '').toLowerCase() + '/');
-const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
-const readText = f => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
+// META-DASH-ASYNC R1: snapshot-aware reads (lib/fsnap.mjs) - the dash primes auditFiles() on fs.promises, the CLI reads sync
+const readJson = readJsonS;
+const readText = f => { try { return readTextS(f); } catch { return null; } };
 export const auditsDir = state => path.join(state, 'audits');
 
 /** the audit's scope: the project's own steering files (in its repo, its project folder, or its memory) - never user-level files */
@@ -50,6 +52,8 @@ export function writeStamp(state, stamp) {
   fs.mkdirSync(path.dirname(f), { recursive: true });
   const tmp = `${f}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify(stamp, null, 1)); fs.renameSync(tmp, f);
 }
+/** META-DASH-ASYNC R1: the files auditsView reads (the stamp + each audit run's notes), for the dash to prime */
+export const auditFiles = (p, items) => [path.join(auditsDir(p.state), 'stamp.json'), ...Object.values(items).filter(i => i.kind === 'run' && i.data?.kind === 'audit' && i.data?.notes).map(r => r.data.notes)];
 export const readStamp = state => (state ? readJson(path.join(auditsDir(state), 'stamp.json')) : null);
 
 /** -> [{ key, why }]: the events that call for an audit now (empty = none) */
@@ -160,7 +164,7 @@ export function auditHunks(run, p, items) {
     const a = advisory({ phase: 'P5', check: '3.3', key: 'audit-hunk', severity: sev, surface: 'audit hunk', path: resolveIn(h.file, p), line: h.line,
       subject: createHash('sha1').update(h.patch).digest('hex').slice(0, 12),
       why: `${f ? f.title : `a hunk at ${h.file}:${h.line}`}`.replace(/\s+/g, ' ').slice(0, 290), source: `${SOURCE}, audit ${run.id}`,
-      fix: { tier: 'card', action: 'accept = a decision + a directive: the check-in applies this hunk; decline = keep the text', patch: h.patch } });
+      fix: { tier: 'card', action: 'accept = a decision + a directive: the check-in applies this hunk; decline = keep the text', patch: h.patch, kind: 'ready' } });
     const d = dec.filter(x => x.data.advisory === a.id).sort((x, y) => String(y.created).localeCompare(String(x.created)))[0];
     const status = !d ? 'open' : /^accepted/.test(String(d.data.choice ?? '')) ? 'accepted' : 'declined';
     return { ...a, run: run.id, removed: h.removed, status, decided: d?.created ?? null, decision: d?.id ?? null };
@@ -198,7 +202,7 @@ export function auditsView(p, items, { rows = [], cards = [], machine = null } =
     return { id: r.id, created: r.created, state: r.state, outcome: r.end?.outcome ?? null, notes: r.data.notes ?? null, hunks, accepted: n('accepted'), declined: n('declined'), open: n('open') };
   });
   const advisories = audits.flatMap(a => a.hunks.filter(h => h.watch?.alarms.length).map(h => advisory({ phase: 'P5', check: '3.3', key: 'audit-watch', severity: 'medium', surface: 'audit hunk', path: h.path, line: h.line, subject: h.id,
-    why: `after hunk ${h.id} (${h.decision}): ${h.watch.alarms.map(x => x.why).join('; ')}`.slice(0, 300), source: `${SOURCE}, watch after apply`, fix: { tier: 'card', action: 'read the run / correction; if the hunk caused it, revert the hunk' } })));
+    why: `after hunk ${h.id} (${h.decision}): ${h.watch.alarms.map(x => x.why).join('; ')}`.slice(0, 300), source: `${SOURCE}, watch after apply`, fix: { tier: 'card', action: 'read the run / correction; if the hunk caused it, revert the hunk', kind: 'call', ways: ['Revert the hunk', 'Keep it'] } })));
   return { runs: audits.map(({ hunks, ...a }) => ({ ...a, watch: hunks.filter(h => h.watch).map(h => ({ id: h.id, ...h.watch })) })),
     cards: audits.flatMap(a => a.hunks.filter(h => h.status === 'open')), advisories,
     triggers: auditTriggers(p, { rows, cards, machine, stamp: readStamp(p.state) }), rule: stopRule(audits),

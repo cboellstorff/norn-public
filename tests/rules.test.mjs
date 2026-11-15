@@ -102,7 +102,7 @@ test('hole 4 asks git history: a path once tracked and deleted is gone (medium);
   assert.ok(nf, 'the never-tracked path is its own kind');
   assert.equal(nf.severity, 'low', 'lower than gone: it never warns');
   assert.match(nf.why, /QUIET/);
-  const html = renderTab('instructions', v, {});
+  const html = ['role', 'file', 'growing', 'checkins', 'checks'].map(sub => renderTab('context', { ...v, sub, limit: 1000 }, {})).join('');
   assert.match(html, /path not found \(a runtime file or a typo\)/, 'its own label on the ladder');
   assert.match(html, /points at code that is gone/);
 });
@@ -153,7 +153,7 @@ test('retired: a rule gone from the files since the last remembered scan', () =>
 });
 
 test('the ladder: rules as columns by state, each card home / enforcement / last fired, a click opens the source line; chips on the rows', () => {
-  const f = fx(), v = view(f), html = renderTab('instructions', v, {});
+  const f = fx(), v = view(f), html = ['role', 'file', 'growing', 'checkins', 'checks'].map(sub => renderTab('context', { ...v, sub, limit: 1000 }, {})).join('');
   assert.match(html, /id="ins-ladder"/);
   for (const col of ['prose only', 'repeated', 'enforced', 'retired']) assert.match(html, new RegExp(`class="wbcol[^"]*"[^>]*>\\s*<h4>${col}`, 'i'));
   const uv = v.rules.rules.find(r => r.text.includes('uv sync'));

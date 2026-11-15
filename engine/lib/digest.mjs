@@ -18,6 +18,7 @@ import { runDrift } from './drift.mjs';
 import { digestRow } from './slop/daily.mjs';
 import { slopOn } from './policy.mjs';
 import { adviceDigestRow } from './advice.mjs';
+import { critiqueRows } from './critique.mjs';
 
 const H = 3600e3;
 export const WINDOW_H = 72;
@@ -187,6 +188,9 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   // META-TEND P4: ONE line - the open model-advice cards (advice.json, the last count the Usage tab / norn advise made)
   const adv = adviceDigestRow(stateDir);
   if (adv) sections.advice = [adv];
+  // META-DOD 3: the plan reviews with findings (or no clean end) the check-in has not reviewed yet - the builds they hold wait for it
+  const cr = critiqueRows(st.items);
+  if (cr.length) sections.critique = cr;
   const counts = Object.fromEntries(Object.entries(sections).map(([k, v]) => [k, v.length]));
   return { project: project?.name ?? null, at: new Date(now).toISOString(), window_h: WINDOW_H, sections, counts };
 }

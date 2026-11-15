@@ -6,10 +6,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHook } from 'node:async_hooks';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { createDashboard } from '../engine/dash/server.mjs';
-import { INS_PARTS, INS_CAPS, insSummary, insPart } from '../engine/dash/insparts.mjs';
-import { renderTab, loadTab, loadInsParts } from '../engine/dash/ui.mjs';
+import { INS_PARTS, INS_CAPS, insSummary, insPart, contextParts } from '../engine/dash/insparts.mjs';
+import { renderTab, loadTab, loadParts } from '../engine/dash/ui.mjs';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const VIEW_FILE = 'instructions-view.json';
@@ -49,27 +50,28 @@ test('the summary carries no list, only its count; each part is capped at what t
 });
 
 test('the page: a pending first scan shows the refreshing chip (never blank); parts load by themselves and their caps say so', async () => {
-  const pend = renderTab('instructions', { project: 'kestrel', pending: true, refreshing: true });
+  const pend = renderTab('context', { project: 'kestrel', pending: true, refreshing: true });
   assert.match(pend, /id="ins-refreshing"/); assert.match(pend, /first scan/);
   const v = bigView(), s = { ...insSummary(v), at: '2026-11-14T10:00:00.000Z', refreshing: true };
-  const first = renderTab('instructions', { ...s, parts_loading: true });
-  assert.match(first, /id="ins-refreshing"/); assert.match(first, /<b>3 files steer the agents<\/b>/);
-  assert.equal((first.match(/class="small mute inspart">loading/g) || []).length, 5, 'each of the five parts shows its own loading line');
+  const first = renderTab('context', { ...s, sub: 'checks', parts_loading: true });   // META-UX-BUILD S4: the lists live on Context's checks page
+  assert.match(first, /id="ins-refreshing"/); assert.match(renderTab('context', { ...s, sub: 'file', parts_loading: true }), /id="context-sub-loading"/);
+  assert.equal((first.match(/class="small mute inspart">loading/g) || []).length, 2, 'each list part shows its own loading line (the files are in Per file; S5: hints + Tighten are Slop rows)');
   const calls = [];
-  const parts = await loadInsParts('kestrel', async u => { calls.push(u); return insPart(v, new URL(u, 'http://x').searchParams.get('part')); });
-  assert.deepEqual(calls, INS_PARTS.map(k => `/api/instructions?project=kestrel&part=${k}`));
-  const html = renderTab('instructions', { ...s, refreshing: false, ...parts });
+  const parts = await loadParts('context', 'kestrel', { ...s, sub: 'checks' }, async u => { calls.push(u); return insPart(v, new URL(u, 'http://x').searchParams.get('part')); });
+  assert.deepEqual(calls, contextParts('checks').map(k => `/api/instructions?project=kestrel&part=${k}`));
+  assert.deepEqual(contextParts('checks'), ['files', 'rules', 'findings']);
+  const html = renderTab('context', { ...s, sub: 'checks', refreshing: false, ...parts });
   assert.doesNotMatch(html, /id="ins-refreshing"/); assert.doesNotMatch(html, /inspart">loading/);
-  assert.match(html, /Tighten <span class="mute small">700 candidates/); assert.match(html, /Hints <span class="mute small">200 · /);
-  assert.match(html, /showing 60 of 200/); assert.match(html, /showing 120 of 300/);
+  assert.match(html, /data-go="slop" data-gosub="fix"/, 'S5: Hints + Tighten moved to Slop, one link away');
+  assert.match(html, /showing 120 of 300/);
   assert.match(html, /<b>80<\/b> × one rule in several homes/);
   assert.match(html, /220 must \/ never rules/);
-  // loadTab: the summary + the open file in parallel; parts already fetched for this view (same project + at) paint at once
+  // loadTab: the summary; parts already fetched for this view (same project + at) paint at once (S3: a file opens in the Docs reader)
   const got = [];
-  const d = await loadTab('instructions', 'kestrel', async u => { got.push(u); return u.startsWith('/api/instructions/') ? { id: 'r0', path: 'C:/r/F0.md', text: 'x', findings: [] } : s; }, { ins: 'r0', insParts: { key: `kestrel|${s.at}`, data: parts } });
-  assert.deepEqual(got, ['/api/instructions?project=kestrel', '/api/instructions/r0?project=kestrel']);
-  assert.equal(d.parts_loading, false); assert.equal(d.rows.length, 3); assert.equal(d.file.text, 'x');
-  const d2 = await loadTab('instructions', 'kestrel', async () => s, { insParts: { key: 'kestrel|older', data: parts } });
+  const d = await loadTab('context', 'kestrel', async u => { got.push(u); return s; }, { sub: 'checks', parts: { context: { key: `kestrel|${s.at}|checks`, data: parts } } });
+  assert.deepEqual(got, ['/api/instructions?project=kestrel']);
+  assert.equal(d.parts_loading, false); assert.equal(d.rows.length, 3);
+  const d2 = await loadTab('context', 'kestrel', async () => s, { sub: 'checks', parts: { context: { key: 'kestrel|older', data: parts } } });
   assert.equal(d2.parts_loading, true, 'a new view: its parts are fetched again'); assert.equal(d2.rows, undefined);
 });
 
@@ -124,4 +126,19 @@ test('a stale view is served at once while ONE rebuild runs; the rebuild ends wi
     for (let i = 0; z.at === at0 && i < 1200; i++) { await sleep(100); z = (await f.get('/api/instructions?project=kestrel')).data; }
     assert.ok(Date.parse(z.at) > Date.parse(at0));
   } finally { await f.done(); }
+});
+
+// CI-HANG-B7F6833 R2: close() ends every worker the server started - the instructions worker too, not only the account refresh
+test('close() ends a running instructions worker: no worker thread is left alive after close', { timeout: 60000 }, async () => {
+  const live = new Set();
+  const hook = createHook({ init: (id, type) => { if (type === 'WORKER') live.add(id); }, destroy: id => live.delete(id) }).enable();
+  const f = await fixture({ dash: { insTtlMs: 60000, accountRefresh: false } });
+  try {
+    fs.writeFileSync(path.join(f.pa.root, 'CLAUDE.md'), '# Rules\n');
+    assert.equal((await f.get('/api/instructions?project=kestrel')).data.pending, true, 'a scan is running');
+    assert.ok(live.size >= 1, 'the scan runs in a worker thread');
+    await f.app.close();
+    await new Promise(r => setImmediate(r));
+    assert.equal(live.size, 0, `${live.size} worker thread(s) still alive after close()`);
+  } finally { hook.disable(); await f.done(); }
 });

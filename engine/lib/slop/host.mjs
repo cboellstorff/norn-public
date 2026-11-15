@@ -6,11 +6,13 @@
 // Waivers are records (WVR-n, waivers.jsonl); a block is open while no active waiver covers it.
 import fs from 'node:fs';
 import path from 'node:path';
+import { readText } from '../fsnap.mjs';
 import { fold, readEvents, recordsFile } from '../records.mjs';
 import { globToRe } from '../dlvgit.mjs';
 
 export const slopDir = state => path.join(state, 'slop');
-const readJ = (f, dflt) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { if (e.code === 'ENOENT') return dflt; throw e; } };
+const readJ = (f, dflt) => { const t = readText(f); return t === null ? dflt : JSON.parse(t); };   // META-DASH-ASYNC R1: snapshot-aware (lib/fsnap.mjs)
+export const slopFiles = state => [holdsFile(state), path.join(slopDir(state), 'report.json'), path.join(slopDir(state), 'series.json')];
 function writeJ(f, v) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f + '.tmp', JSON.stringify(v, null, 1)); fs.renameSync(f + '.tmp', f); }
 const holdsFile = state => path.join(slopDir(state), 'holds.json');
 

@@ -37,9 +37,10 @@ export function createFeeds({ pollMs = 2000, lingerMs = 10000, max = 4 } = {}) {
     for (const e of fresh) c.cursor = advance(c.cursor, e.at);
   }
   const noteCtx = (t, events) => { for (const e of events) if (e.kind === 'usage') { t.ctx = e.ctx; t.peak = Math.max(t.peak ?? 0, e.ctx ?? 0) || null; if (Number.isFinite(e.window)) t.window = e.window; } };
-  const headOf = t => { try { return t.source.head({ ctx: t.ctx ?? null, peak: t.peak ?? null, window: t.window ?? null }); } catch { return null; } };
-  function sendHead(t, only) {
-    const h = headOf(t); if (!h) return;
+  // META-DASH-ASYNC R1 (DEC-338): the source's poll / head / ended may be async (the dash server's are: fs.promises) - awaited here
+  const headOf = async t => { try { return await t.source.head({ ctx: t.ctx ?? null, peak: t.peak ?? null, window: t.window ?? null }); } catch { return null; } };
+  async function sendHead(t, only) {
+    const h = await headOf(t); if (!h) return;
     const s = JSON.stringify(h);
     if (only) { write(only.res, 'head', h); if (!t.head) t.head = s; return; }
     if (s === t.head) return;
@@ -47,14 +48,18 @@ export function createFeeds({ pollMs = 2000, lingerMs = 10000, max = 4 } = {}) {
   }
   function finish(t, c) { write(c.res, 'end', { run: t.key }); try { c.res.end(); } catch { /* gone */ } }
   function stop(t) { clearInterval(t.timer); clearTimeout(t.linger); tailers.delete(t.key); }
-  const isEnded = t => { try { return t.source.ended(); } catch { return false; } };
-  function tick(t) {
-    const ended = isEnded(t);   // asked BEFORE the poll: every line written before the run's end record is read first
-    let r; try { r = t.source.poll(t.cursor); } catch { return; }
-    t.cursor = r.cursor; noteCtx(t, r.events);
-    for (const c of t.clients) deliver(t, c, r.events);
-    sendHead(t);
-    if (ended) { for (const c of [...t.clients]) finish(t, c); }
+  const isEnded = async t => { try { return await t.source.ended(); } catch { return false; } };
+  async function tick(t) {
+    if (t.busy) return;   // one poll at a time per tailer: a slow one is skipped over, never queued
+    t.busy = true;
+    try {
+      const ended = await isEnded(t);   // asked BEFORE the poll: every line written before the run's end record is read first
+      let r; try { r = await t.source.poll(t.cursor); } catch { return; }
+      t.cursor = r.cursor; noteCtx(t, r.events);
+      for (const c of t.clients) deliver(t, c, r.events);
+      await sendHead(t);
+      if (ended) { for (const c of [...t.clients]) finish(t, c); }
+    } finally { t.busy = false; }
   }
   function leave(t, c) {
     if (!t.clients.delete(c)) return;
@@ -62,25 +67,26 @@ export function createFeeds({ pollMs = 2000, lingerMs = 10000, max = 4 } = {}) {
     if (!t.clients.size) { clearTimeout(t.linger); t.linger = setTimeout(() => { if (!t.clients.size) stop(t); }, lingerMs); t.linger.unref?.(); }
   }
 
-  function join(key, open, res, cursor = null) {
+  /** -> Promise<false at the cap | true> */
+  async function join(key, open, res, cursor = null) {
     if (clients >= max) return false;
     let t = tailers.get(key);
     if (!t) {
-      t = { key, source: open(), clients: new Set(), cursor: null, head: null, ctx: null, timer: null, linger: null };
+      t = { key, source: open(), clients: new Set(), cursor: null, head: null, ctx: null, timer: null, linger: null, busy: false };
       tailers.set(key, t);
     }
     clearTimeout(t.linger);
     const c = { res, cursor: cursor || null };
-    t.clients.add(c); clients++;
+    t.clients.add(c); clients++;   // the seat is taken before the first await (the cap holds for clients joining at once)
     res.on('close', () => leave(t, c));
     res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', connection: 'keep-alive' });
     res.write('retry: 3000\n\n');
     // catch-up from the client's own cursor (null = the backlog window); a fresh tailer continues from there
-    const ended = isEnded(t);
-    let r; try { r = t.source.poll(c.cursor); } catch { r = { events: [], cursor: c.cursor || {} }; }
+    const ended = await isEnded(t);
+    let r; try { r = await t.source.poll(c.cursor); } catch { r = { events: [], cursor: c.cursor || {} }; }
     noteCtx(t, r.events); deliver(t, c, r.events); c.cursor = advance(c.cursor, r.cursor);
-    if (!t.timer) { t.cursor = r.cursor; t.timer = setInterval(() => tick(t), pollMs); t.timer.unref?.(); }
-    sendHead(t, c);
+    if (!t.timer && tailers.get(key) === t) { t.cursor = r.cursor; t.timer = setInterval(() => tick(t), pollMs); t.timer.unref?.(); }
+    await sendHead(t, c);
     if (ended) finish(t, c);
     return true;
   }

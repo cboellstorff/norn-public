@@ -12,6 +12,9 @@ import { mergeQueue } from '../engine/lib/mergeq.mjs';
 import { tickSlop } from '../engine/lib/slop/daily.mjs';
 import { digest } from '../engine/lib/digest.mjs';
 import { renderTab } from '../engine/dash/ui.mjs';
+import { GUARD_SUBS, guardSummary, guardPart } from '../engine/dash/guardparts.mjs';
+// META-UX-BUILD S2: the Guard page = the summary + one sub-view's part at a time; all sub-views together = what the one page showed
+const guardPage = (g, ctx) => GUARD_SUBS.map(([sub]) => renderTab('slop', { ...guardSummary(g), sub, limit: 40, ...guardPart(g, sub), parts_loading: false }, ctx)).join('');
 import { fixture } from './helpers/dash-fixture.mjs';
 import { settled } from './helpers/settled.mjs';
 import { waitFor } from './helpers/wait.mjs';
@@ -107,10 +110,10 @@ test('off: /api/guard has no code rows and says slop off; the Guard page is a pl
     assert.equal(g.slop, false);
     assert.ok(!g.rows.some(r => r.type === 'code'), 'no slop rows');
     assert.ok(!g.types.some(t => t.type === 'code'), 'no code type in the counts either');
-    const html = renderTab('guard', g, { project: 'kestrel', look: 'norn', art: true });
-    assert.ok(!/SloppaChoppa|orc-|guard-popups/.test(html), 'no orc, no pop-up line, no SloppaChoppa words');
-    for (const id of ['guard-plain', 'guard-count', 'guard-rows']) assert.ok(html.includes(`id="${id}"`), id);
-    assert.match(html, /id="guard-plain"[^]*?class="chip (ok|warn)"/, 'a plain count badge');
+    const html = guardPage(g, { project: 'kestrel', look: 'norn', art: true });
+    assert.ok(!/SloppaChoppa|orc-|slop-popups/.test(html), 'no orc, no pop-up line, no SloppaChoppa words');
+    for (const id of ['slop-plain', 'slop-count-types', 'slop-rows']) assert.ok(html.includes(`id="${id}"`), id);
+    assert.match(html, /id="slop-plain"[^]*?class="chip (ok|warn)"/, 'a plain count badge');
     const v = (await f.get('/api/settings?project=kestrel')).data;
     const r = await f.post('/api/settings', { project: 'kestrel', version: v.version, changes: { 'policy.slop.enabled': true } });
     assert.equal(r.status, 200, JSON.stringify(r.data));
@@ -119,7 +122,7 @@ test('off: /api/guard has no code rows and says slop off; the Guard page is a pl
     assert.equal(g.slop, true);
     assert.ok(g.rows.some(r => r.type === 'code'), 'on again: the recorded finding shows');
     assert.equal(g.types.find(t => t.type === 'code').open, 1);
-    assert.match(renderTab('guard', g, { project: 'kestrel' }), /id="guard-orc"/);
+    assert.match(guardPage(g, { project: 'kestrel' }), /id="slop-orc"/);
   } finally { await f.done(); }
 });
 

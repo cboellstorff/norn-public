@@ -10,10 +10,10 @@ export const FAKE_CHAT = path.join(path.dirname(fileURLToPath(import.meta.url)),
 const caps = { modes: ['write', 'read-only', 'no-tools'], resume: true, mcp: 'none', output: 'final', usage: 'tokens+cost', skills: 'none', fork: false, hooks: 'none', resume_style: 'flag', noninteractive: null, chat: 'stream' };   // --resume <sid> (+ --prompt): a nudge
 
 function command(o) {
-  modeOf(o, 'fake', caps);
+  const mode = modeOf(o, 'fake', caps);
   if (o.mcp) throw new Error('fake has no MCP');
   return { exe: process.execPath, stdin: null, stdout: 'final', parse: 'claude', args: [
-    FAKE, '--brief', o.brief, ...(o.notes ? ['--notes', o.notes] : []), '--resumes', String(o.resumes || 0),
+    FAKE, '--brief', o.brief, ...(o.notes ? ['--notes', o.notes] : []), ...(mode === 'read-only' ? ['--read-only'] : []), '--resumes', String(o.resumes || 0),
     ...(o.resumeSid ? ['--resume', o.resumeSid, ...(o.promptText ? ['--prompt', o.promptText] : [])] : [])] };
 }
 

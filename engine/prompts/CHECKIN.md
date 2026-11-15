@@ -77,6 +77,11 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
 - Rule each: `META guard rule GRD-n --action let-run|mail|stop --why W`. mail = `NORN mail send --to RUN-n` (hand off / stop reading
   whole logs); stop = mail `role:controller` (a kill is not yours). `META guard sources RUN-n` shows what fills its context.
 
+## 2g. Plan reviews (digest sec. 11; per project policy.dod.critique = on)
+- A planning run ending DONE got one fresh read-only review (norn critique); its findings file sits beside the plan. A build
+  naming that plan waits (after run:RUN-m:reviewed). Read the findings file first; then `META runs review RUN-m --refs <ids>` (the review run)
+  releases the build, or withdraw / requeue the build to fix the plan. A review with 0 findings releases itself.
+
 ## 3. Dispatch (only within caps; caps come from the BUDGET file + STATUS)
 - {{policy}} <!-- policy:checkin -->
 - First apply BUDGET `lanes[<lane>]` (missing = `{executor: auto}`). `paused` = NEVER dispatch that lane;
@@ -93,9 +98,11 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
 - Defaults from BUDGET: claude_model / claude_effort, codex_astra_effort, codex_sol_effort; `lanes[<lane>].effort` overrides.
   checkin_model / checkin_effort select the next check-in itself; they are not worker settings.
 - Write the next stage's brief to {{briefs_dir}}/task-<LANE>-<STAGE>-brief.md (lean, line-ranged reading, cites the rules,
-  stop rule, time budget, NOTES end marker `## DONE` / `## STOPPED: <why>` / `## HANDOFF`).
+  stop rule, time budget, NOTES end marker `## DONE` / `## STOPPED: <why>` / `## HANDOFF`) and its three Ready lines (DoR, policy.dod.ready):
+  `Scope: <paths / globs the run may change>`, `Tests: <test files, or a command in backticks>`, `Done: <the end marker>`. At the run end Norn
+  runs those Tests + the merge gate itself and checks the tree is clean and inside Scope: only that green record makes a DONE count.
 - Launch: `META run --lane <l> --stage <S> --round <n> --executor claude|codex-sol|codex-astra --agent <a> --model <m>
-  --effort <e> --brief <f> --budget-min <n> [--item RM-n]` (refusals: exit 3 writer / 4 cap / 5 held lane - accept, never force). `--item RM-n`
+  --effort <e> --brief <f> --budget-min <n> [--item RM-n]` (refusals: exit 3 writer / 4 cap / 5 held lane - accept, never force; exit 6 = the brief lacks its Ready lines - add them, launch again). `--item RM-n`
   links the run to the roadmap item it builds (a new lane: `META rec add lane --name L --item RM-n`).
 - ONE writer per worktree is enforced by "norn run" (all executors, all projects); never bypass it.
 

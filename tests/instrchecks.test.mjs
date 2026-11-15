@@ -143,12 +143,12 @@ test('prose checks 14-19 and agents / hooks / harness checks 21-23 (keys only, n
   assert.ok(!f.some(x => x.check === 20), 'check 20 is P5');
 });
 
-test('the Instructions tab shows findings in place (severity chips, counts, fix) and the managed line; fixed since last scan', () => {
+test('Context (the checks page, Per file) shows findings in place (severity chips, counts, fix) and the managed line; fixed since last scan', () => {
   const { p, home, repo } = fx();
   const v = instructionsView(p, { home, git: false, standing: null, remember: true });
   assert.ok(v.findings.length > 10 && v.managed.files === v.rows.length);
   assert.equal(v.managed.memory.worker, 'off');
-  const html = renderTab('instructions', v, {});
+  const html = ['role', 'file', 'growing', 'checkins', 'checks'].map(sub => renderTab('context', { ...v, sub, limit: 1000 }, {})).join('');   // META-UX-BUILD S4: the checks page + Per file
   assert.match(html, /id="ins-managed"/);
   assert.match(html, /files scanned/);
   assert.match(html, /memory loaded by/);
@@ -196,8 +196,8 @@ test('Instructions sits in Verdandi beside Usage; the tab draws what one session
     chat: { run: 'chat', method: 'request', total: 2000, parts: [{ key: 'base', label: 'harness base prompt + tool schemas', ours: false, tokens: 1500 }, { key: 'memory', label: 'memory index', ours: true, tokens: 500 }] } } };
   const v = instructionsView(p, { home, git: false, standing, now: Date.parse('2026-11-14T12:00:00Z') });
   const ver = NORN_GROUPS.find(g => g[0] === 'verdandi')[3];
-  assert.deepEqual(ver.slice(ver.indexOf('usage')), ['usage', 'tests', 'instructions', 'guard'], 'beside Usage and Tests (MAIL-51); the Guard overview beside them (META-TEND P6)');
-  assert.ok(!NORN_GROUPS.find(g => g[0] === 'urd')[3].includes('instructions'));
+  assert.deepEqual(ver.slice(ver.indexOf('usage')), ['usage', 'tests', 'context', 'slop'], 'beside Usage and Tests (MAIL-51); the Guard overview beside them (META-TEND P6)');
+  assert.ok(!NORN_GROUPS.find(g => g[0] === 'urd')[3].includes('context'));
   // file map data: every row has loads per day and one state of four
   assert.ok(v.rows.every(r => typeof r.loads_day === 'number' && ['fresh', 'stale', 'conflict', 'generated-stale'].includes(r.map_state)));
   assert.equal(v.rows.find(r => r.name === 'AGENTS.md' && /repo\/AGENTS\.md$/.test(r.path)).map_state, 'conflict', 'a memory line restates it (check 6)');
@@ -209,7 +209,7 @@ test('Instructions sits in Verdandi beside Usage; the tab draws what one session
   const ok = m.topics.find(t => t.name === 'ok.md');
   assert.ok(ok.linked >= 1 && ok.opened === '2026-11-10T08:00:00Z');
   assert.equal(m.topics.find(t => t.name === 'orphan.md').opened, null, 'a prose mention is not an open');
-  const html = renderTab('instructions', v, {});
+  const html = ['role', 'file', 'growing', 'checkins', 'checks'].map(sub => renderTab('context', { ...v, sub, limit: 1000 }, {})).join('');   // META-UX-BUILD S4: every Context view; nothing removed, only moved
   // view 2: one stacked bar per role, the memory switch per role
   assert.match(html, /id="ins-loads"/);
   assert.match(html, /controller \/ chat[\s\S]*?memory on[\s\S]*?class="wstack"/);
@@ -224,9 +224,10 @@ test('Instructions sits in Verdandi beside Usage; the tab draws what one session
   assert.match(html, /200 lines/); assert.match(html, /25 KB/);
   assert.match(html, /gone\.md[\s\S]*?missing/);
   assert.match(html, /orphan\.md/);
-  assert.match(renderTab('instructions', { ...v, memory_map: null }, {}), /id="ins-memory"[\s\S]*?No MEMORY\.md for this repo/, 'no memory folder: said, not hidden');
+  assert.match(renderTab('context', { ...v, memory_map: null, sub: 'checks' }, {}), /id="ins-memory"[\s\S]*?No MEMORY\.md for this repo/, 'no memory folder: said, not hidden');
   // the opened file shows its own findings
   const agents = v.rows.find(r => r.name === 'AGENTS.md' && /repo\/AGENTS\.md$/.test(r.path));
-  const open = renderTab('instructions', { ...v, file: { ...agents, text: '# Agents' } }, {});
-  assert.match(open, /id="ins-file-findings"[\s\S]*?restates|id="ins-file-findings"[\s\S]*?C\d+/);
+  const own = v.findings.filter(x => x.path === agents.path || x.other === agents.path);   // the file part sends its own findings (server docFile)
+  const open = renderTab('docs', { groups: [], files: 0, file: agents.id, doc: { ...agents, text: '# Agents', findings: own } }, {});   // META-UX-BUILD S3: the Docs reader
+  assert.ok(own.length); assert.match(open, /id="doc-file-findings"[\s\S]*?restates|id="doc-file-findings"[\s\S]*?C\d+/);
 });

@@ -88,10 +88,10 @@ test('each tab has a data endpoint from records / runs / transcripts', async () 
     const r = (await f.get('/api/records')).data;
     assert.equal(r.decisions[0].id, 'DEC-1'); assert.equal(r.directives[0].history.length, 1);
     assert.equal((await f.get('/api/records?kind=directive')).data.decisions.length, 0);
-    const docs = (await f.get('/api/docs')).data.docs;
-    assert.deepEqual(docs.map(d => [d.tab, d.exists]), [['Plan', true], ['Missing', false]]);
-    assert.match((await f.get('/api/docs/0')).data.text, /step one/);
-    assert.equal((await f.get('/api/docs/7')).status, 404);
+    const docs = (await f.get('/api/docs')).data.groups.find(g => g.id === 'project').rows;   // META-UX-BUILD S3: the grouped list
+    assert.deepEqual(docs.map(d => [d.name, d.exists]), [['Plan', true], ['Missing', false]]);
+    assert.match((await f.get('/api/docs?part=file&file=doc-0')).data.doc.text, /step one/);
+    assert.equal((await f.get('/api/docs?part=file&file=doc-7')).status, 404);
     const led = (await f.get('/api/ledger')).data.ledger; assert.equal(led.length, 30, 'default 100 lines (LEDGER-UX R1)'); assert.equal(led.at(-1), 'p30');
     const l25 = (await f.get('/api/ledger?count=25')).data.ledger; assert.equal(l25.length, 25); assert.equal(l25.at(-1), 'p30');
     assert.equal((await f.get('/api/nope')).status, 404);
@@ -188,7 +188,7 @@ test('GET / serves the UI shell and injects the token (tab / panel ids: tests/ui
   const f = await fixture();
   try {
     const r = await fetch(f.url + '/'), html = await r.text(); assert.equal(r.status, 200);
-    assert.deepEqual(TABS, ['home', 'overview', 'inbox', 'lanes', 'agents', 'map', 'roadmap', 'plan', 'records', 'usage', 'tests', 'docs', 'instructions', 'guard', 'ledger', 'settings']);
+    assert.deepEqual(TABS, ['home', 'overview', 'inbox', 'lanes', 'agents', 'map', 'roadmap', 'plan', 'records', 'usage', 'tests', 'docs', 'context', 'slop', 'ledger', 'settings']);
     for (const id of ['tabs', 'main', 'project', 'theme']) assert.ok(html.includes(`id="${id}"`), id);
     assert.ok(html.includes(f.app.token)); assert.ok(!/api\/phone|qrSvg/.test(html));
   } finally { await f.done(); }

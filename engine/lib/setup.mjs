@@ -214,11 +214,17 @@ export function genCheck(p, machine, { meta, out }) {
  * project). Runs only when p is registered in its meta root's machine.json; a hand-edited target stays a problem (never overwritten).
  * { ran, why?, problems, lines }. */
 export function genAfterPolicy(p, { meta = p.meta } = {}) {
-  if (!exists(machineFile(meta))) return { ran: false, why: `no machine.json under ${fwd(meta)}: norn gen not run`, problems: [], lines: [] };
-  const m = loadMachine(machineFile(meta), { meta });
-  if (!m.projects.some(pr => key(expandMeta(pr.config, meta)) === key(p.file))) return { ran: false, why: `${p.name} is not registered in machine.json: norn gen not run`, problems: [], lines: [] };
-  const lines = [], problems = installProject(p, m, { meta, out: s => lines.push(s) });
+  const g = genWhyNot(p, { meta }); if (g.not) return g.not;
+  const lines = [], problems = installProject(p, g.m, { meta, out: s => lines.push(s) });
   return { ran: true, problems, lines };
+}
+/** genAfterPolicy's precondition (shared with the dash server, which runs `norn gen --project` as a child - META-DASH-ASYNC R1):
+ * { not: the { ran: false, why } reply } or { m: the machine } */
+export function genWhyNot(p, { meta = p.meta } = {}) {
+  if (!exists(machineFile(meta))) return { not: { ran: false, why: `no machine.json under ${fwd(meta)}: norn gen not run`, problems: [], lines: [] } };
+  const m = loadMachine(machineFile(meta), { meta });
+  if (!m.projects.some(pr => key(expandMeta(pr.config, meta)) === key(p.file))) return { not: { ran: false, why: `${p.name} is not registered in machine.json: norn gen not run`, problems: [], lines: [] } };
+  return { m };
 }
 
 function readMachineOrNull(meta) {

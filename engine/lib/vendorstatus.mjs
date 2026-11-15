@@ -5,6 +5,7 @@
 // incident known (the notice then says so); it never fails the caller.
 import fs from 'node:fs';
 import path from 'node:path';
+import { readJsonS } from './fsnap.mjs';
 import { spawnSync } from 'node:child_process';
 import { authPatterns } from './executors.mjs';
 
@@ -40,8 +41,8 @@ export function openIncident(json) {
   return { name: String(i.name || 'an unnamed incident'), since: at(i) };
 }
 
-const cacheFile = state => path.join(path.dirname(path.resolve(state)), 'vendor-status.json');
-function readCache(state) { try { return JSON.parse(fs.readFileSync(cacheFile(state), 'utf8')) || {}; } catch { return {}; } }
+export const cacheFile = state => path.join(path.dirname(path.resolve(state)), 'vendor-status.json');
+function readCache(state) { return readJsonS(cacheFile(state)) || {}; }   // META-DASH-ASYNC R1: snapshot-aware (the dash primes cacheFile)
 
 /**
  * The open incident of `harness`'s vendor ({ name, since } | null). o: { now, source (default statusSource(harness)), ttlMs,

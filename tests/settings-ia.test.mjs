@@ -69,6 +69,7 @@ function alternatives(s, cur) {
   if (s.key === 'reset') return ['2026-11-11T08:00 local'];
   if (s.key === 'calib_time_utc') return ['2026-11-08T10:00:00Z'];
   if (s.key === 'policy.checkin.merge_agent') return ['runner'];
+  if (s.key === 'policy.dod.critique_filter') return ['review-filter.txt'];
   return [];
 }
 

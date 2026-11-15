@@ -196,13 +196,13 @@ export function ruleLedger(rows, { project: p = {}, items = {}, hints = [], home
     const name = f => (f.startsWith('records:') ? f.slice(8) : path.posix.basename(f));
     if (homes.length > 1 && !e.policy) adv.push(advisory({ phase: 'P3', check: '5.0-5', key: 'rule-several-homes', severity: 'medium', surface: 'rule', path: homes[0].path, line: homes[0].line, subject: id,
       why: `the same rule in ${homes.length} places, home ${name(homes[0].path)}:${homes[0].line ?? '-'}: "${home0.text.slice(0, 120)}"`, source: SOURCE + ', hole 5',
-      items: homes.slice(1).map(h => ({ path: h.path, line: h.line ?? undefined, text: 'a copy' })), fix: { tier: 'card', action: `keep it in ${name(homes[0].path)}; replace each copy by a one-line pointer` } }));
+      items: homes.slice(1).map(h => ({ path: h.path, line: h.line ?? undefined, text: 'a copy' })), fix: { tier: 'card', action: `keep it in ${name(homes[0].path)}; replace each copy by a one-line pointer`, kind: 'drafts' } }));
     for (const l of ls) {
       if (e.kind === 'prose' && CLAIM_RE.test(l.raw) && l.line) adv.push(advisory({ phase: 'P3', check: '5.0-3', key: 'rule-drift-claim', severity: 'medium', surface: 'rule', path: l.path, line: l.line,
-        why: `says it is enforced (a hook / deny rule / gate) but no hook, deny rule, test or gate for it exists: "${l.text.slice(0, 120)}"`, source: SOURCE + ', hole 3', fix: { tier: 'card', action: 'add the enforcement it names, or drop the claim' } }));
+        why: `says it is enforced (a hook / deny rule / gate) but no hook, deny rule, test or gate for it exists: "${l.text.slice(0, 120)}"`, source: SOURCE + ', hole 3', fix: { tier: 'card', action: 'add the enforcement it names, or drop the claim', kind: 'call', ways: ['Add the enforcement', 'Drop the claim'] } }));
       const k = l.raw.match(MARK_RE)?.[1];
       if (k && ['speed_mode', 'iteration'].concat(Object.keys(gens).filter(x => x.startsWith('context.'))).includes(k) && gens[k] && clean(l.raw) !== clean(gens[k])) adv.push(advisory({ phase: 'P3', check: '5.0-3', key: 'rule-drift-policy', severity: 'medium', surface: 'policy line', path: l.path, line: l.line,
-        why: `the line says "${clean(l.raw).slice(0, 110)}" but the policy ${k} says otherwise`, source: SOURCE + ', hole 3; policy.mjs generatedLines', fix: { tier: 'card', action: 'Save the policy in Settings (it rewrites every marked line)', patch: `${gens[k]} <!-- policy:${k} -->` } }));
+        why: `the line says "${clean(l.raw).slice(0, 110)}" but the policy ${k} says otherwise`, source: SOURCE + ', hole 3; policy.mjs generatedLines', fix: { tier: 'card', action: 'Save the policy in Settings (it rewrites every marked line)', patch: `${gens[k]} <!-- policy:${k} -->`, kind: 'ready' } }));
     }
   }
   // hole 4: a rule line pointing at a path / command that is gone (the lint's hints, on rule lines only). "Gone" = git history says the
@@ -211,16 +211,16 @@ export function ruleLedger(rows, { project: p = {}, items = {}, hints = [], home
   for (const h of hints.filter(x => ['missing-path', 'unknown-command'].includes(x.kind))) {
     const l = at.get(`${lc(h.path)}:${h.line}`);
     if (l && h.kind === 'missing-path' && !(h.cands || []).some(tracked)) adv.push(advisory({ phase: 'P3', check: '5.0-4', key: 'rule-path-unknown', severity: 'low', surface: 'rule', path: l.path, line: l.line, subject: h.text,
-      why: `a rule names a path git never had (a runtime file or a typo): ${h.text}`, source: SOURCE + ', hole 4', fix: { tier: 'card', action: 'fix the typo; a file made only at run time is fine - say so in the line' } }));
+      why: `a rule names a path git never had (a runtime file or a typo): ${h.text}`, source: SOURCE + ', hole 4', fix: { tier: 'card', action: 'fix the typo; a file made only at run time is fine - say so in the line', kind: 'drafts' } }));
     else if (l) adv.push(advisory({ phase: 'P3', check: '5.0-4', key: 'rule-drift-path', severity: 'medium', surface: 'rule', path: l.path, line: l.line, subject: h.text,
-      why: `a rule points at code that is gone: ${h.text}`, source: SOURCE + ', hole 4', fix: { tier: 'card', action: 'point the rule at the code that replaced it, or retire the rule' } }));
+      why: `a rule points at code that is gone: ${h.text}`, source: SOURCE + ', hole 4', fix: { tier: 'card', action: 'point the rule at the code that replaced it, or retire the rule', kind: 'call', ways: ['Point it at the new code', 'Retire the rule'] } }));
   }
   // hole 2: a hook / deny rule / git hook no rule line explains
   const all = lines.map(l => l.raw.toLowerCase()).join('\n');
   for (const x of [...E.deny, ...E.githooks, ...E.hooks]) {
     const used = rules.some(r => r.enforcement.target === x.name && r.enforcement.path === x.path) || (x.kind !== 'deny' && all.includes(x.match));
     if (!used) adv.push(advisory({ phase: 'P3', check: '5.0-2', key: 'enforcement-unexplained', severity: 'low', surface: x.kind, path: x.path, subject: x.name,
-      why: `${x.kind === 'hook' ? x.name : x.name} has no rule line that says why`, source: SOURCE + ', hole 2', fix: { tier: 'card', action: 'add the rule it enforces (one line, its home file), or remove it' } }));
+      why: `${x.kind === 'hook' ? x.name : x.name} has no rule line that says why`, source: SOURCE + ', hole 2', fix: { tier: 'card', action: 'add the rule it enforces (one line, its home file), or remove it', kind: 'call', ways: ['Write the rule line', 'Remove it'] } }));
   }
   // hole 6: repeated corrections -> one card per cluster, ranked; a match with a rule line = written, and still broken
   const cards = [];
@@ -234,7 +234,7 @@ export function ruleLedger(rows, { project: p = {}, items = {}, hints = [], home
     const a = advisory({ phase: 'P3', check: '3.6', key: 'rule-repeated', severity: r ? 'medium' : 'low', surface: 'repeated correction', path: r?.home.path ?? null, line: r?.home.line ?? null,
       subject: [...ids].sort()[0], why: `said ${n} times (${ids.slice(0, 6).join(', ')}${n > 6 ? ', ...' : ''}); ${r ? `it is line ${r.home.line ?? '-'} of ${path.posix.basename(r.home.path)}, and still broken` : 'no rule line says it yet'}. Make it ${d.mech}?`,
       source: 'REPORT meta-practice s.3.6', items: c.members.map(m => ({ text: `${m.id}: ${clean(m.text).slice(0, 160)}` })),
-      fix: { tier: 'card', action: `approve = a directive asks the check-in for a task brief that adds ${d.mech}; Norn installs nothing`, patch: d.patch } });
+      fix: { tier: 'card', action: `approve = a directive asks the check-in for a task brief that adds ${d.mech}; Norn installs nothing`, patch: d.patch, kind: 'call', ways: ['Make it enforced', 'Leave it as prose'] } });
     if (r) { r.cluster = a.id; a.rule = r.id; }
     a.approve = approvalText(a);
     cards.push(a);
@@ -254,9 +254,18 @@ export function ruleLedger(rows, { project: p = {}, items = {}, hints = [], home
 }
 /** the open approval cards of the last remembered scan (the Inbox): a card is closed once a directive cites its id (its approval) */
 export function openCards(state, items = {}) {
-  const j = state ? readJson(path.join(state, 'instructions', 'rules.json')) : null;
+  return openOf(state ? readJson(rulesJson(state)) : null, items);
+}
+const rulesJson = state => path.join(state, 'instructions', 'rules.json');
+const openOf = (j, items) => {
   const cited = Object.values(items).filter(i => i.kind === 'directive').map(i => String(i.data?.text || '')).join('\n');
   return (j?.cards || []).filter(c => !cited.includes(c.id));
+};
+/** META-DASH-ASYNC R1: openCards on fs.promises (the dash Inbox / Home pick order; the CLI keeps openCards) */
+export async function openCardsAsync(state, items = {}) {
+  let j = null;
+  if (state) { try { j = JSON.parse(await fs.promises.readFile(rulesJson(state), 'utf8')); } catch { j = null; } }
+  return openOf(j, items);
 }
 /** the directive an approval writes: the check-in turns it into a task brief (Norn installs nothing itself) */
 export const approvalText = c => `Enforce (advisory ${c.id}, the repeat detector): ${c.why} Draft: ${String(c.fix?.patch || '').slice(0, 1500)} - write a task brief that adds it, red-first, and retire the prose line once it lands.`;

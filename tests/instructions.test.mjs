@@ -8,10 +8,13 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
+import { mark, slowStep, loopReport } from './helpers/loopwatch.mjs';
 import { loadProject } from '../engine/lib/config.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { estTokens, TOKEN_METHOD, discover, sessionsOn, dailyCost, lint, instructionsView, formatInstructions, knownCommands } from '../engine/lib/instructions.mjs';
 import { renderTab, loadTab, NORN_GROUPS, TABS } from '../engine/dash/ui.mjs';
+import { guardRows, guardView } from '../engine/lib/guardview.mjs';
+import { guardSummary, guardPart } from '../engine/dash/guardparts.mjs';
 import { TABS as SERVER_TABS, createDashboard } from '../engine/dash/server.mjs';
 import { ADAPTERS } from '../engine/lib/harness/index.mjs';
 
@@ -194,28 +197,35 @@ const VIEW = {
     parts: { worker: { run: 'RUN-640', method: 'request', total: 22269, parts: [{ key: 'base', label: 'harness base prompt + tool schemas', ours: false, tokens: 9106 }, { key: 'skills', label: 'skills list', ours: true, tokens: 4251 }, { key: 'plugins', label: 'plugins (their skills)', ours: true, tokens: 4946 }] } } },
   suggest: [{ id: 'S-1', class: 'stale', path: 'C:/r/CLAUDE.md', file: 'CLAUDE.md', anchor: 'p12345678', line: 3, head: 'Old rule', tokens: 600, loads_per_day: 3, saved_per_day: 1800, why: 'older than 30 d', action: 'delete it', patch: '--- a/C:/r/CLAUDE.md\n+++ b/C:/r/CLAUDE.md\n@@ -3,2 +2,0 @@\n-Old rule\n-\n', owner_file: false }],
 };
-test('the Instructions tab: in the Verdandi group next to Usage (META-TEND P1-VISUAL), a one-project tab; rows with load class, ~size, daily cost, drift and hints', async () => {
-  assert.ok(TABS.some(([k, l]) => k === 'instructions' && l === 'Instructions'));
-  assert.ok(SERVER_TABS.includes('instructions'));
+test('Context (was Instructions): in the Verdandi group next to Usage (META-TEND P1-VISUAL), a one-project tab; rows with load class, ~size, daily cost, drift and hints', async () => {
+  assert.ok(TABS.some(([k, l]) => k === 'context' && l === 'Context'));   // META-UX-BUILD S4 (owner DIR-65)
+  assert.ok(SERVER_TABS.includes('context'));
   const ver = NORN_GROUPS.find(g => g[0] === 'verdandi')[3];
-  assert.deepEqual(ver.slice(ver.indexOf('usage')), ['usage', 'tests', 'instructions', 'guard']);   // META-TEND P6: Guard (the open faults now = what is) after Instructions
-  assert.ok(renderTab('instructions', { one: true }).includes('Choose one project'));
-  const html = renderTab('instructions', { ...VIEW, file: null });
-  assert.match(html, /id="panel-instructions"/);
+  assert.deepEqual(ver.slice(ver.indexOf('usage')), ['usage', 'tests', 'context', 'slop']);   // META-TEND P6: Guard (the open faults now = what is) after Instructions
+  assert.ok(renderTab('context', { one: true }).includes('Choose one project'));
+  const html = ['role', 'file', 'growing', 'checkins', 'checks'].map(sub => renderTab('context', { ...VIEW, sub, limit: 1000 }, {})).join('');
+  assert.match(html, /id="panel-context"/);
   assert.match(html, /data-ins="a1"/); assert.match(html, /~1\.2k/); assert.match(html, /every session/); assert.match(html, /stale/);
-  assert.match(html, /engine\/missing\.mjs does not exist/); assert.match(html, /worker implementer \(claude\)/);
+  assert.match(html, /worker implementer \(claude\)/);
+  // META-UX-BUILD S5: the lint's hints are rows in Slop › To fix (moved, not gone); Context links there
+  assert.match(html, /data-go="slop" data-gosub="fix"/);
+  assert.ok(guardRows({ ins: VIEW }).some(r => r.id.startsWith('H-') && r.why === 'engine/missing.mjs does not exist'), 'the hint is a Slop row');
   assert.match(html, /chars \/ 4/);
-  const open = renderTab('instructions', { ...VIEW, file: { ...VIEW.rows[0], text: '# Title\n\nbody' } });
-  assert.match(open, /<h1 id="title">Title<\/h1>/); assert.match(open, /id="ins-body"/);
+  const open = renderTab('docs', { groups: [], files: 0, file: 'a1', doc: { ...VIEW.rows[0], text: '# Title\n\nbody' } });   // META-UX-BUILD S3: a file opens in the Docs reader
+  assert.match(open, /<h1 id="title">Title<\/h1>/); assert.match(open, /id="doc-body"/);
   // META-STANDING-CONTEXT R1: the measured header (turn 1 per role + the parts), the stale chip, the suggest list, an age badge per paragraph
-  assert.match(html, /id="ins-standing"/); assert.match(html, /check-ins/); assert.match(html, /~33\.0k/); assert.match(html, /skills list ~4\.3k/); assert.match(html, /\(fixed\)/);
-  assert.match(html, /2 stale/); assert.match(html, /id="ins-suggest"/); assert.match(html, /norn instructions apply S-1/); assert.match(html, /~1\.8k \/ day/);
-  const aged = renderTab('instructions', { ...VIEW, file: { ...VIEW.rows[0], text: '# Title\n\nold body', paras: [{ anchor: 'p00000001', line: 1, end: 1, age_days: 2, stale: false }, { anchor: 'p00000002', line: 3, end: 3, age_days: 70, stale: true, why: 'older than 30 d' }] } });
+  assert.match(html, /id="ctx-roles"/); assert.match(html, /check-ins/); assert.match(html, /~33\.0k/); assert.match(html, /skills list ~4\.3k/); assert.match(html, /\(fixed\)/);
+  assert.match(html, /2 stale/);
+  // META-UX-BUILD S5: the tightening candidates are Slop rows (moved, not gone): the row keeps its patch and its apply command
+  const sv = { ...guardView(guardRows({ ins: VIEW })), project: 'kestrel', pending: false, slop: true, voice: {}, errors: [] };
+  const slop = renderTab('slop', { ...guardSummary(sv), sub: 'fix', ...guardPart(sv, 'fix'), parts_loading: false }, {});
+  assert.match(slop, /id="slop-T-S-1"[^]*norn instructions apply S-1/); assert.match(slop, /~1800 tokens \/ day/, 'the tokens it saves a day'); assert.match(slop, /engine\/missing\.mjs does not exist/);
+  const aged = renderTab('docs', { groups: [], files: 0, file: 'a1', doc: { ...VIEW.rows[0], text: '# Title\n\nold body', paras: [{ anchor: 'p00000001', line: 1, end: 1, age_days: 2, stale: false }, { anchor: 'p00000002', line: 3, end: 3, age_days: 70, stale: true, why: 'older than 30 d' }] } });
   assert.match(aged, /70 d · STALE/); assert.match(aged, /id="ins-p00000002"/); assert.match(aged, /old body/);
   const calls = [];
-  const d = await loadTab('instructions', 'kestrel', async u => { calls.push(u); return u.startsWith('/api/instructions/') ? { ...VIEW.rows[0], text: 'x' } : VIEW; }, { ins: 'a1' });
-  assert.deepEqual(calls, ['/api/instructions?project=kestrel', '/api/instructions/a1?project=kestrel']);
-  assert.equal(d.file.text, 'x');
+  const d = await loadTab('context', 'kestrel', async u => { calls.push(u); return VIEW; }, { ins: 'a1' });
+  assert.deepEqual(calls, ['/api/instructions?project=kestrel'], 'META-UX-BUILD S3: the tab no longer opens a file (the Docs reader does)');
+  assert.equal(d.file, undefined);
 });
 
 test('the dashboard API: /api/instructions (the summary) + ?part=files lists the rows; /api/instructions/<id> opens only a listed file', async () => {
@@ -252,7 +262,7 @@ test('the MCP read: norn_status view instructions (the controller profile stays 
 let shotLib = null;
 try { shotLib = await import('../engine/lib/shot.mjs'); } catch { /* norn shot not on this branch */ }
 const browser = shotLib?.findBrowser?.() ?? null;
-test('the Instructions tab at 390 x 844 (phone): document scrollWidth == the viewport width, rows and hints shown; a row opens the file', {
+test('Context at 390 x 844 (phone): document scrollWidth == the viewport width, rows (Per file) and hints (the checks) shown; a row opens the file', {
   skip: !shotLib ? 'engine/lib/shot.mjs is not on this branch' : !browser ? 'no Edge / Chrome / Chromium installed' : false, timeout: 120000 }, async () => {
   const { launchBrowser, killTree, killProfileProcs, removeProfile } = shotLib;
   const f = fx();
@@ -276,22 +286,27 @@ test('the Instructions tab at 390 x 844 (phone): document scrollWidth == the vie
     const send = (method, params = {}) => new Promise(r => { const i = ++id; pend.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
     const ev = async expr => (await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }))?.result?.value;
     const wait = sel => ev(`new Promise(r => { const t0 = Date.now(); const go = () => document.querySelector(${JSON.stringify(sel)}) || Date.now() - t0 > 20000 ? setTimeout(() => r({
-      sw: document.documentElement.scrollWidth, w: innerWidth, rows: document.querySelectorAll('#ins-table tbody tr').length, hints: document.querySelectorAll('#ins-hints li').length,
-      body: !!document.querySelector('#ins-body'), sug: document.querySelectorAll('#ins-suggest li').length, badges: document.querySelectorAll('#ins-body .agebadge').length }), 300) : setTimeout(go, 100); go(); })`);
+      sw: document.documentElement.scrollWidth, w: innerWidth, rows: document.querySelectorAll('#ins-table tbody tr').length, hints: document.querySelectorAll('#slop-rows [id^="slop-H-"]').length,
+      body: !!document.querySelector('#doc-body'), sug: document.querySelectorAll('#slop-rows [id^="slop-T-"]').length, badges: document.querySelectorAll('#doc-body .agebadge').length }), 300) : setTimeout(go, 100); go(); })`);
     await send('Page.enable'); await send('Runtime.enable');
     for (const [wd, h, mobile] of [[390, 844, true], [1440, 900, false]]) {
       await send('Emulation.setDeviceMetricsOverride', { width: wd, height: h, deviceScaleFactor: mobile ? 2 : 1, mobile });
       await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
-      await send('Page.navigate', { url: `${url}/?project=kestrel&tab=instructions` });
-      const m = await wait('#ins-table');
-      assert.ok(m.rows >= 15 && m.hints >= 3 && m.sug >= 1, JSON.stringify(m));
-      if (mobile) assert.equal(m.sw, m.w, `no sideways scroll at ${wd} (${JSON.stringify(m)})`); else assert.ok(m.sw <= m.w, `no sideways scroll at ${wd} (a desktop scrollbar takes its width) ${JSON.stringify(m)}`);
-      assert.equal(m.w, wd);
+      for (const sub of ['slop', 'file']) {   // META-UX-BUILD S4: the files in Per file. S5: the hints and Tighten are rows in Slop › To fix
+        await send('Page.navigate', { url: sub === 'file' ? `${url}/?project=kestrel&tab=context&sub=file` : `${url}/?project=kestrel&tab=slop&sub=fix` });
+        // META-CI-WORKCLASS R4 (DEC-336): this private CDP wait gets pg.go's loop report (slow -> stderr; a miss -> the assertion)
+        const step = mark(), m = await wait(sub === 'file' ? '#ins-table' : '#slop-rows [id^="slop-T-"]'), slow = await slowStep(step, `wait(${sub} at ${wd})`);
+        if (!(sub === 'file' ? m.rows >= 15 : m.hints >= 3 && m.sug >= 1)) assert.fail(`${JSON.stringify(m)}
+${slow ?? await loopReport(step)}`);
+        if (mobile) assert.equal(m.sw, m.w, `no sideways scroll at ${wd} (${JSON.stringify(m)})`); else assert.ok(m.sw <= m.w, `no sideways scroll at ${wd} (a desktop scrollbar takes its width) ${JSON.stringify(m)}`);
+        assert.equal(m.w, wd);
+      }
     }
     await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
     await ev(`document.querySelector('#ins-table button[data-ins]:not([disabled])').click()`);
-    const o = await wait('#ins-body');
-    assert.ok(o.body && o.badges >= 1, 'the file opened rendered, an age badge per paragraph'); assert.equal(o.sw, o.w, `open file at 390 (${JSON.stringify(o)})`);
+    const step = mark(), o = await wait('#doc-body'), slow = await slowStep(step, 'wait(#doc-body)');   // META-UX-BUILD S3: the row opens the file in the Docs reader
+    if (!(o.body && o.badges >= 1)) assert.fail(`the file opened rendered, an age badge per paragraph: ${JSON.stringify(o)}
+${slow ?? await loopReport(step)}`); assert.equal(o.sw, o.w, `open file at 390 (${JSON.stringify(o)})`);
   } finally {
     try { ws?.close(); } catch { /* closed */ }
     await killTree(child); await killProfileProcs(profile); await removeProfile(profile); await app.close();

@@ -2,6 +2,7 @@
 // Command lines are byte-same with the pre-H2 runs.mjs switch (tests/golden/commands/matrix.json).
 import fs from 'node:fs';
 import path from 'node:path';
+import { readdirS, readdirA, existsS, existsA } from '../fsnap.mjs';
 import { prompt, modeOf, readText, EMPTY, jsonObject, detectExe, HEADLESS_CORE, feedFiles, logLine, oneLine, argSummary, located } from './common.mjs';
 // a read-only helper (norn delegate, design sec. 3): no project agent file, no shell / edit / subagent tools, no MCP servers
 export const CLAUDE_RO_NOPE = ['Bash', 'PowerShell', 'Edit', 'Write', 'NotebookEdit', 'Agent'];
@@ -23,8 +24,8 @@ function command(o) {
     '-p', o.promptText || prompt(o), ...(o.agent && !ro ? ['--agent', o.agent] : []),
     ...tools, '--model', o.model, '--effort', o.effort, ...(o.resumeSid && !o.fork_of ? ['--resume', o.resumeSid] : ['--session-id', o.session_id]), ...(o.fork_of ? ['--resume', o.fork_of, '--fork-session'] : []),
     '--permission-mode', 'bypassPermissions', ...(remote ? ['--remote-control', `${o.project || 'norn'}-${o.lane}`] : []), '--output-format', 'json',
-    ...(o.headless ? ['--append-system-prompt', o.headless] : []), ...[o.worktree, ...(o.addDirs || [])].flatMap(d => ['--add-dir', d]),
-    ...(o.mail_hook ? ['--settings', JSON.stringify(mailSettings(o.mail_hook))] : []),
+    ...(o.headless ? ['--append-system-prompt', o.headless] : []), ...[o.worktree, ...(o.addDirs || []), ...(o.scope && o.notes ? [path.dirname(path.resolve(o.notes))] : [])].flatMap(d => ['--add-dir', d]),
+    ...(o.mail_hook || o.scope ? ['--settings', JSON.stringify(runSettings(o))] : []),
     ...extra] };
 }
 // the profile's flags after a command's own: --strict-mcp-config once, one --disallowedTools list (merged into the command's own)
@@ -50,6 +51,9 @@ export function profileArgs(p) {
 }
 // META-GTP-MAIL delivery (a): the launcher's PostToolUse hook (--settings JSON; merged with the user's settings) - its stdout
 // (hookSpecificOutput.additionalContext) reaches the model at the next tool round; no mail = no output
+// META-DOD 2: a guarded run's scope part (scope.mjs scopeSettings: deny rules, the write block, the PreToolUse hook) rides the same JSON;
+// its NOTES folder is a working directory (the write block would refuse the NOTES otherwise)
+const runSettings = o => { const m = o.mail_hook ? mailSettings(o.mail_hook) : { hooks: {} }; return o.scope ? { ...o.scope, hooks: { ...o.scope.hooks, ...m.hooks } } : m; };
 export const mailSettings = command => ({ hooks: { PostToolUse: [{ matcher: '*', hooks: [{ type: 'command', command, timeout: 30 }] }] } });
 
 /** doctor --probe: the CLI path without --remote-control, the agent kept (proves it resolves), no shell / edit tools or MCP, 1 turn. */
@@ -88,10 +92,15 @@ function endData({ final }) {
 /** projects_dir/<any>/<sid>.jsonl (D8) or null. */
 export function findTranscript(projectsDir, sid) {
   if (!projectsDir || !sid) return null;
-  let ds = [];
-  try { ds = fs.readdirSync(projectsDir); } catch { return null; }
-  for (const d of ds) { const f = path.join(projectsDir, d, sid + '.jsonl'); if (fs.existsSync(f)) return f; }
+  for (const d of readdirS(projectsDir)) { const f = path.join(projectsDir, d.name, sid + '.jsonl'); if (existsS(f)) return f; }   // META-DASH-ASYNC R1: snapshot-aware
   return null;
+}
+/** findTranscript on fs.promises (primes the snapshot the sync form then reads) */
+export async function findTranscriptA(projectsDir, sid) {
+  if (!projectsDir || !sid) return null;
+  const fs_ = (await readdirA(projectsDir)).map(d => path.join(projectsDir, d.name, sid + '.jsonl'));
+  const has = await Promise.all(fs_.map(existsA));
+  return fs_.find((_, i) => has[i]) ?? null;
 }
 
 export const usageCtx = u => (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
@@ -182,10 +191,10 @@ const CHAT_TOOL_TIMEOUT_MS = 35 * 60000;
  * Live feed: the run's transcript <projects_dir>/<proj>/<session_id>.jsonl, incremental by byte offset; a run without one
  * (a check-in, a provider that writes none) tails its log instead. env: { projectsDir, memo }.
  */
-function feed(run, cursor, env = {}) {
+async function feed(run, cursor, env = {}) {   // META-DASH-ASYNC R1: every lookup + read on fs.promises (the dash polls it)
   const d = run.data || {}, end = run.end || {};
-  const file = end.transcript || d.transcript || located(env, 'transcript', () => findTranscript(env.projectsDir, d.session_id));
-  if (file && fs.existsSync(file)) return feedFiles([['transcript', file]], cursor, transcriptEvents, env);
+  const file = end.transcript || d.transcript || await located(env, 'transcript', () => findTranscriptA(env.projectsDir, d.session_id));
+  if (file && await existsA(file)) return feedFiles([['transcript', file]], cursor, transcriptEvents, env);
   return feedFiles([['log', d.log]], cursor, logLine, env);
 }
 

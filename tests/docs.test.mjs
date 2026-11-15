@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { renderMarkdown } from '../engine/dash/docs.mjs';
-import { renderTab, loadTab } from '../engine/dash/ui.mjs';
+import { renderTab, loadTab, loadParts } from '../engine/dash/ui.mjs';
 import { fixture, ENGINE } from './helpers/dash-fixture.mjs';
 
 const MD = `# Door plan
@@ -82,7 +82,8 @@ test('vendored renderer files are pinned (VENDOR.md sha256) and served locally; 
 test('Docs tab: rendered body + contents sidebar from the project doc', async () => {
   const f = await fixture();
   try {
-    const d = await loadTab('docs', 'kestrel', async r => (await f.get(r)).data);
+    const get = async r => (await f.get(r)).data, t = await loadTab('docs', 'kestrel', get, { doc: 'doc-0' });   // META-UX-BUILD S3: the file is its own part
+    const d = { ...t, ...(await loadParts('docs', 'kestrel', t, get)), parts_loading: false };
     const html = renderTab('docs', d, { project: 'kestrel' });
     assert.match(html, /id="doc-body"/); assert.match(html, /<h1 id="plan"/); assert.match(html, /<li>step one<\/li>/);
     assert.match(html, /id="doc-toc"[\s\S]*href="#plan"/);

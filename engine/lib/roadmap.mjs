@@ -9,7 +9,7 @@ import { readEvents, recordsFile, loadState } from './records.mjs';
 import { deliverablesView, deliverableConfig, lastInstall } from './deliverables.mjs';
 import { scanRepo, makeGit } from './dlvgit.mjs';
 import { loadEpics, epicMembers } from './epics.mjs';
-import { writeGuarded } from './views.mjs';
+import { writeGuarded, writeGuardedAsync } from './views.mjs';
 
 export class RoadmapError extends Error {}
 
@@ -437,3 +437,6 @@ export const roadmapViewPath = (stateDir, project = {}) => path.resolve(project?
 /** write the view under the hand-edit guard -> written | unchanged | refused */
 export const writeRoadmapView = (stateDir, tree, file = roadmapViewPath(stateDir)) =>
   writeGuarded(path.join(stateDir, 'views', 'roadmap-hashes.json'), file, renderRoadmapView(tree));
+/** META-DASH-ASYNC R1: the dash server's form (fs.promises); the CLI and adopt keep writeRoadmapView */
+export const writeRoadmapViewAsync = (stateDir, tree, file = roadmapViewPath(stateDir)) =>
+  writeGuardedAsync(path.join(stateDir, 'views', 'roadmap-hashes.json'), file, renderRoadmapView(tree));

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // META-GTP-CI 1: run the node suite and fail only on a red NOT listed in tests/KNOWN-REDS.txt (GT-PARITY-PLAN 2.11).
-// usage: node engine/bin/ci-suite.mjs [--known F] [--concurrency N] [--measure OUT [--coverage]] [glob ...]
-//   (default: tests/KNOWN-REDS.txt, 3, "tests/*.test.mjs"). META-TEND TESTS: --measure writes OUT (JSON): per file its wall ms and
+// usage: node engine/bin/ci-suite.mjs [--known F] [--concurrency N] [--file-cap S] [--measure OUT [--coverage]] [--cpu-prof DIR] [glob ...]
+//   (default: tests/KNOWN-REDS.txt, 3, FILE_CAP_S, "tests/*.test.mjs"). META-TEND TESTS: --measure writes OUT (JSON): per file its wall ms and
 //   per test its ms; --coverage adds Node's built-in line coverage of engine/ per test file (engine/lib/testlean.mjs reads it).
 // The suite is one `node --test` per matched file, N at a time, plus a reporter that writes the reds; smoke.test.mjs
 // then runs alone (DEC-78). CI and the merge lanes call this script: it is the one home of the suite command.
-// exit 0 = no new red, 1 = a new red or a file that left a process alive (named on stdout), 2 = usage / the suite produced no result.
+// exit 0 = no new red, 1 = a new red, a file that left a process alive or one past the wall cap (named on stdout), 2 = usage / the suite produced no result.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -20,16 +20,22 @@ const LIB = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'lib')
 const REPORTER = pathToFileURL(path.join(LIB, 'ci-reporter.mjs')).href, MEASURER = pathToFileURL(path.join(LIB, 'measure-reporter.mjs')).href;
 const fwd = s => s.split('\\').join('/');
 const argv = process.argv.slice(2), globs = [];
-let known = 'tests/KNOWN-REDS.txt', conc = '3', measure = null, coverage = false;
+// CI-HANG-B7F6833: the per-file wall cap - a file that has not exited by then is a hang: its process tree is killed, its output so
+// far printed and the suite fails naming it (a watchdog that turns a hang into a named red, well under the CI job's 60 min)
+const FILE_CAP_S = 600;
+let known = 'tests/KNOWN-REDS.txt', conc = '3', measure = null, coverage = false, capS = FILE_CAP_S, cpuProf = null;
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === '--known') known = argv[++i];
   else if (argv[i] === '--measure') measure = argv[++i];
   else if (argv[i] === '--coverage') coverage = true;
   else if (argv[i] === '--concurrency') conc = argv[++i];
+  else if (argv[i] === '--file-cap') capS = Number(argv[++i]);
+  else if (argv[i] === '--cpu-prof') cpuProf = argv[++i];
   else if (argv[i].startsWith('--')) { console.error(`ci-suite: unknown flag ${argv[i]}`); process.exit(2); }
   else globs.push(argv[i]);
 }
 if (!globs.length) globs.push('tests/*.test.mjs');
+if (!(capS > 0)) { console.error('ci-suite: --file-cap needs a number of seconds > 0'); process.exit(2); }
 if (coverage && !measure) { console.error('ci-suite: --coverage needs --measure OUT'); process.exit(2); }
 
 let list;
@@ -47,26 +53,39 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ci-suite-'));
 // `node --test` with its own temp dir (TEMP / TMP / TMPDIR), so every temp state it makes - and every process it starts there -
 // names that dir. When the file is done, a process whose command line still names it is that file's leak: the file fails, naming
 // the pids (never a listed red: KNOWN-REDS cannot hold it), and the suite kills them. 11-13: 22 supervisor + fake-executor pairs.
+// META-CI-WORKCLASS R4 (DEC-336): --cpu-prof DIR - a browser test file (it imports shot.mjs or helpers/cdp.mjs) runs with
+// NODE_OPTIONS --cpu-prof into DIR/<file>, so its node processes leave a sampling profile that names a sync call blocking the loop
+// by its JS caller (tests/helpers/profgap.mjs reads them; the Windows CI job)
+const profEnv = f => !cpuProf || !/shot\.mjs|helpers\/cdp\.mjs/.test(fs.readFileSync(f, 'utf8')) ? {}
+  : { NODE_OPTIONS: `${childEnv.NODE_OPTIONS ?? ''} --cpu-prof --cpu-prof-dir="${fwd(path.resolve(cpuProf, path.basename(f, '.mjs')))}"`.trim() };
 const runFile = (name, f, i) => new Promise(resolve => {
   const ft = path.join(tmp, `${name}-${i}`), out = path.join(tmp, `${name}-${i}.jsonl`), mout = path.join(tmp, `${name}-${i}.measure.jsonl`);
   fs.mkdirSync(ft);
   const extra = measure ? [`--test-reporter=${MEASURER}`, `--test-reporter-destination=${mout}`,
     ...(coverage ? ['--experimental-test-coverage', '--test-coverage-include=engine/**', '--test-coverage-exclude=engine/dash/vendor/**'] : [])] : [];
   const t0 = Date.now();
+  console.log(`ci-suite: start ${f}`);
   const child = spawn(process.execPath, ['--test', '--test-reporter=spec', '--test-reporter-destination=stdout',
-    `--test-reporter=${REPORTER}`, `--test-reporter-destination=${out}`, ...extra, f], { env: { ...childEnv, TEMP: ft, TMP: ft, TMPDIR: ft } });
+    `--test-reporter=${REPORTER}`, `--test-reporter-destination=${out}`, ...extra, f], { env: { ...childEnv, ...profEnv(f), TEMP: ft, TMP: ft, TMPDIR: ft } });
   const buf = [];
   child.stdout.on('data', d => buf.push(d)); child.stderr.on('data', d => buf.push(d));
-  child.on('close', (status, signal) => {
+  let hung = false, ended = false;
+  const cap = setTimeout(() => { hung = true; killTree(child.pid); }, capS * 1000);
+  // a killed file ends at its exit even if a stray grandchild still holds its pipes
+  child.on('exit', () => { if (hung) setTimeout(() => end(null, 'killed'), 5000).unref(); });
+  const end = (status, signal) => {
+    if (ended) return; ended = true; clearTimeout(cap);
     process.stdout.write(Buffer.concat(buf));
+    const hang = hung ? { file: f, name: `no exit within the ${capS} s per-file cap (killed)` } : null;
     const fails = fs.existsSync(out) ? fs.readFileSync(out, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l))
-      .map(x => ({ file: x.file ? fwd(path.relative(process.cwd(), x.file)) : f, name: x.name })) : null;
+      .map(x => ({ file: x.file ? fwd(path.relative(process.cwd(), x.file)) : f, name: x.name })) : hung ? [] : null;
     const left = procsNaming([ft]);
     for (const p of left) killTree(p.pid);
     const leak = left.length ? { file: f, name: `left ${left.length} process(es) alive after the file: ${left.map(p => `pid ${p.pid} (${p.cmd})`).join('; ')}` } : null;
     const ms = Date.now() - t0, lines = measure && fs.existsSync(mout) ? fs.readFileSync(mout, 'utf8') : '';
-    resolve({ f, status, signal, fails, leak, ...(measure ? { measured: measureFile(f, ms, lines, process.cwd()) } : {}) });
-  });
+    resolve({ f, status, signal, fails, leak, hang, ...(measure ? { measured: measureFile(f, ms, lines, process.cwd()) } : {}) });
+  };
+  child.on('close', end);
 });
 const phase = async (name, c, files) => {
   console.log(`ci-suite: ${name} phase: ${name === 'serial' ? files.join(' ') : `${files.length} file(s)`}, concurrency ${c}`);
@@ -77,8 +96,8 @@ const phase = async (name, c, files) => {
   console.log(`ci-suite: ${name} phase took ${((Date.now() - t0) / 1000).toFixed(2)} s (exit ${status})`);
   const none = res.find(r => !r.fails);
   if (none) { console.error(`ci-suite: ${none.f} wrote no result (exit ${none.status}, signal ${none.signal})`); process.exit(2); }
-  const quiet = res.filter(r => r.status !== 0 && !r.fails.length).map(r => r.f);
-  return { name, status, quiet, fails: res.flatMap(r => r.fails), leaks: res.map(r => r.leak).filter(Boolean), ms: Date.now() - t0,
+  const quiet = res.filter(r => r.status !== 0 && !r.fails.length && !r.hang).map(r => r.f);
+  return { name, status, quiet, fails: res.flatMap(r => r.fails), leaks: res.map(r => r.leak).filter(Boolean), hangs: res.map(r => r.hang).filter(Boolean), ms: Date.now() - t0,
     measured: res.map(r => r.measured).filter(Boolean) };
 };
 const runs = [];
@@ -95,6 +114,8 @@ for (const k of j.fixed) console.log(`listed red now passes (remove it): ${k.fil
 for (const f of j.fresh) console.log(`NEW RED: ${f.file} :: ${f.name}`);
 const leaks = runs.flatMap(r => r.leaks);
 for (const f of leaks) console.log(`LEAK RED: ${f.file} :: ${f.name}`);
-console.log(`ci-suite: ${j.listed.length} listed red(s), ${j.fresh.length} new, ${leaks.length} leak(s)`);
+const hangs = runs.flatMap(r => r.hangs);
+for (const f of hangs) console.log(`HANG RED: ${f.file} :: ${f.name}`);
+console.log(`ci-suite: ${j.listed.length} listed red(s), ${j.fresh.length} new, ${leaks.length} leak(s), ${hangs.length} hang(s)`);
 for (const r of runs) for (const f of r.quiet) { console.error(`ci-suite: ${f} (${r.name} phase) exited non-zero with no red reported`); process.exit(1); }
-process.exit(j.ok && !leaks.length ? 0 : 1);
+process.exit(j.ok && !leaks.length && !hangs.length ? 0 : 1);

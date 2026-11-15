@@ -8,13 +8,18 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { record, readEvents, recordsFile, fold, loadState, withLock, nodePrefix } from './records.mjs';
-import { loadRoadmap, world, goneLinks, planEvents, checkLinks, buildTree, writeRoadmapView, roadmapViewPath } from './roadmap.mjs';
-import { newLane } from './lanenew.mjs';
-import { writeBudget, withDefaults } from './policy.mjs';
+import { record, recordAsync, readEvents, recordsFile, fold, loadState, withLock, withLockAsync, nodePrefix } from './records.mjs';
+import { loadRoadmap, world, goneLinks, planEvents, checkLinks, buildTree, writeRoadmapView, writeRoadmapViewAsync, roadmapViewPath } from './roadmap.mjs';
+import { laneSteps, LANE_IO } from './lanenew.mjs';
+import { runSteps, runStepsAsync } from './steps.mjs';
+import { writeBudget, writeBudgetAsync, withDefaults } from './policy.mjs';
 import { startRun } from './runs.mjs';
 
 export class AdoptError extends Error { constructor(msg, code = 2) { super(msg); this.code = code; } }
+// META-DASH-ASYNC R1 (option a): the review's writes (decide / close / rule / apply) are yielded effects (lib/steps.mjs): the CLI and the
+// MCP run them on the sync io, the dash server on fs.promises (+ the lane's git as an async child). Their reads stay sync (named).
+const SYNC_IO = { ...LANE_IO.sync, write: (f, t) => fs.writeFileSync(f, t), roadmapView: (s, tree, f) => writeRoadmapView(s, tree, f), budget: writeBudget };
+const ASYNC_IO = { ...LANE_IO.async, write: (f, t) => fs.promises.writeFile(f, t), roadmapView: (s, tree, f) => writeRoadmapViewAsync(s, tree, f), budget: writeBudgetAsync };
 
 const fwd = p => String(p).replace(/\\/g, '/');
 const sh = (cwd, args) => {
@@ -351,15 +356,17 @@ const RULES_HEAD = '# Project rules\n\nEvery worker reads this file whole. Draft
  * META-ADOPT A3 (SPEC sec. 5, "rules empty: Write one rule"): one owner rule appended to RULES.md beside project.json (created with the
  * same head as an applied rules part) + rules_read_whole. Never the repo. -> { file, added (false = the rule is there already) }
  */
-export function addRule(project, text) {
+// META-DASH-ASYNC R1: the dash server is the only caller - the writes on fs.promises (no sync form: no CLI calls it)
+export const addRuleAsync = (project, text) => runStepsAsync(ruleSteps(project, text), ASYNC_IO);
+function* ruleSteps(project, text) {
   const t = String(text ?? '').trim();
   if (!t || t.length > 400 || /[\r\n]/.test(t)) throw new AdoptError('a rule is one line of 1-400 characters');
   const rf = rulesPath(project);
   let had = null; try { had = fs.readFileSync(rf, 'utf8'); } catch { /* none yet */ }
   const added = !had?.split(/\r?\n/).includes(`- ${t}`);
-  if (added) { fs.mkdirSync(path.dirname(rf), { recursive: true }); fs.writeFileSync(rf, (had ?? RULES_HEAD).replace(/\n*$/, '\n') + `- ${t}\n`); }
+  if (added) { yield ['mkdir', path.dirname(rf)]; yield ['write', rf, (had ?? RULES_HEAD).replace(/\n*$/, '\n') + `- ${t}\n`]; }
   const raw = JSON.parse(fs.readFileSync(project.file, 'utf8').replace(/^\uFEFF/, '')), ref = '${project_dir}/' + RULES_FILE;
-  if (!(raw.rules_read_whole || []).includes(ref)) { raw.rules_read_whole = [...(raw.rules_read_whole || []), ref]; fs.writeFileSync(project.file, JSON.stringify(raw, null, 1) + '\n'); }
+  if (!(raw.rules_read_whole || []).includes(ref)) { raw.rules_read_whole = [...(raw.rules_read_whole || []), ref]; yield ['write', project.file, JSON.stringify(raw, null, 1) + '\n']; }
   return { file: fwd(rf), added };
 }
 const rulesPath = project => path.join(project.project_dir || path.dirname(project.file), RULES_FILE);
@@ -516,7 +523,10 @@ const openOf = stateDir => {
  * the original (its sha, its source), so a re-draft still recognises the line.
  * extra: more event data from a front end (META-ADOPT A4 MCP: owner_words verbatim, via)
  */
-export function adoptDecide(stateDir, { part, verdict, off = [], on = [], pick, edits = {}, by, extra = {} } = {}) {
+export const adoptDecide = (stateDir, o) => runSteps(decideSteps(stateDir, o), SYNC_IO);
+/** adoptDecide for the dash server (its record on fs.promises) */
+export const adoptDecideAsync = (stateDir, o) => runStepsAsync(decideSteps(stateDir, o), ASYNC_IO);
+function* decideSteps(stateDir, { part, verdict, off = [], on = [], pick, edits = {}, by, extra = {} } = {}) {
   const p = openOf(stateDir), x = p.parts.find(y => y.id === part);
   if (!x) throw new AdoptError(`${p.id} has no part ${part} (${p.parts.map(y => y.id).join(' | ')})`);
   if (edits === null || typeof edits !== 'object' || Array.isArray(edits)) throw new AdoptError('edits: an object { <line id>: <text> }');
@@ -536,13 +546,15 @@ export function adoptDecide(stateDir, { part, verdict, off = [], on = [], pick, 
   if (verdict === 'approve' && x.pick && onLines(x, off, on).length !== 1)
     throw new AdoptError(`${part}: pick one line (--pick ${x.lines.map(l => l.id).join(' | ')}); it is never decided for you`);
   const ed = Object.fromEntries(Object.entries(edits).map(([k, t]) => [k, t.trim()]));
-  record(stateDir, { kind: 'proposal', ev: 'decide', id: p.id, by, data: { ...extra, part, verdict, off, ...(on.length ? { on } : {}), ...(Object.keys(ed).length ? { edits: ed } : {}), sha: x.sha } });
+  yield ['record', stateDir, { kind: 'proposal', ev: 'decide', id: p.id, by, data: { ...extra, part, verdict, off, ...(on.length ? { on } : {}), ...(Object.keys(ed).length ? { edits: ed } : {}), sha: x.sha } }];
   return { id: p.id, part, verdict };
 }
 
-export function adoptClose(stateDir, { why, by } = {}) {
+export const adoptClose = (stateDir, o) => runSteps(closeSteps(stateDir, o), SYNC_IO);
+export const adoptCloseAsync = (stateDir, o) => runStepsAsync(closeSteps(stateDir, o), ASYNC_IO);
+function* closeSteps(stateDir, { why, by } = {}) {
   const p = openOf(stateDir);
-  record(stateDir, { kind: 'proposal', ev: 'close', id: p.id, by, data: { why } });
+  yield ['record', stateDir, { kind: 'proposal', ev: 'close', id: p.id, by, data: { why } }];
   return { id: p.id };
 }
 
@@ -554,12 +566,17 @@ export function adoptClose(stateDir, { why, by } = {}) {
  * -> { id, lines (what was / would be written), complete }. dryRun writes nothing.
  */
 export async function adoptApply(stateDir, { project, by, dryRun = false, metaRoot, extra = {} } = {}) {
-  let profiles = null;
-  try { profiles = await import('./profiles.mjs'); } catch { /* the profile data is not installed (F-6) */ }
-  return withLock(path.join(stateDir, 'adopt-apply.lock'), () => applyLocked(stateDir, { project, by, dryRun, metaRoot, profiles, extra }));
+  const profiles = await profileData();
+  return withLock(path.join(stateDir, 'adopt-apply.lock'), () => runSteps(applySteps(stateDir, { project, by, dryRun, metaRoot, profiles, extra }), SYNC_IO));
 }
+/** adoptApply for the dash server: the same steps under the same lock file, the writes on fs.promises, the lane's git as an async child */
+export async function adoptApplyAsync(stateDir, { project, by, dryRun = false, metaRoot, extra = {} } = {}) {
+  const profiles = await profileData();
+  return withLockAsync(path.join(stateDir, 'adopt-apply.lock'), () => runStepsAsync(applySteps(stateDir, { project, by, dryRun, metaRoot, profiles, extra }), ASYNC_IO));
+}
+async function profileData() { try { return await import('./profiles.mjs'); } catch { return null; /* the profile data is not installed (F-6) */ } }
 
-function applyLocked(stateDir, { project, by, dryRun, metaRoot, profiles, extra = {} }) {
+function* applySteps(stateDir, { project, by, dryRun, metaRoot, profiles, extra = {} }) {
   const p = openOf(stateDir), lines = [], done = [], wrote = {};
   const todo = p.parts.filter(x => x.status === 'approved' && !x.applied);
   const P = id => todo.find(x => x.id === id);
@@ -580,10 +597,10 @@ function applyLocked(stateDir, { project, by, dryRun, metaRoot, profiles, extra 
     checkLinks(stateDir, links, { project });
     say('roadmap', `${counts.item} item(s) in ${themes.length} theme(s) (${counts.theme} new) -> roadmap.jsonl`);
     if (!dryRun) {
-      const out = record(stateDir, events, { views: false });
+      const out = yield ['record', stateDir, events, { views: false }];
       let k = 0;
       for (const t of themes) { if (!t.id) k++; for (const it of t.items) rm[it.line] = out[k++].id; }
-      try { writeRoadmapView(stateDir, buildTree({ stateDir, project }), roadmapViewPath(stateDir, project)); } catch { /* the next norn road writes it */ }
+      try { yield ['roadmapView', stateDir, buildTree({ stateDir, project }), roadmapViewPath(stateDir, project)]; } catch { /* the next norn road writes it */ }
     }
   }
   if (P('roadmap')) done.push('roadmap');
@@ -602,13 +619,13 @@ function applyLocked(stateDir, { project, by, dryRun, metaRoot, profiles, extra 
     if (block.length) text += `\n## Commands\n${block.join('\n')}\n`;
     if (text !== had) {
       say('rules', `${body.length} rule(s)${block.length ? ` + ${block.length} command(s)` : ''} -> ${fwd(rf)}`);
-      if (!dryRun) { fs.mkdirSync(path.dirname(rf), { recursive: true }); fs.writeFileSync(rf, text); }
+      if (!dryRun) { yield ['mkdir', path.dirname(rf)]; yield ['write', rf, text]; }
     }
     const ref = '${project_dir}/' + RULES_FILE;
     if (!(raw.rules_read_whole || []).includes(ref)) { raw.rules_read_whole = [...(raw.rules_read_whole || []), ref]; pj = true; say('rules', `rules_read_whole += ${ref} -> project.json`); }
     done.push('rules');
   }
-  if (pj && !dryRun) fs.writeFileSync(project.file, JSON.stringify(raw, null, 1) + '\n');
+  if (pj && !dryRun) yield ['write', project.file, JSON.stringify(raw, null, 1) + '\n'];
   if (P('instructions')) { for (const l of sel(P('instructions'))) say('instructions', `${l.text} (nothing written)`); done.push('instructions'); }
   // profile: the pick is a decision record; the caps go through the profile data when it is installed
   const prof = sel(P('profile'))[0];
@@ -619,9 +636,9 @@ function applyLocked(stateDir, { project, by, dryRun, metaRoot, profiles, extra 
       let cur = {};
       try { cur = JSON.parse(fs.readFileSync(bf, 'utf8').replace(/^﻿/, '')); } catch { /* none yet */ }
       say('profile', `caps of ${prof.id} -> ${fwd(bf)} (the scheduler is never installed by apply)`);
-      if (!dryRun) { fs.mkdirSync(path.dirname(bf), { recursive: true }); writeBudget(bf, cur, { ...cur, ...profiles.profileBudget(profiles.getProfile(prof.id)) }); }
+      if (!dryRun) { yield ['mkdir', path.dirname(bf)]; yield ['budget', bf, cur, { ...cur, ...profiles.profileBudget(profiles.getProfile(prof.id)) }]; }
     } else say('profile', 'caps not written: the profile data is not installed (the pick is recorded; the starter caps stay in force)');
-    if (!dryRun) record(stateDir, { kind: 'decision', ev: 'create', by, data: { lane: 'adopt', question: `${p.id} caps profile`, choice: prof.id, why: `picked in ${p.id} (norn adopt)` } }, project.views ? { views: project.views } : {});
+    if (!dryRun) yield ['record', stateDir, { kind: 'decision', ev: 'create', by, data: { lane: 'adopt', question: `${p.id} caps profile`, choice: prof.id, why: `picked in ${p.id} (norn adopt)` } }, project.views ? { views: project.views } : {}];
   }
   if (P('profile')) done.push('profile');
   // the first task: a lane (worktree, the owner's directive, its first brief), linked from its roadmap item
@@ -630,16 +647,16 @@ function applyLocked(stateDir, { project, by, dryRun, metaRoot, profiles, extra 
     const name = laneNameOf(first.text);
     say('first', `lane ${name}: "${first.text}" (worktree + branch + directive + brief)`);
     if (!dryRun) {
-      newLane(project, { name, task: `${first.text}\n\nSource: ${first.source} (drafted in ${p.id}).`, by });
+      yield* laneSteps(project, { name, task: `${first.text}\n\nSource: ${first.source} (drafted in ${p.id}).`, by });
       const line = p.parts.find(x => x.id === 'roadmap')?.lines.find(l => l.id === first.item);
       const rmId = line && (rm[line.id] || itemMatch(Object.values(loadRoadmap(stateDir).items), line)?.id);
-      if (rmId) record(stateDir, { kind: 'item', ev: 'link', id: rmId, by, data: { links: ['lane:' + name] } }, { views: false });
+      if (rmId) yield ['record', stateDir, { kind: 'item', ev: 'link', id: rmId, by, data: { links: ['lane:' + name] } }, { views: false }];
     }
   }
   if (P('first')) done.push('first');
   const complete = p.parts.every(x => x.status !== 'to review');
   if (!dryRun && (done.length || complete))
-    record(stateDir, { kind: 'proposal', ev: 'apply', id: p.id, by, data: { ...extra, parts: done.map(id => ({ part: id, sha: P(id).sha, wrote: wrote[id] || [] })), complete } });
+    yield ['record', stateDir, { kind: 'proposal', ev: 'apply', id: p.id, by, data: { ...extra, parts: done.map(id => ({ part: id, sha: P(id).sha, wrote: wrote[id] || [] })), complete } }];
   if (!lines.length) lines.push('nothing new to write');
   return { id: p.id, lines, complete, dryRun };
 }

@@ -165,7 +165,7 @@ test('dash: the Inbox holds one card per open hunk; accept = a decision + the di
     const d = await f.post('/api/audit', { project: 'kestrel', id: cards[1].id, verdict: 'decline' });
     assert.equal(d.data.directive, null);
     const v = auditsView({ ...f.pa, name: 'kestrel' }, loadState(st).items);
-    const html = renderTab('instructions', { rows: [], audits: v, measured: { roles: [], trend: { days: 30, rows: [{ day: '2026-11-13', key: 'worker', median_turn1: 30000 }, { day: '2026-11-14', key: 'worker', median_turn1: 32000 }, { day: '2026-11-14', key: 'checkin', median_turn1: 61000 }] } } }, {});
+    const html = ['checks', 'growing'].map(sub => renderTab('context', { sub, rows: [], audits: v, measured: { roles: [], trend: { days: 30, rows: [{ day: '2026-11-13', key: 'worker', median_turn1: 30000 }, { day: '2026-11-14', key: 'worker', median_turn1: 32000 }, { day: '2026-11-14', key: 'checkin', median_turn1: 61000 }] } } }, {})).join('');   // META-UX-BUILD S4: the audits on the checks page, the trend in Is it growing?
     assert.match(html, /id="ins-audits"[\s\S]*triggers stay manual[\s\S]*id="ins-audit-runs"[\s\S]*RUN-\d+[\s\S]*done[\s\S]*<td class="num">2<\/td><td class="num">1<\/td><td class="num">1<\/td><td class="num">0<\/td>[\s\S]*0 of 5 runs watched/);
     assert.match(html, /id="ins-trend"[\s\S]*<polyline points="[^"]+"\/>[\s\S]*workers <b>~32\.0k<\/b>[\s\S]*check-ins <b>~61\.0k<\/b>/);
   } finally { await f.done(); }
@@ -175,7 +175,7 @@ test('the per-file strip: one segment per paragraph, width by tokens, coloured b
   const { renderTab } = await import('../engine/dash/ui.mjs');
   const file = { id: 'r1', path: 'C:/r/AGENTS.md', name: 'AGENTS.md', text: 'a\n\nb\n', tokens: 30, lines: 3, read_days: 30, evidence: { reads: 3, last: '2026-11-13T10:00:00.000Z', ranges: [], cites: [{ id: 'DEC-7', line: 3 }] },
     paras: [{ anchor: 'p1', line: 1, end: 1, tokens: 10, age_days: 3, read: 2, cited: [] }, { anchor: 'p2', line: 3, end: 3, tokens: 20, age_days: 45, stale: true, read: 0, cited: ['DEC-7'] }] };
-  const html = renderTab('instructions', { rows: [], file }, {});
+  const html = renderTab('docs', { groups: [], files: 0, file: 'r1', doc: file }, {});   // META-UX-BUILD S3: the strip heads the Docs reader
   assert.match(html, /id="ins-strip"[\s\S]*class="psg age-new" href="#ins-p1" style="flex-basis:33\.33%"[^>]*><i class="pread"><\/i><\/a><a class="psg age-old stale" href="#ins-p2"[^>]*><i class="pcite"><\/i><\/a>/);
   assert.match(html, /read 3x in 30 days[\s\S]*cited by DEC-7/);
 });

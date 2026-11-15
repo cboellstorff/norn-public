@@ -6,7 +6,7 @@ import { badgeCount, bestAction, orcLine, inWords, badgeLabel, mayAppear, logApp
 
 const now = Date.parse('2026-11-14T12:00:00Z');
 const rows = [
-  { id: 'a', severity: 'high', new: true, first_seen: '2026-11-14T11:00:00Z', why: 'MEMORY.md is over 200 lines.', go: { tab: 'instructions', ins: 'm' } },
+  { id: 'a', severity: 'high', new: true, first_seen: '2026-11-14T11:00:00Z', why: 'MEMORY.md is over 200 lines.', go: { tab: 'docs', ins: 'm' } },
   { id: 'b', severity: 'medium', new: false, first_seen: '2026-11-10T00:00:00Z', why: 'x', go: { tab: 'tests' } },
   { id: 'c', severity: 'low', new: true, first_seen: '2026-11-14T11:30:00Z', why: 'y', go: { tab: 'docs', doc: 1 } }];
 
@@ -23,8 +23,8 @@ test('his line: a template with the number in plain words; the one best action g
   assert.equal(orcLine({ rows, fresh: 0 }), 'Three open findings. The worst: MEMORY.md is over 200 lines.');
   assert.equal(orcLine({ rows: [] }), 'Nothing open. The tree is tended.');
   assert.equal(orcLine({ rows: [], pending: true }), 'Still looking: the instruction-file scan is running.', 'an unfinished scan is not a tended tree');
-  assert.deepEqual(bestAction(rows), { label: 'Fix it in Instructions', go: { tab: 'instructions', ins: 'm' }, row: rows[0] });
-  assert.deepEqual(bestAction([]).go, { tab: 'guard' });
+  assert.deepEqual(bestAction(rows), { label: 'Fix it in Docs', go: { tab: 'docs', ins: 'm' }, row: rows[0] });
+  assert.deepEqual(bestAction([]).go, { tab: 'slop' });
 });
 
 test('the pop-up gate: off by default, then once per new warn finding, the daily cap, typing, mute, one at a time', () => {

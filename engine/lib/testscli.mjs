@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { readJsonS, readText } from './fsnap.mjs';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { gitHistory, summarize, mergeCheck, leanGate, leafNames, mutationMatrix, addTrial, neverFailing, duplicates, slowest } from './testlean.mjs';
@@ -28,7 +29,7 @@ function parse(verb, argv) {
   return f;
 }
 const git = (repo, args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
+const readJson = readJsonS;   // META-DASH-ASYNC R1: snapshot-aware (lib/fsnap.mjs)
 const writeJson = (f, v) => { fs.mkdirSync(path.dirname(f), { recursive: true }); const t = `${f}.${process.pid}.tmp`; fs.writeFileSync(t, JSON.stringify(v)); fs.renameSync(t, f); };
 const appendLine = (f, v) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.appendFileSync(f, JSON.stringify(v) + '\n'); };
 
@@ -138,7 +139,9 @@ export function testsCmd(argv, { out = console.log, err = console.error, where }
   return g.ok ? 0 : 1;
 }
 
-const readLines = f => { try { return fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l)); } catch { return []; } };
+const readLines = f => { try { return (readText(f) ?? '').split('\n').filter(Boolean).map(l => JSON.parse(l)); } catch { return []; } };
+/** META-DASH-ASYNC R1: the files testsView reads, for the dash to prime on fs.promises */
+export const testsFiles = state => ['mutation.json', 'history.jsonl', 'git-history.json', 'candidates.json', 'advisories.json', 'waves.jsonl'].map(f => path.join(state, 'tests', f));
 /** the Tests tab of one project: everything <state>/tests holds, small files only; a missing file = null / [] (not measured yet) */
 export function testsView(state) {
   const dir = path.join(state, 'tests'), mx = readJson(path.join(dir, 'mutation.json'));

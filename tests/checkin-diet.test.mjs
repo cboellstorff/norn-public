@@ -189,7 +189,7 @@ test('settings: the policy.checkin rows (checkins/schedule) save, lane globs are
   const d = checkinDays(state, { now: T0 + 3600e3 });
   assert.deepEqual(d, [{ day: '2026-11-08', n: 4, mechanical: 1, minor: 1, full: 2 }]);
   assert.equal(checkinDayText(d[0]), 'check-ins: 4 (1 mechanical, 1 minor, 2 full)');
-  assert.match(renderTab('instructions', { rows: [], standing: [], hints: [], suggest: [], checkins: d }, { project: 'demo' }), /2026-11-08<\/td><td>check-ins: <b>4<\/b> \(1 mechanical, 1 minor, 2 full\)/);
+  assert.match(renderTab('context', { sub: 'checkins', rows: [], standing: [], hints: [], suggest: [], checkins: d }, { project: 'demo' }), /2026-11-08<\/td><td>check-ins: <b>4<\/b> \(1 mechanical, 1 minor, 2 full\)/);
   // doctor: the diet in force, and a knob that does nothing
   assert.deepEqual(checkinDoctorLines({ name: 'demo', policy: {} }), [{ level: 'ok', text: 'demo: check-ins: run ends within 5 min share one check-in; done by code, no model turn: a finished merge is reviewed, a finished worker on an auto-merge lane gets its merge queued; auto-merge lanes: none; lanes that never wake a check-in: none; lanes checked only when a run ends: none' }]);
   // SHIP-READY R1: a stranger reads this line in doctor - plain words, no policy keys

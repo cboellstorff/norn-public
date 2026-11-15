@@ -14,6 +14,7 @@
 // Harness-agnostic: the executor's adapter supplies chatCommand + chatEvents (caps.chat); nothing here knows a CLI's flags.
 import fs from 'node:fs';
 import path from 'node:path';
+import { readText, forget, addMarker, markOf } from './fsnap.mjs';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -36,11 +37,36 @@ const RESULT_MAX = 4000;             // a tool result is shown, not archived: th
 export const chatDir = state => path.join(state, 'chat');
 export const threadFile = state => path.join(chatDir(state), 'thread.jsonl');
 
+// META-DASH-ASYNC R1 (option a): a thread line is appended on fs.promises through one in-process queue per thread file (the order and
+// the line numbers stay those of append()). The queue is the list of the appended lines in order (q.done = the last one on disk); a
+// reader merges, by line number, every line after its mark: q.done at its own read, or - the text read into a request snapshot -
+// q.done when that read began (the fsnap marker), so a line that lands after a GET read the thread is still in its readThread. The list
+// behind the oldest mark still held is unreachable (garbage): no timing-based pruning.
+const queued = new Map();   // resolved thread file -> { done: the last line node on disk, tail: the last node, chain: the last write }
+function queueOf(f) {
+  const k = path.resolve(f); let q = queued.get(k);
+  if (!q) { const s0 = { i: -1, next: null }; queued.set(k, q = { done: s0, tail: s0, chain: Promise.resolve() }); }
+  return q;
+}
+addMarker(k => (path.basename(k) === 'thread.jsonl' && path.basename(path.dirname(k)) === 'chat' ? queueOf(k).done : undefined));
+/** resolves when every queued line of the thread is on disk (a POST that appended answers after it; close() waits for it) */
+export const threadFlushed = state => queueOf(threadFile(state)).chain;
+function enqueue(state, i, row) {
+  const f = threadFile(state), q = queueOf(f), n = { i, row, next: null, failed: false };
+  q.tail = q.tail.next = n;
+  const w = q.chain.then(async () => { await fs.promises.mkdir(chatDir(state), { recursive: true }); await fs.promises.appendFile(f, row + '\n', 'utf8'); })
+    .catch(e => { n.failed = true; throw e; })
+    .finally(() => { forget(f); q.done = n; });
+  q.chain = w.catch(() => {});   // a failed write is its caller's (append's promise); the queue goes on
+  return w;
+}
+
 /** The thread lines from line `from` on: { count, items }. A torn last line (a write in flight) is skipped. */
 export function readThread(state, from = 0) {
-  let raw = '';
-  try { raw = fs.readFileSync(threadFile(state), 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  const f = threadFile(state), mark = markOf(f) ?? queueOf(f).done;   // taken before the read (a snapshot's: before its read began)
+  const raw = readText(f) ?? '';   // META-DASH-ASYNC R1: snapshot-aware (lib/fsnap.mjs)
   const rows = raw.split('\n').filter(Boolean), items = [];
+  for (let n = mark.next; n; n = n.next) if (!n.failed && n.i >= rows.length) rows.push(n.row);   // landed after the read began, or queued
   for (const r of rows.slice(Math.max(0, from))) { try { items.push(JSON.parse(r)); } catch { /* torn */ } }
   return { count: rows.length, items };
 }
@@ -257,11 +283,10 @@ export function createChat(o) {
   const live = me => { try { return cfgOf(); } catch { return me?.cfg ?? null; } };   // a Settings file being written: the last good one
 
   function append(kind, data = {}) {
-    fs.mkdirSync(chatDir(p.state), { recursive: true });
     if (count === null) count = readThread(p.state).count;
     const line = { ts: new Date().toISOString(), seg: seg?.n ?? null, kind, ...data };
-    fs.appendFileSync(threadFile(p.state), JSON.stringify(line) + '\n', 'utf8');
     const i = count++;
+    enqueue(p.state, i, JSON.stringify(line)).catch(e => process.emitWarning(`chat thread write failed: ${e.message}`));
     for (const fn of subs) { try { fn(line, i); } catch { /* a subscriber's fault is its own */ } }
     return line;
   }
@@ -519,10 +544,10 @@ export function createChat(o) {
     closing = true;
     dropLease(p);
     const me = proc;
-    if (!me) return Promise.resolve();
+    if (!me) return threadFlushed(p.state);
     const gone = new Promise(r => me.child.once('close', r));
     stop('shutdown');
-    return gone;
+    return gone.then(() => threadFlushed(p.state));
   }
   function status() {
     const items = seg ? null : readThread(p.state).items, t = seg ? { seg } : threadState(items);

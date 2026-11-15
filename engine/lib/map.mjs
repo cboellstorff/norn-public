@@ -3,6 +3,7 @@
 // the previous RECENT_RUNS-1 small, the rest behind "more"), children (helpers, subagents), questions. Bands top to bottom: the
 // check-in band ("controller"), then lanes running > parked > idle. Pure; the browser only draws it (inline SVG, ui.mjs).
 import { runName } from './names.mjs';
+import { critiqueOfNode } from './critique.mjs';
 
 export const RECENT_RUNS = 3;   // Q-B2 (controller 2026-11-08): last 3 runs per lane, the rest behind "more"
 export const MORE_CAP = 30;     // an expanded lane shows its latest 30 runs (the check-in band has ~1000)
@@ -66,7 +67,8 @@ export function mapGraph(st, { all = false, more = new Set(), tree = [], now = D
     let ry = top + BAND_PAD;
     vis.forEach((r, i) => {
       const d = r.data || {}, [rc, rw] = runWord(r), big = i === 0;
-      add({ id: r.id, type: name === CHECKIN ? 'checkin' : 'run', lane: name, label: runName(r) ?? r.id, sub: [r.id, d.executor, d.stage].filter(Boolean).join(' · '),
+      const crit = d.class === 'planning' ? critiqueOfNode(runs, r.id) : null;   // META-DOD 3: the plan's review (ui.mjs mapNode: its sub line)
+      add({ id: r.id, type: name === CHECKIN ? 'checkin' : 'run', lane: name, label: runName(r) ?? r.id, sub: [r.id, d.executor, d.stage].filter(Boolean).join(' · '), critique: crit,
         state: r.state, cls: rc, word: rw, x: COL[1], y: ry, w: W[1], h: big ? H.big : H.small, faded: !big, feed: r.id, executor: d.executor ?? null });
       edge(laneId, r.id, 'owns');
       const kids = [...(helpersOf[r.id] || []).map(h => { const [hc, hw] = runWord(h); return { id: h.id, type: 'helper', lane: name, label: runName(h) ?? h.id,

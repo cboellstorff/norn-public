@@ -36,7 +36,7 @@ test('every tab renders with fixture state: ids from records / runs / transcript
     has('lanes', 'id="lane-gen"', 'id="lane-render"', 'id="lane-seabed"', 'parked by Q-1', 'exited: STOPPED: red test', 'codex-sol', 'RUN-2');
     has('agents', 'id="node-RUN-1"', 'id="node-RUN-2"', 'kestrel-implementer', '65k', 'gpt-5.4', '60,559');
     has('records', 'id="rec-DEC-1"', 'id="rec-DIR-1"', 'keep going', 'in-force', 'active');
-    has('docs', 'id="doc-0"', 'id="doc-1"', 'Plan', 'step one', 'missing');
+    has('docs', 'id="docf-doc-0"', 'id="docf-doc-1"', 'Plan', 'missing', 'Project docs');   // META-UX-BUILD S3: the list; the file is its own part (docs.test)
     // LEDGER-UX R1: /api/ledger serves 100 lines by default (the fixture has 30), one row per entry
     has('ledger', 'id="ledger-lines"', '>p1<', '>p30<'); assert.equal((out.ledger.match(/<tr id="led-/g) || []).length, 30, 'one row per line');
     has('settings', 'id="settings-machine"', 'id="settings-project"', 'id="set-max_claude_workers"', 'id="set-policy.critical_lanes"');

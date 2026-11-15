@@ -47,7 +47,19 @@ nav button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--ink);f
 .orc-section{display:flex;gap:14px;align-items:flex-start}
 .orc-portrait{flex:none;width:192px;height:192px;image-rendering:pixelated;background:url(/norn/art/orc-96-idle.png) 0 0 / 400% 100% no-repeat}
 .orc-line{font-size:15px;margin:4px 0 8px}
-.glist{margin:0;padding:0 0 0 18px}.glist .grow{padding:5px 0;border-bottom:1px solid var(--line)}
+.glist{margin:0;padding:0 0 0 18px}
+/* META-UX-BUILD S2: the sub-view pattern (subviews.mjs) - a summary row of at most 4 numbers, the sub-view row, the chosen part */
+.subsum{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 10px}.subnum{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px 12px;display:flex;flex-direction:column;gap:2px}.subnum b{font-size:22px}.subnum.warn b{color:var(--warn)}.subnum.ok b{color:var(--ok)}.ctxprofs summary{cursor:pointer}.ctxprofs ul{margin:4px 0 0;padding-left:14px;text-align:left;overflow-wrap:anywhere}
+.subnav{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px;padding:0 0 10px;border-bottom:1px solid var(--line)}.subnav button[aria-selected=true]{background:var(--ink);color:var(--bg)}.subnav button[aria-selected=true] .mute{color:inherit}
+/* META-UX-BUILD S5: Slop's batches - the three kinds of fix apart (a coloured edge + heading each), the rows that only count folded */
+.sblist{list-style:none;margin:0;padding:0}.sbatch{padding:8px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.sbatch:last-child{border-bottom:0}.sbpaths{margin:2px 0}.sbways{margin-top:4px}.sbrows summary{cursor:pointer}
+/* META-UX-BUILD S6: the Fix all sheet */
+.fixall{max-width:860px;margin:0 auto;overflow-wrap:anywhere}.fxhead{margin:14px 0 4px}.fxlist{list-style:none;margin:0;padding:0}.fxitem{padding:8px 0;border-bottom:1px solid var(--line)}
+.fxitem label{display:block;cursor:pointer}.fxitem input{margin-right:6px}.fxcall{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:flex-start}.fxcall .fxbody{flex:1 1 280px;min-width:0}
+.fxq{display:inline-block;width:1.2em;text-align:center;border:1px solid var(--line);border-radius:3px}.fxways{display:flex;flex-wrap:wrap;gap:6px}.fxways button[aria-pressed=true]{outline:2px solid var(--accent,currentColor)}
+.fxfoot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin-top:12px}.fxbtns{display:flex;gap:6px;flex-wrap:wrap}
+.slopkind{border-left:4px solid var(--line)}.slopkind[data-kind=ready]{border-left-color:var(--ok)}.slopkind[data-kind=ready]>h2{color:var(--ok)}.slopkind[data-kind=drafts]{border-left-color:var(--run)}.slopkind[data-kind=call]{border-left-color:var(--warn)}.slopkind[data-kind=call]>h2{color:var(--warn)}#slop-count{margin:8px 0}#slop-count>summary{cursor:pointer}
+@media (max-width:700px){.subsum{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.subnum{padding:6px 10px}.subnum b{font-size:18px}}.glist .grow{padding:5px 0;border-bottom:1px solid var(--line)}
 .insseg.seg-rl-prose,.insdot.seg-rl-prose{background:var(--warn)}.insseg.seg-rl-repeated,.insdot.seg-rl-repeated{background:var(--accent)}
 .insseg.seg-rl-enforced,.insdot.seg-rl-enforced{background:var(--ok)}.insseg.seg-rl-retired,.insdot.seg-rl-retired{background:var(--bar)}
 @media (max-width:700px){#orc .o32{display:none}#orc .o16{display:block}#orc{min-width:44px;min-height:44px;justify-content:center}
@@ -120,6 +132,7 @@ tr:last-child td{border-bottom:0}
 .node.head{border-top:0;color:var(--mute);font-size:12px;font-weight:600}
 .node .name{display:flex;gap:6px;align-items:center;min-width:0}
 .node .name span.t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.node .name .dod{flex-shrink:0;white-space:nowrap}@media (max-width:700px){.node .name:has(.dod){flex-wrap:wrap;row-gap:2px}}.dodev{margin-top:2px}
 .lvl1{padding-left:34px}.lvl2{padding-left:58px}
 .caret{width:14px;color:var(--mute);cursor:pointer;user-select:none}
 .legend{display:flex;gap:14px;flex-wrap:wrap;margin:6px 0 12px}
@@ -175,6 +188,17 @@ button.reset{padding:2px 8px}
 .doctoc a{text-decoration:none;color:var(--mute);font-size:12.5px;padding:2px 6px;border-radius:5px}.doctoc a:hover{background:var(--soft);color:var(--ink)}
 .doctoc .toc1{color:var(--ink);font-weight:600}.doctoc .toc3{padding-left:18px;font-size:12px}
 .md{padding:18px 26px;line-height:1.6;max-width:1100px;overflow-wrap:break-word}
+/* META-UX-BUILD S3: Docs = the one reader - the file list beside the reader (a phone: the list, a tap -> the reader with Back) */
+.dochead{margin:0 0 8px}.dochead b{font-size:18px;margin-right:6px}.docsplit{display:grid;grid-template-columns:290px minmax(0,1fr);gap:16px;align-items:start}
+.doclist{position:sticky;top:58px;max-height:calc(100vh - 80px);overflow:auto;padding:8px}.docgrp{margin:0 0 8px}.docgrp h4{display:flex;justify-content:space-between;margin:6px 6px 2px;color:var(--mute);font-weight:600}
+.docgrp ul{list-style:none;margin:0;padding:0}.docfile{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;width:100%;text-align:left;background:none;border:0;border-radius:6px;padding:4px 6px;color:var(--ink);cursor:pointer;min-height:30px}
+.docfile:hover{background:var(--soft)}.docfile.sel{background:var(--soft);font-weight:700;box-shadow:inset 3px 0 0 var(--accent)}.docfile .dfname{flex:1 1 150px;min-width:0;overflow-wrap:anywhere}.docfile .dftk{white-space:nowrap}.docfile .chip{white-space:nowrap}
+.docmem{margin:2px 6px 6px;padding:6px;border:1px solid var(--line);border-radius:8px}.docback{display:none}.dochd{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;margin:0 0 6px}.dochd .dfname{font-size:17px}.dochd .inspath{overflow-wrap:anywhere}
+.docpara{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}.docpara.hasfind{grid-template-columns:minmax(0,1fr) minmax(200px,300px);background:var(--soft);border-radius:6px;padding:4px 6px}
+.docfind{border-left:3px solid var(--warn);padding:2px 8px;font-size:13px;overflow-wrap:anywhere}.docfind .insfind{margin:0 0 6px}#doc-file-findings{padding:8px 12px;margin:0 0 8px}#doc-file-findings .insfind{margin:4px 0}
+.docsrc{padding:6px 0;overflow-x:auto}.docsrc table{border-collapse:collapse;width:100%}.docsrc td{vertical-align:top;padding:0 8px;border:0}.docsrc .ln{text-align:right;user-select:none;width:1%;font-size:12px}.docsrc .lt code{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12.5px;background:none}.docsrc tr.focus{outline:2px solid var(--accent)}.docsrc td:last-child{width:30%}
+@media (max-width:700px){.docsplit{grid-template-columns:minmax(0,1fr)}.doclist{position:static;max-height:none}.docsplit:not(.picked) .docread{display:none}.docsplit.picked .doclist{display:none}.docback{display:inline-block}
+.docfile{min-height:40px}.docpara.hasfind{grid-template-columns:minmax(0,1fr)}.docsrc td:last-child{width:auto}.docsrc tr{display:grid;grid-template-columns:auto minmax(0,1fr)}.docsrc tr td:last-child{grid-column:1 / -1}}
 .md h1,.md h2,.md h3,.md h4{line-height:1.25;margin:1.3em 0 .5em;scroll-margin-top:64px}.md>:first-child{margin-top:0}
 .md h1{font-size:24px}.md h2{font-size:19px;padding-bottom:4px;border-bottom:1px solid var(--line);display:block;text-transform:none;letter-spacing:0;color:var(--ink)}.md h3{font-size:16px}.md h4{font-size:14px}
 .md h2.mk,.md h3.mk{padding:4px 10px;border-radius:6px;border:0}.md .mk-done{background:var(--ok-bg);color:var(--ok)}.md .mk-stopped{background:var(--bad-bg);color:var(--bad)}.md .mk-handoff{background:var(--warn-bg);color:var(--warn)}
@@ -393,7 +417,7 @@ details.ck .ck-full{text-align:left;margin:6px 0 2px;padding:8px 10px;border:1px
 </aside>
 <script>const TOKEN = __TOKEN__, REMOTE = __REMOTE__;</script>
 <script type="module">
-import { TABS, loadTab, loadInsParts, insPartsKey, renderTab, renderNav, pageTitle, needsCount, fmtTime, esc, matchText, renderFeedHead, renderFeedEvent, rmScopeNext, rmUrlHash, parseRmHash } from '/ui.mjs';
+import { TABS, loadTab, loadParts, partsKey, renderTab, renderNav, pageTitle, needsCount, fmtTime, esc, matchText, renderFeedHead, renderFeedEvent, rmScopeNext, rmUrlHash, parseRmHash } from '/ui.mjs';
 import DOMPurify from '/vendor/purify.es.mjs';
 import { renderDeliverable, renderRmEditor, rmEditBody } from '/ui.mjs';
 import { initLook, setLook, setTheme, setQuiet, look, ground, assetImg, assetUrl, motion } from '/norn/look.mjs';
@@ -401,10 +425,19 @@ import { badgeCount, badgeLabel, bestAction, orcLine, mayAppear, logAppearance, 
 import { createScheduler } from '/norn/motion.mjs';
 import { createEvents, eventsOfRecords, beatOf } from '/norn/live.mjs';
 import { renderBottomBar, renderThread, pickProject, threadOnly, chatState, slashMenu, HOME_FILTERS } from '/home.mjs';
+// META-CI-WORKCLASS R2 (DEC-332): body.dataset.step = the last boot / render() step reached (a test timeout names where ready stalled)
+const step = n => { document.body.dataset.step = n; };
+step('imports');
 const sanitize = h => DOMPurify.sanitize(h, { ADD_ATTR: ['target'] }); // docs markdown: defence in depth over docs.mjs escaping
 const $ = s => document.querySelector(s), qs = new URLSearchParams(location.search);
-const S = { tab: TABS.some(t => t[0] === qs.get('tab')) || qs.get('tab') === 'adopt' ? qs.get('tab') : 'home', homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, adoptForm: null, project: qs.get('project') || null, allLanes: false, mapZoom: Number(qs.get('zoom')) || 1, ledgerN: 100, recOpen: new Set(), mapMore: new Set(), mapAll: false, doc: null, paused: false, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0,
+// META-UX-BUILD S4 (owner DIR-65): Instructions is Context - an old tab=instructions link lands on Context (the URL then says context).
+// META-UX-BUILD S5 (owner DIR-64): the Guard is Slop - an old tab=guard link lands on Slop the same way.
+const OLD_TAB = { instructions: 'context', guard: 'slop' };
+const tabOf = t => OLD_TAB[t] ?? t;
+if (OLD_TAB[qs.get('tab')]) { qs.set('tab', OLD_TAB[qs.get('tab')]); history.replaceState(null, '', '?' + qs.toString() + location.hash); }
+const S = { tab: TABS.some(t => t[0] === qs.get('tab')) || qs.get('tab') === 'adopt' ? qs.get('tab') : 'home', homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, adoptForm: null, project: qs.get('project') || null, allLanes: false, mapZoom: Number(qs.get('zoom')) || 1, ledgerN: 100, recOpen: new Set(), mapMore: new Set(), mapAll: false, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), paused: false, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0,
   mapView: qs.get('view') || (() => { try { return localStorage.getItem('meta-mapview'); } catch { return null; } })() || 'well', nornZoom: 1, quiet: false,
+  sub: qs.get('sub'), subLimit: null, parts: {}, partsBusy: {},
   rm: parseRmHash(location.hash), rmJump: /^#(w+-)?rm-/.test(location.hash) };   // META-ROADMAP S2: the Roadmap filters; the scope / a deep link live in the hash
 // META-ROADMAP S2b: the Roadmap view (tree / board) - the hash first, else this viewer's last choice, else the tree (also on a phone)
 S.rm.view = S.rm.view || (() => { try { return localStorage.getItem('meta-rmview'); } catch { return null; } })() || null;
@@ -415,10 +448,19 @@ let NM = null;
 const get = async p => { const r = await fetch(p); const d = await r.json(); if (!r.ok) throw new Error(d.error || r.status); return d; };
 const post = async (p, body) => { const r = await fetch(p, { method: 'POST', headers: { 'content-type': 'application/json', 'x-dash-token': TOKEN }, body: JSON.stringify(body) });
   const d = await r.json(); if (!r.ok) throw new Error(d.error || r.status); return d; };
+// META-UX-BUILD S6: the sheet's ticks live in S.fixall (a re-render keeps them); the count = ticked + picked findings
+const fxKeys = () => { if (S.fixall) S.fixall.keys = new Set([...document.querySelectorAll('#fixall input[data-fx-key]:checked')].map(x => x.dataset.fxKey)); };
+function fxCount() {
+  const sum = q => [...document.querySelectorAll(q)].reduce((a, x) => a + Number(x.dataset.n || 0), 0);
+  const n = sum('#fixall input[data-fx-key]:checked') + sum('#fixall [data-act=fx-way][aria-pressed=true]'), o = $('#fx-n'), b = document.querySelector('#fixall [data-act=fixall-send]');
+  if (o) o.textContent = n; if (b && !S.fixall?.sent) b.disabled = !n;
+}
+document.addEventListener('change', e => { if (e.target.matches?.('#fixall input[data-fx-key]')) { fxKeys(); fxCount(); } });
 const err = m => { $('#error').textContent = m || ''; $('#error').style.display = m ? 'block' : 'none'; };
 const modes = ['system', 'light', 'dark'];
 function theme(m) { const c = document.documentElement.classList; c.toggle('light', m === 'light'); c.toggle('dark', m === 'dark'); $('#theme').textContent = 'Theme: ' + m; setTheme(m); try { localStorage.setItem('meta-theme', m); } catch {} }
 const theme0 = qs.get('theme') || (() => { try { return localStorage.getItem('meta-theme'); } catch { return null; } })() || 'system';
+step('look');
 await initLook({ look: qs.get('look'), theme: theme0, onChange: l => { $('#look').textContent = 'Look: ' + l; render(); } });
 $('#look').textContent = 'Look: ' + look();
 $('#look').onclick = () => setLook(look() === 'norn' ? 'classic' : 'norn');
@@ -461,7 +503,7 @@ function paintOrc() {
 function guardHeader() {
   if (!S.project || S.project === 'all') { S.guard = null; paintOrc(); return; }
   const want = S.project;
-  get(`/api/guard?project=${encodeURIComponent(want)}`).then(g => { if (S.project !== want) return; S.guard = g; if (S.tab === 'guard') ls(orcKey('seen'), Date.now()); paintOrc(); popUp(); }).catch(() => {});
+  get(`/api/guard?project=${encodeURIComponent(want)}`).then(g => { if (S.project !== want) return; S.guard = g; if (S.tab === 'slop') ls(orcKey('seen'), Date.now()); paintOrc(); popUp(); }).catch(() => {});
 }
 function callUp() {
   if (S.guard?.slop === false) return;
@@ -479,51 +521,59 @@ function popUp() {
   ORC.show({ line: orcLine({ rows, fresh: badgeCount(g.rows, Number(ls(orcKey('seen'))) || 0) || 1 }), action: bestAction(rows) });
 }
 // a Guard row / chip: the tab that fixes it, opened at its file + line, its doc, or its element
+// META-UX-BUILD S3: a file (an Instructions file link, a doc) opens in the Docs reader at its line
 function goTo(g) {
-  document.body.classList.remove('more'); S.tab = g.tab;
-  if (g.ins) { S.ins = g.ins; S.insLine = Number(g.line) || null; S.insScroll = !!S.insLine; }
-  if (g.doc !== undefined && g.doc !== '') S.doc = Number(g.doc);
+  document.body.classList.remove('more'); S.tab = tabOf(g.tab); S.sub = g.sub || null; S.subLimit = null; S.batch = null; S.fixall = null;
+  const file = g.ins ? g.ins : g.doc !== undefined && g.doc !== '' ? `doc-${g.doc}` : null;
+  if (file) { S.tab = 'docs'; S.doc = file; S.docLine = Number(g.line) || null; S.docScroll = !!S.docLine; }
   if (g.jump) S.jump = g.jump;
-  history.replaceState(null, '', `?project=${encodeURIComponent(S.project)}&tab=${S.tab}`); render();
+  history.pushState(null, '', tabUrl()); render();
 }
-// META-UX-BUILD S1: the Instructions parts of the painted view (one fetch per view); they paint into the page that still shows it
-async function insPartsFetch(d) {
-  const project = S.project, key = insPartsKey(project, d);
-  if (S.insPartsBusy === key) return;
-  S.insPartsBusy = key;
+// META-UX-BUILD S1 + S2: the parts of the painted view (one fetch per view: Instructions' lists, a sub-view's part); they paint into
+// the page that still shows that view
+async function partsFetch(tab, d) {
+  const project = S.project, key = partsKey(tab, project, d);
+  if (S.partsBusy[tab] === key) return;
+  S.partsBusy[tab] = key;
   try {
-    const data = await loadInsParts(project, get);
-    S.insParts = { key, data };
-    if (S.tab === 'instructions' && S.last?.parts_loading && insPartsKey(S.project, S.last) === key) { S.last = { ...S.last, ...data, parts_loading: false }; paintMain(S.last); applyFilters(); }
-  } catch (e) { err('Instructions: a part failed: ' + e.message); } finally { if (S.insPartsBusy === key) S.insPartsBusy = null; }
+    const data = await loadParts(tab, project, d, get);
+    S.parts[tab] = { key, data };
+    if (S.tab === tab && S.last?.parts_loading && partsKey(tab, S.project, S.last) === key) { S.last = { ...S.last, ...data, parts_loading: false }; paintMain(S.last); applyFilters(); }
+  } catch (e) { err(`${tab}: a part failed: ${e.message}`); } finally { if (S.partsBusy[tab] === key) S.partsBusy[tab] = null; }
 }
+// META-UX-BUILD S2: the chosen sub-view lives in the URL (&sub=): a tap pushes it, Back / a reload / a shared link land on it
+const tabUrl = () => `?project=${encodeURIComponent(S.project)}&tab=${S.tab}${S.sub ? '&sub=' + encodeURIComponent(S.sub) : ''}${S.tab === 'docs' && S.doc ? `&doc=${encodeURIComponent(S.doc)}${S.docLine ? '&line=' + S.docLine : ''}` : ''}`;
+addEventListener('popstate', () => {
+  const q = new URLSearchParams(location.search), t = tabOf(q.get('tab'));
+  if (!TABS.some(x => x[0] === t) || q.get('project') !== S.project) return;
+  S.tab = t; S.sub = q.get('sub'); S.subLimit = null; S.batch = null; S.fixall = null; S.doc = q.get('doc') || null; S.docLine = Number(q.get('line')) || null; render();
+});
 async function render(force = false, why = []) {
   try {
     if (threadOnly(why, S.tab) && $('#thread')) { await paintThread(); return; }   // META-HOME-POLISH R1: a chat line repaints the thread only
-    await header(); guardHeader();
+    step('render:header'); await header(); guardHeader();
     document.body.dataset.tab = S.tab; $('#bbar').innerHTML = S.project ? renderBottomBar(S.tab, { inbox: S.needs }) : '';
     const more = $('#bbar [data-act=more]'); if (more) more.setAttribute('aria-expanded', String(document.body.classList.contains('more')));
     chatLive(S.tab === 'home' && S.project && S.project !== 'all' ? S.project : null);
     const nav = $('#tabs'), navX = nav.scrollLeft; nav.innerHTML = renderNav(S.tab, { inbox: S.needs }, look()); nav.scrollLeft = navX;
     if (S.navTab !== S.tab) { S.navTab = S.tab; const show = () => nav.querySelector('[aria-selected=true]')?.scrollIntoView({ inline: 'nearest', block: 'nearest' }); show(); document.fonts.ready.then(show); }
     if (!S.project) S.tab = 'adopt';
-    const d = await loadTab(S.tab, S.project, get, { allLanes: S.allLanes, doc: S.doc, ins: S.ins, insLine: S.insLine, mapMore: S.mapMore, mapAll: S.mapAll, ledgerN: S.ledgerN, adoptAdd: S.adoptAdd, adoptScan: S.adoptScan, projects: S.projects, insParts: S.insParts });
+    step('render:loadTab ' + S.tab); const d = await loadTab(S.tab, S.project, get, { allLanes: S.allLanes, doc: S.doc, docLine: S.docLine, docSrc: S.docSrc, wide: !matchMedia('(max-width:700px)').matches, mapMore: S.mapMore, mapAll: S.mapAll, ledgerN: S.ledgerN, adoptAdd: S.adoptAdd, adoptScan: S.adoptScan, projects: S.projects, parts: S.parts, sub: S.sub, limit: S.subLimit, batch: S.batch, fixall: S.tab === 'slop' ? S.fixall : null });
     // Settings: a stream re-render never wipes edits, search or scroll - re-render only on a new version (and never over unsaved edits)
     if (S.tab === 'settings' && !force && $('#main .settings')) {
       if (d.version === S.setVersion) { err(''); return; }
       if (S.setDirty) { err('Settings changed elsewhere: Discard to reload (saving these edits would be refused, 409).'); return; }
     }
     const mw = $('.mapwrap'), keep = mw ? [mw.scrollLeft, mw.scrollTop] : null;   // a re-render keeps the map's pan position
-    S.last = d; S.lastTab = S.tab; if (S.tab === 'roadmap') S.rmData = d; paintMain(d);
-    if (S.tab === 'instructions' && d.parts_loading) insPartsFetch(d);   // META-UX-BUILD S1: the lists load by themselves after the summary paints
-    if (S.tab === 'instructions' && S.insScroll) { S.insScroll = false; $('#main [data-focus]')?.scrollIntoView({ block: 'center' }); }   // META-TEND P3: a ladder card opens its source line
-    if ($('#map-host')) await mountMap(d); else dropMap();
+    step('render:paint ' + S.tab); S.last = d; S.lastTab = S.tab; if (S.tab === 'roadmap') S.rmData = d; paintMain(d);
+    if ((S.tab === 'context' || S.tab === 'slop' || S.tab === 'docs') && d.parts_loading) partsFetch(S.tab, d);   // META-UX-BUILD S1-S3: the lists / the sub-view's part / the open file load by themselves after the list paints
+    if (S.tab === 'docs' && S.docScroll && $('#main [data-focus]')) { S.docScroll = false; $('#main [data-focus]').scrollIntoView({ block: 'center' }); }   // META-TEND P3: a ladder card / a finding opens its line
+    step('render:map'); if ($('#map-host')) await mountMap(d); else dropMap();
     if (keep && $('.mapwrap')) [$('.mapwrap').scrollLeft, $('.mapwrap').scrollTop] = keep;
     if (S.find) { const box = document.querySelector('[data-filter]'); if (box) box.value = S.find; S.find = null; }
     if (S.jump) { document.getElementById(S.jump)?.scrollIntoView({ block: 'center' }); S.jump = null; }
-    if (S.tab === 'docs' && d.doc) S.doc = d.doc.i;
     if (S.tab === 'settings') { S.setVersion = d.version; S.setCat = document.querySelector('.scat:not([hidden])')?.dataset.cat ?? S.setCat; $('#set-search').value = S.setQ; setFilter(); dirty(); }
-    recFit(); applyFilters(); markFeed(); ORC.place(); err('');
+    step('render:finish'); recFit(); applyFilters(); markFeed(); ORC.place(); err(''); step('ready');
     document.body.dataset.ready = S.tab;   // the ready signal: this tab's data is fetched and painted (tests wait on it, not on a clock)
   } catch (e) { err('Refresh failed: ' + e.message); document.body.dataset.ready = 'error'; }
 }
@@ -834,13 +884,26 @@ document.addEventListener('click', e => {
   if (d.act === 'more') { const on = document.body.classList.toggle('more'); b.setAttribute('aria-expanded', String(on)); document.documentElement.style.setProperty('--hdr-h', ($('header')?.offsetHeight || 0) + 'px'); if (on) window.scrollTo(0, 0); return; }
   if (b.id === 'orc' || d.act === 'orc-call') { callUp(); return; }
   if (d.act === 'orc-mute') { ls('meta-orc-mute', Number(d.days) ? Date.now() + Number(d.days) * 86400000 : 0); paintOrc(); return; }
-  if (d.go) { goTo({ tab: d.go, ins: d.goins, line: d.goline, doc: d.godoc, jump: d.gojump }); return; }
+  if (d.go) { goTo({ tab: d.go, sub: d.gosub, ins: d.goins, line: d.goline, doc: d.godoc, jump: d.gojump }); return; }
   if (b.id === 'needs-btn') { S.tab = 'home'; S.homeFilter = 'needs'; history.replaceState(null, '', `?project=${encodeURIComponent(S.project)}&tab=home&filter=needs`); render(); return; }
   if (b.matches('.caret[data-t]')) { const kids = document.querySelectorAll(`[data-p="${d.t}"]`), hide = kids[0] && kids[0].style.display !== 'none';
     kids.forEach(k => { k.style.display = hide ? 'none' : ''; }); b.innerHTML = hide ? '&#9656;' : '&#9662;'; return; }
-  if (d.tab) { document.body.classList.remove('more'); S.adoptAdd = false; S.adoptScan = null; S.adoptAsk = null; S.tab = d.tab; history.replaceState(null, '', S.tab === 'roadmap' ? rmUrl() : `?project=${encodeURIComponent(S.project)}&tab=${S.tab}`); render(); return; }
-  if (d.doc !== undefined) { S.doc = Number(d.doc); render(); return; }
-  if (d.ins !== undefined) { S.ins = d.ins || null; S.insLine = Number(d.line) || null; S.insScroll = !!S.insLine; render(); return; }   // META-INSTRUCTIONS R1: open / close one file
+  if (d.act === 'sub') { S.sub = d.sub; S.subLimit = null; S.batch = null; S.fixall = null; history.pushState(null, '', tabUrl()); render(); return; }   // META-UX-BUILD S2
+  // META-UX-BUILD S6: the Fix all sheet - open / close, a picked way (one per batch; a second tap un-picks), Send the fixer (one POST)
+  if (d.act === 'fixall-open') { S.fixall = { keys: null, picks: {} }; window.scrollTo(0, 0); render(); return; }
+  if (d.act === 'fixall-close') { S.fixall = null; render(); return; }
+  if (d.act === 'fx-way') { const f = S.fixall; if (!f || f.sent) return; if (f.picks[d.key] === d.way) delete f.picks[d.key]; else f.picks[d.key] = d.way;
+    document.querySelectorAll('#fixall [data-act=fx-way]').forEach(x => x.setAttribute('aria-pressed', String(f.picks[x.dataset.key] === x.dataset.way))); fxCount(); return; }
+  if (d.act === 'fixall-send') { const f = S.fixall; if (!f || f.sent) return; fxKeys(); b.disabled = true;
+    act(async () => { f.sent = await post('/api/fixall', { project: S.project, sig: d.sig, keys: [...f.keys], picks: f.picks }); }).finally(() => { if (!f.sent) b.disabled = false; }); return; }
+  if (d.act === 'slop-batch') { S.batch = d.batch || null; S.subLimit = null; render(); return; }   // META-UX-BUILD S5: open one batch (or close it)
+  if (d.act === 'sub-more') { S.subLimit = (S.subLimit || S.last?.limit || 40) + 40; render(); return; }
+  if (d.tab) { document.body.classList.remove('more'); S.sub = null; S.subLimit = null; S.batch = null; S.fixall = null; S.doc = null; S.docLine = null; S.adoptAdd = false; S.adoptScan = null; S.adoptAsk = null; S.tab = d.tab; history.replaceState(null, '', S.tab === 'roadmap' ? rmUrl() : `?project=${encodeURIComponent(S.project)}&tab=${S.tab}`); render(); return; }
+  // META-UX-BUILD S3: Docs - a tap opens the file (pushed: Back returns to the list), Back on the reader, Rendered / Source
+  if (d.docfile) { S.doc = d.docfile; S.docLine = null; history.pushState(null, '', tabUrl()); render(); return; }
+  if (d.act === 'doc-back') { S.doc = null; S.docLine = null; history.pushState(null, '', tabUrl()); render(); window.scrollTo(0, 0); return; }
+  if (d.act === 'doc-view') { S.docSrc = d.view === 'src'; render(); return; }
+  if (d.ins) { goTo({ tab: 'docs', ins: d.ins, line: d.line }); return; }   // a Context file link lands on the Docs reader
   if (d.setcat) { S.setCat = d.setcat; S.setQ = ''; $('#set-search').value = ''; setFilter();
     const to = d.setsub && document.getElementById(d.setsub); if (to) to.scrollIntoView({ block: 'start' }); else window.scrollTo(0, 0); return; }
   if (d.act === 'rec-more') { const t = b.previousElementSibling, open = !t.classList.contains('open'); recOpen(t, b, open); if (open) S.recOpen.add(t.dataset.key); else S.recOpen.delete(t.dataset.key); return; }
@@ -977,12 +1040,12 @@ async function adoptAct(b, d) {
 $('#project').onchange = e => {
   if (e.target.value === '+add') { e.target.value = S.project ?? ''; adoptGo({ add: true }); render(); return; }
   S.adoptAdd = false; S.adoptScan = null; S.adoptAsk = null;
-  S.project = e.target.value; S.doc = null; S.ins = null; if (S.project && S.project !== 'all') { try { localStorage.setItem('meta-project', S.project); } catch { /* private mode */ } } history.replaceState(null, '', `?project=${encodeURIComponent(S.project)}&tab=${S.tab}`); openStream(); render(); };
+  S.project = e.target.value; S.doc = null; S.docLine = null; if (S.project && S.project !== 'all') { try { localStorage.setItem('meta-project', S.project); } catch { /* private mode */ } } history.replaceState(null, '', `?project=${encodeURIComponent(S.project)}&tab=${S.tab}`); openStream(); render(); };
 (async () => {
   try {
-    await loadProjects();
+    step('projects'); await loadProjects();
   } catch (e) { err('Cannot load projects: ' + e.message); return; }
-  if (S.project) openStream(); else S.tab = 'adopt';
+  step('stream'); if (S.project) openStream(); else S.tab = 'adopt';
   await render();
 })();
 </script>

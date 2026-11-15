@@ -18,19 +18,20 @@ const isFile = f => { try { return fs.statSync(f).isFile(); } catch { return fal
 const gitOut = (cwd, args) => { const r = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', windowsHide: true, timeout: 20000, maxBuffer: 64 * 1024 * 1024 }); return r.status === 0 ? r.stdout : null; };
 const tok = s => Math.ceil(String(s).length / 4);
 
-/** id -> { family, title } (REPORT sec. 3.2) */
+/** id -> { family, title, fix, info? } (REPORT sec. 3.2). META-UX-BUILD S5: fix = the kind of fix the check's findings need (advisory.mjs
+ * FIX_KINDS: none of these carries a patch, so drafts or your call with its two ways); info = the kind of its count-level rows */
 export const CHECKS = {
-  1: { family: 'memory', title: 'MEMORY.md over 200 lines or 25 KB' }, 2: { family: 'encoding', title: 'encoding damage (mojibake)' },
-  3: { family: 'memory', title: 'index entry over one line / ~150 chars' }, 4: { family: 'memory', title: 'index pointers and names' },
-  5: { family: 'memory', title: 'topic frontmatter' }, 6: { family: 'memory', title: 'memory restates a repo rule' },
-  7: { family: 'local', title: 'CLAUDE.local.md' }, 8: { family: 'rules', title: '.claude/rules frontmatter and paths' },
-  9: { family: 'imports', title: '@imports' }, 10: { family: 'codex', title: 'Codex AGENTS.md chain over 32 KiB' },
-  11: { family: 'parity', title: 'twin AGENTS.md / CLAUDE.md' }, 12: { family: 'parity', title: 'Claude-only root, no AGENTS.md' },
-  13: { family: 'pointers', title: 'pointer to a Moved: stub or a renamed file' }, 14: { family: 'prose', title: 'emphasis density' },
-  15: { family: 'prose', title: 'dated-model phrases' }, 16: { family: 'prose', title: 'history in an always-loaded file' },
-  17: { family: 'prose', title: 'names a closed lane' }, 18: { family: 'prose', title: 'retired or non-policy model name' },
-  19: { family: 'prose', title: '"never" with no named enforcement (a count)' }, 21: { family: 'agents', title: 'agent model / effort vs policy; descriptions size' },
-  22: { family: 'hooks', title: 'hooks: events, scripts, deterministic' }, 23: { family: 'harness', title: 'harness rules carry a version' },
+  1: { family: 'memory', title: 'MEMORY.md over 200 lines or 25 KB', fix: { kind: 'drafts' } }, 2: { family: 'encoding', title: 'encoding damage (mojibake)', fix: { kind: 'drafts' } },
+  3: { family: 'memory', title: 'index entry over one line / ~150 chars', fix: { kind: 'drafts' } }, 4: { family: 'memory', title: 'index pointers and names', fix: { kind: 'call', ways: ['Fix the link or name', 'Delete the entry'] } },
+  5: { family: 'memory', title: 'topic frontmatter', fix: { kind: 'drafts' }, info: 'count' }, 6: { family: 'memory', title: 'memory restates a repo rule', fix: { kind: 'drafts' } },
+  7: { family: 'local', title: 'CLAUDE.local.md', fix: { kind: 'drafts' } }, 8: { family: 'rules', title: '.claude/rules frontmatter and paths', fix: { kind: 'call', ways: ['Fix the paths', 'Delete the rule'] }, info: 'count' },
+  9: { family: 'imports', title: '@imports', fix: { kind: 'call', ways: ['Fix the import', 'Delete the line'] }, info: 'count' }, 10: { family: 'codex', title: 'Codex AGENTS.md chain over 32 KiB', fix: { kind: 'drafts' } },
+  11: { family: 'parity', title: 'twin AGENTS.md / CLAUDE.md', fix: { kind: 'drafts' } }, 12: { family: 'parity', title: 'Claude-only root, no AGENTS.md', fix: { kind: 'drafts' } },
+  13: { family: 'pointers', title: 'pointer to a Moved: stub or a renamed file', fix: { kind: 'drafts' } }, 14: { family: 'prose', title: 'emphasis density', fix: { kind: 'drafts' } },
+  15: { family: 'prose', title: 'dated-model phrases', fix: { kind: 'drafts' } }, 16: { family: 'prose', title: 'history in an always-loaded file', fix: { kind: 'drafts' } },
+  17: { family: 'prose', title: 'names a closed lane', fix: { kind: 'call', ways: ['Delete the line', 'Move it to the lane notes'] } }, 18: { family: 'prose', title: 'retired or non-policy model name', fix: { kind: 'drafts' } },
+  19: { family: 'prose', title: '"never" with no named enforcement (a count)', fix: { kind: 'call', ways: ['Bind it with a hook or gate', 'Accept it as prose'] } }, 21: { family: 'agents', title: 'agent model / effort vs policy; descriptions size', fix: { kind: 'call', ways: ['Let policy pick', 'Align the agent file'] } },
+  22: { family: 'hooks', title: 'hooks: events, scripts, deterministic', fix: { kind: 'call', ways: ['Fix the hook', 'Delete the hook'] }, info: 'count' }, 23: { family: 'harness', title: 'harness rules carry a version', fix: { kind: 'drafts' } },
 };
 
 // ---------- the auto-memory folder (Claude Code: <config>/projects/<the repo's main root, non-alphanumerics -> '-'>/memory) ----------
@@ -102,7 +103,7 @@ export function staticChecks(rows, { project: p = {}, home = '', items = {}, har
   const T = r => { if (!text.has(r.path)) text.set(r.path, r.exists !== false && r.chars <= 2_000_000 ? readText(r.path) : null); return text.get(r.path); };
   const add = (check, severity, r, line, msg, fix) => { const file = fwd(r?.path ?? r), f = advisory({ phase: 'P1', check, key: `instr-c${check}`, severity: severity === 'info' ? 'count' : severity,
     surface: CHECKS[check].title, path: file, line: Math.max(1, line || 1), why: msg.length > 300 ? `${msg.slice(0, 297)}...` : msg, source: `REPORT meta-practice s.3.2, check ${check}`,
-    subject: `${lc(file)}|${msg.replace(/\d+/g, '#')}`, row: r?.id ?? undefined, fix: { tier: !root || under(file, root) ? 'card' : 'flag', action: fix } }); out.push(f); return f; };
+    subject: `${lc(file)}|${msg.replace(/\d+/g, '#')}`, row: r?.id ?? undefined, fix: { tier: !root || under(file, root) ? 'card' : 'flag', action: fix, kind: severity === 'info' ? CHECKS[check].info ?? CHECKS[check].fix.kind : CHECKS[check].fix.kind, ways: CHECKS[check].fix.ways } }); out.push(f); return f; };
   const hand = rows.filter(r => r.exists !== false && !r.generated && T(r) != null);
   const byPath = new Map(rows.map(r => [lc(r.path), r]));
 

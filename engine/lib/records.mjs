@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { agentName } from './names.mjs';
 import path from 'node:path';
-import { writeViews } from './views.mjs';
+import { readText, readTextA, snap, newSnap, prime, forget } from './fsnap.mjs';
+import { writeViews, writeViewsAsync } from './views.mjs';
 import { isAncestor, refTip } from './dlvgit.mjs';
 import { validLabels } from './fed.mjs';
 import { ownerPickGuard, carriesOwnerPick, ownerWordsOf, choiceKeyOf } from './qreconcile.mjs';
@@ -194,19 +195,27 @@ export const recordsFile = (stateDir, kind = 'question') => path.join(stateDir, 
 // META-GTP-FED piece 3: <state>/node.json { id } = a node's own state dir (norn node run writes it): its new ids carry the id
 export function nodePrefix(stateDir) {
   let j;
-  try { j = JSON.parse(fs.readFileSync(path.join(stateDir, 'node.json'), 'utf8')); } catch { return null; }
+  try { j = JSON.parse(readText(path.join(stateDir, 'node.json'))); } catch { return null; }   // snapshot-aware (recordAsync primes it)
   return typeof j?.id === 'string' && /^[a-z][a-z0-9]{0,15}$/.test(j.id) ? j.id : null;
 }
 
 // ---------- read ----------
-export function readEvents(file) {
-  if (!fs.existsSync(file)) return [];
-  const raw = fs.readFileSync(file, 'utf8');
+export function readEvents(file) {   // META-DASH-ASYNC R1: snapshot-aware (lib/fsnap.mjs): a lookup inside a primed dash request
+  const raw = readText(file);
+  return raw === null ? [] : parseEvents(file, raw);
+}
+/** the jsonl text of one records file -> its events (pure; the sync and the async reader share it) */
+export function parseEvents(file, raw) {
   if (raw === '') return [];
   if (!raw.endsWith('\n')) throw new RecordError(`${file}: torn last line (no newline) - integrity error`, 1);
   return raw.slice(0, -1).split('\n').map((l, i) => {
     try { return JSON.parse(l); } catch { throw new RecordError(`${file}: line ${i + 1} is not JSON - integrity error`, 1); }
   });
+}
+/** META-DASH-ASYNC R1: readEvents on fs.promises (the dash server's request paths never block the event loop on a records read) */
+export async function readEventsAsync(file) {
+  const raw = await readTextA(file);   // lands in the request snapshot: a readEvents of the same file is a lookup
+  return raw === null ? [] : parseEvents(file, raw);
 }
 
 // ---------- fold (pure) ----------
@@ -238,11 +247,14 @@ export function fold(events) {
   return { seq, next, items };
 }
 
-export const loadState = stateDir => {
-  const a = fold(readEvents(recordsFile(stateDir, 'question')));
-  const b = fold(readEvents(recordsFile(stateDir, 'run')));
-  return { seq: a.seq, runs_seq: b.seq, next: { ...a.next, ...b.next }, items: { ...a.items, ...b.items } };
-};
+const joinFolds = (a, b) => ({ seq: a.seq, runs_seq: b.seq, next: { ...a.next, ...b.next }, items: { ...a.items, ...b.items } });
+// META-DASH-ASYNC R1: inside a primed dash request the snapshot's fold (lib/fsnap.mjs) - a lib that folds again (limitgate, ...) reads nothing
+export const loadState = stateDir => snap.getStore()?.folds.get(stateDir) ?? joinFolds(fold(readEvents(recordsFile(stateDir, 'question'))), fold(readEvents(recordsFile(stateDir, 'run'))));
+/** META-DASH-ASYNC R1: loadState on fs.promises (the two records files read concurrently on the threadpool; the same fold) */
+export async function loadStateAsync(stateDir) {
+  const [qa, ru] = await Promise.all([readEventsAsync(recordsFile(stateDir, 'question')), readEventsAsync(recordsFile(stateDir, 'run'))]);
+  return joinFolds(fold(qa), fold(ru));
+}
 
 // ---------- lock (exclusive create, retry 25 ms, stale after 10 s) ----------
 const sleepMs = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -262,6 +274,22 @@ export function withLock(lockFile, fn, { retryMs = 25, staleMs = 10000, timeoutM
     }
   }
   try { return fn(); } finally { try { fs.unlinkSync(lockFile); } catch { /* already gone */ } }
+}
+/** withLock on fs.promises (the dash server's writes): the same lock file, retry, stale break and timeout; the wait is a timer */
+export async function withLockAsync(lockFile, fn, { retryMs = 25, staleMs = 10000, timeoutMs = 60000 } = {}) {
+  const t0 = Date.now(), fp = fs.promises;
+  for (;;) {
+    try { await fp.writeFile(lockFile, JSON.stringify({ pid: process.pid, ts: new Date().toISOString() }), { flag: 'wx' }); break; }
+    catch (e) {
+      if (e.code !== 'EEXIST' && e.code !== 'EPERM' && e.code !== 'EACCES') throw e;
+      let ts = null;
+      try { ts = Date.parse(JSON.parse(await fp.readFile(lockFile, 'utf8')).ts); } catch { /* being written / removed */ }
+      if (ts !== null && Date.now() - ts > staleMs) { try { await fp.unlink(lockFile); } catch { /* someone else broke it */ } continue; }
+      if (Date.now() - t0 > timeoutMs) throw new RecordError(`lock busy: ${lockFile} (held > ${timeoutMs} ms)`, 1);
+      await new Promise(r => setTimeout(r, retryMs));
+    }
+  }
+  try { return await fn(); } finally { try { await fp.unlink(lockFile); } catch { /* already gone */ } }
 }
 
 // ---------- validation ----------
@@ -683,20 +711,54 @@ function answerFrom(st, ev) {
 // writeOrigin.run({ via: 'remote:<device>' }) and clears it when the request ends; the envelope then carries via. Unset = no key (as before).
 export const writeOrigin = new AsyncLocalStorage();
 export function record(stateDir, evIn, opts = {}) {
+  const c = recordCtx(stateDir, evIn, opts);
+  fs.mkdirSync(stateDir, { recursive: true });
+  c.setPfx(nodePrefix(stateDir));
+  try {
+    return withLock(c.lock, () => {
+      const r = c.plan();
+      const fd = fs.openSync(c.file, 'a');
+      try { fs.writeSync(fd, r.text); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+      if (r.views) { const v = writeViews(stateDir, r.st, opts.views || {}); if (opts.onViews) opts.onViews(v); }
+      return r.out;
+    });
+  } catch (e) { if (e instanceof RecordError && e.refusal) noteRefusal(stateDir, e.message, e.refusal); throw e; }
+}
+/** META-DASH-ASYNC R1 (option a): record() for the dash server's POST paths - the same lock file, checks and envelope, but the lock,
+ * the reads (primed into a fresh snapshot under the lock), the append + fsync and the views on fs.promises: a slow syscall delays
+ * only this write, never the event loop. The CLI keeps record(). */
+export async function recordAsync(stateDir, evIn, opts = {}) {
+  const c = recordCtx(stateDir, evIn, opts), fp = fs.promises;
+  await fp.mkdir(stateDir, { recursive: true });
+  try {
+    return await withLockAsync(c.lock, () => snap.run(newSnap(), async () => {
+      await prime({ files: [c.file, recordsFile(stateDir, 'lane'), path.join(stateDir, 'node.json')] });
+      c.setPfx(nodePrefix(stateDir));
+      const r = c.plan();
+      const fh = await fp.open(c.file, 'a');
+      try { await fh.write(r.text); await fh.sync(); } finally { await fh.close(); }
+      if (r.views) { const v = await writeViewsAsync(stateDir, r.st, opts.views || {}); if (opts.onViews) opts.onViews(v); }
+      return r.out;
+    }));
+  } catch (e) { if (e instanceof RecordError && e.refusal) noteRefusal(stateDir, e.message, e.refusal); throw e; }
+  finally { if (snap.getStore()) { snap.getStore().folds.delete(stateDir); forget(c.file); } }   // the caller's snapshot reads the write
+}
+function recordCtx(stateDir, evIn, opts) {
   const many = Array.isArray(evIn), evs = many ? evIn : [evIn];   // an array = one all-or-nothing batch of one kind (S3 --each)
   if (!evs.length) fail('no events');
   const kind = evs[0].kind;
   if (evs.some(e => e.kind !== kind)) fail('a batch holds one record kind');
   if (!KINDS[kind]) fail(`unknown kind ${JSON.stringify(kind)} (question | decision | directive | lane | run | mail)`);
-  fs.mkdirSync(stateDir, { recursive: true });
+  if (snap.getStore()) { snap.getStore().folds.delete(stateDir); forget(recordsFile(stateDir, kind)); }   // META-DASH-ASYNC R1: a write inside a request: its snapshot reads again
   const file = recordsFile(stateDir, kind);
   const lock = file.replace(/\.jsonl$/, '.lock');
   const now = opts.now || (() => new Date());
   const run = opts.run !== undefined ? opts.run : (process.env.META_RUN_ID && launchedHere(stateDir, process.env) ? process.env.META_RUN_ID : null);
-  const pfx = nodePrefix(stateDir);
+  let pfx = null;
   const via = writeOrigin.getStore()?.via ?? null;   // C6: a remote device's write (the dashboard sets it per request)
-  try { return recordLocked(); } catch (e) { if (e instanceof RecordError && e.refusal) noteRefusal(stateDir, e.message, e.refusal); throw e; }
-  function recordLocked() { return withLock(lock, () => {
+  return { file, lock, setPfx: v => { pfx = v; }, plan };
+  /** the checked batch (no write): its jsonl text, the folded state after it, whether the views follow, the caller's result */
+  function plan() {
     const base = readEvents(file);
     let st = fold(base);
     const batch = [];
@@ -776,14 +838,9 @@ export function record(stateDir, evIn, opts = {}) {
       }
     }
     }
-    const fd = fs.openSync(file, 'a');
-    try { fs.writeSync(fd, batch.map(e => JSON.stringify(e) + '\n').join('')); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-    if (opts.views !== false && KINDS[kind].file === 'records') {
-      const v = writeViews(stateDir, st, opts.views || {});
-      if (opts.onViews) opts.onViews(v);
-    }
-    return many ? primaries : primaries[0];
-  }); }
+    return { text: batch.map(e => JSON.stringify(e) + '\n').join(''), st, views: opts.views !== false && KINDS[kind].file === 'records',
+      out: many ? primaries : primaries[0] };
+  }
 }
 /**
  * META-CHECKIN-GUARDS R1: a guard's refusal noted on the refused writer's own RUNNING run (env META_RUN_ID, when it belongs to this

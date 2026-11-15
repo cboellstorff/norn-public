@@ -4,34 +4,58 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseCodexLog } from './runs.mjs';
 import { runName } from './names.mjs';
-import { findTranscript, usageCtx } from './harness/claude.mjs';
+import { findTranscript, findTranscriptA, usageCtx } from './harness/claude.mjs';
 import { ctxView } from './ctxlimit.mjs';
-import { findRollout } from './harness/codex.mjs';
+import { critiqueOfNode } from './critique.mjs';
+import { findRollout, findRolloutA } from './harness/codex.mjs';
+import { statS, statA, readdirS, readdirA, readJsonS, readText as readTextS, readTextA } from './fsnap.mjs';
 
 const RECENT_MS = 2 * 3600000;   // ended runs stay in the tree for 2 h
 const BURN_MS = 30 * 60000;      // "burning" window (design 6)
 
 // tail(file, cache, onRecord): parse the complete lines appended since the cached offset; returns { c, bytesRead }
-export function tail(file, cache, init, onRecord) {
-  let st; try { st = fs.statSync(file); } catch { return null; }
+// META-DASH-ASYNC R1: the stat is snapshot-aware; tailA (fs.promises) advances the same cache first, so inside a primed request the
+// sync tail finds offset == size and reads nothing
+function tailStart(file, cache, init, st) {
   let c = cache.get(file);
   if (!c || st.size < c.offset) { c = { offset: 0, ...init() }; cache.set(file, c); }
+  return c;
+}
+function tailParse(c, buf, n, onRecord) {
+  const nl = buf.subarray(0, n).lastIndexOf(10);
+  if (nl < 0) return 0;
+  for (const line of buf.subarray(0, nl).toString('utf8').split('\n')) {
+    if (!line.trim()) continue;
+    let j; try { j = JSON.parse(line); } catch { continue; }
+    onRecord(c, j);
+  }
+  c.offset += nl + 1; return nl + 1;
+}
+export function tail(file, cache, init, onRecord) {
+  const st = statS(file); if (!st) return null;
+  const c = tailStart(file, cache, init, st);
   let bytesRead = 0;
   if (st.size > c.offset) {
     const fd = fs.openSync(file, 'r');
     try {
       const buf = Buffer.alloc(st.size - c.offset);
-      const n = fs.readSync(fd, buf, 0, buf.length, c.offset);
-      const nl = buf.subarray(0, n).lastIndexOf(10);
-      if (nl >= 0) {
-        for (const line of buf.subarray(0, nl).toString('utf8').split('\n')) {
-          if (!line.trim()) continue;
-          let j; try { j = JSON.parse(line); } catch { continue; }
-          onRecord(c, j);
-        }
-        c.offset += nl + 1; bytesRead = nl + 1;
-      }
+      bytesRead = tailParse(c, buf, fs.readSync(fd, buf, 0, buf.length, c.offset), onRecord);
     } finally { fs.closeSync(fd); }
+  }
+  return { c, bytesRead };
+}
+/** tail on fs.promises (the same cache and parse) */
+export async function tailA(file, cache, init, onRecord) {
+  const st = await statA(file); if (!st) return null;
+  const c = tailStart(file, cache, init, st);
+  let bytesRead = 0;
+  if (st.size > c.offset) {
+    const at = c.offset, fh = await fs.promises.open(file, 'r');
+    try {
+      const buf = Buffer.alloc(st.size - at);
+      const { bytesRead: n } = await fh.read(buf, 0, buf.length, at);
+      if (c.offset === at) bytesRead = tailParse(c, buf, n, onRecord);   // a concurrent tailA of the same file may have advanced it
+    } finally { await fh.close(); }
   }
   return { c, bytesRead };
 }
@@ -62,13 +86,13 @@ export function transcriptInfo(file, cache = new Map(), { now = Date.now() } = {
   return { model: c.model, effort: c.effort, first: c.first, last: c.last, ctx: c.ctx, peak: c.peak, cacheR, burn30, bytesRead: r.bytesRead };
 }
 
-const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
+const readJson = readJsonS;
 
+const subNames = ents => ents.map(e => e.name).filter(n => /^agent-.+\.jsonl$/.test(n)).sort();
+const subDir = mainFile => path.join(mainFile.replace(/\.jsonl$/, ''), 'subagents');
 /** Subagents of a main transcript: <sid>/subagents/agent-<id>.jsonl + agent-<id>.meta.json. */
 export function subagents(mainFile, cache = new Map(), { now = Date.now() } = {}) {
-  const dir = path.join(mainFile.replace(/\.jsonl$/, ''), 'subagents');
-  let names = [];
-  try { names = fs.readdirSync(dir).filter(n => /^agent-.+\.jsonl$/.test(n)).sort(); } catch { return []; }
+  const dir = subDir(mainFile), names = subNames(readdirS(dir));
   return names.map(n => {
     const id = n.slice('agent-'.length, -'.jsonl'.length);
     const meta = readJson(path.join(dir, `agent-${id}.meta.json`)) || {};
@@ -81,15 +105,17 @@ export function subagents(mainFile, cache = new Map(), { now = Date.now() } = {}
 }
 
 /** Codex rollout: the last token_count event -> { total, last, window, ts }. */
+const cInit = () => ({ total: null, last: null, window: null, ts: null });
+function onRollout(c, j) {
+  const info = j.type === 'event_msg' && j.payload?.type === 'token_count' ? j.payload.info : null;
+  if (!info) return;
+  c.total = info.total_token_usage?.total_tokens ?? c.total;
+  c.last = info.last_token_usage?.total_tokens ?? c.last;
+  c.window = info.model_context_window ?? c.window;
+  c.ts = j.timestamp ?? c.ts;
+}
 export function codexInfo(file, cache = new Map()) {
-  const r = tail(file, cache, () => ({ total: null, last: null, window: null, ts: null }), (c, j) => {
-    const info = j.type === 'event_msg' && j.payload?.type === 'token_count' ? j.payload.info : null;
-    if (!info) return;
-    c.total = info.total_token_usage?.total_tokens ?? c.total;
-    c.last = info.last_token_usage?.total_tokens ?? c.last;
-    c.window = info.model_context_window ?? c.window;
-    c.ts = j.timestamp ?? c.ts;
-  });
+  const r = tail(file, cache, cInit, onRollout);
   return r ? { total: r.c.total, last: r.c.last, window: r.c.window, ts: r.c.ts } : null;
 }
 
@@ -97,7 +123,7 @@ export function codexInfo(file, cache = new Map()) {
 export { findTranscript } from './harness/claude.mjs';
 export { findRollout } from './harness/codex.mjs';
 
-const readText = f => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
+const readText = f => { try { return readTextS(f); } catch { return null; } };
 const ended = r => r.state !== 'running';
 const QUEUE_STATES = ['queued', 'filled', 'withdrawn'];
 // a queue entry is no session: the Agents tab lists the queued ones apart (META-GT12); ended runs stay RECENT_MS
@@ -105,6 +131,27 @@ const shown = (r, now) => !QUEUE_STATES.includes(r.state) && !(ended(r) && now -
 /** The run ids the Agents tree lists now (the Ledger tab links only those, LEDGER-UX R1). */
 export const shownRunIds = (runs, now = Date.now()) => new Set([...runs].filter(r => r.kind === 'run' && shown(r, now)).map(r => r.id));
 
+/**
+ * META-DASH-ASYNC R1: every file agentsTree(runs, o) reads, read on fs.promises into the request snapshot (lib/fsnap.mjs) and the
+ * transcript / rollout tails advanced in o.cache - the same file choices as agentsTree, so its sync reads are lookups after this.
+ */
+export async function primeAgents(runs, o = {}) {
+  const now = o.now ?? Date.now(), cache = o.cache || new Map();
+  const one = async r => {
+    const d = r.data || {}, end = r.end || {}, exe = d.executor || '';
+    if (exe.startsWith('codex')) {
+      const b = d.log ? parseCodexLog(await readTextA(d.log).catch(() => null)) : {};
+      const rollout = await findRolloutA(o.codexDir, end.codex_session ?? b.session_id);
+      if (rollout) await tailA(rollout, cache, cInit, onRollout);
+    } else if (d.kind !== 'cli') {
+      const file = end.transcript || d.transcript || await findTranscriptA(o.projectsDir, d.session_id);
+      if (!file || !await tailA(file, cache, tInit, onTranscript)) return;
+      const dir = subDir(file), names = subNames(await readdirA(dir));
+      await Promise.all(names.flatMap(n => [readTextA(path.join(dir, n.replace(/\.jsonl$/, '.meta.json'))).catch(() => null), tailA(path.join(dir, n), cache, tInit, onTranscript)]));
+    }
+  };
+  await Promise.all([...runs].filter(x => x.kind === 'run' && shown(x, now)).map(one));
+}
 /**
  * Agents tree (design 6): one root per RUN (running, or ended < 2 h ago) + one root per talk session.
  * o: { projectsDir, codexDir, cache (Map, kept by the server), now, policy (the project's: each run's context lines), sessions [{name, model, effort, alive, context}] }
@@ -118,6 +165,8 @@ export function agentsTree(runs, o = {}) {
     const d = r.data || {}, end = r.end || {};
     const node = { id: r.id, name: runName(r), kind: d.kind ?? null, executor: d.executor ?? null, lane: d.lane ?? null, stage: d.stage ?? null,
       model: end.model ?? d.model ?? null, effort: end.effort ?? d.effort ?? null, state: r.state, outcome: end.outcome ?? null,
+      critique: d.class === 'planning' ? critiqueOfNode(runs, r.id) : null,   // META-DOD 3: the plan's review
+      dod_ready: d.dod_ready ?? null, dod: end.dod ? { ok: end.dod.ok, why: end.dod.why ?? null, tests: (end.dod.tests || []).map(({ name, code, counts, log }) => ({ name, code, counts, log })) } : null,   // META-DOD 1
       started: r.created, age_min: Math.round((now - Date.parse(r.created)) / 60000), budget_min: d.budget_min ?? null,
       ctx: null, ctx_peak: null, ctx_limit: null, ctx_hard: null, cacheR: null, burn30: null, tokens: null, tokens_src: null, children: [] };
     const exe = d.executor || '';

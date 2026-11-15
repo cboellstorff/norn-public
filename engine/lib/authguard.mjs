@@ -9,6 +9,7 @@
 // The record is machine-wide: <state home>/auth-down.json (the CLI login is per machine; the state home holds every project + locks).
 import fs from 'node:fs';
 import path from 'node:path';
+import { readJsonS } from './fsnap.mjs';
 import { spawnSync } from 'node:child_process';
 import { authPatterns, executorInfo } from './executors.mjs';
 import { resolveShim } from './paths.mjs';
@@ -25,7 +26,7 @@ export const AUTH_RESUME_PROMPT = 'Your previous turn was cut off by an authenti
 
 const home = state => path.dirname(path.resolve(state));
 export const authFile = state => path.join(home(state), 'auth-down.json');
-export function readAuth(state) { try { return JSON.parse(fs.readFileSync(authFile(state), 'utf8')) || {}; } catch { return {}; } }
+export function readAuth(state) { return readJsonS(authFile(state)) || {}; }   // META-DASH-ASYNC R1: snapshot-aware (the dash primes authFile)
 function writeAuth(state, all) {
   const f = authFile(state), t = `${f}.${process.pid}.tmp`;
   fs.mkdirSync(path.dirname(f), { recursive: true });

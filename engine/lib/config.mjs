@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { providerProblems } from './executors.mjs';
 import { expandPresets } from './presets.mjs';
+import { readText } from './fsnap.mjs';
 
 export class ConfigError extends Error {}
 
@@ -82,7 +83,10 @@ function walk(v, f, at = '$') {
 function readJson(file) {
   const label = path.basename(file);
   let obj;
-  try { obj = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, '')); } catch (e) { throw new ConfigError(`${label}: ${e.code === 'ENOENT' ? 'not found: ' + fwd(file) : e.message}`); }
+  try {   // META-DASH-ASYNC R1: snapshot-aware (lib/fsnap.mjs; BOM stripped): a lookup inside a primed dash request
+    const t = readText(file); if (t === null) throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+    obj = JSON.parse(t);
+  } catch (e) { throw new ConfigError(`${label}: ${e.code === 'ENOENT' ? 'not found: ' + fwd(file) : e.message}`); }
   return { label, obj };
 }
 

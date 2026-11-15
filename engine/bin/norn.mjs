@@ -16,6 +16,8 @@ import { instructionsView, formatInstructions, formatSuggest, paragraphs, applyS
 import { auditScope, auditPrompt, auditStamp, writeStamp, auditsDir, auditsView, AUDIT_MODEL, AUDIT_EFFORT } from '../lib/audit.mjs';
 import { openCards } from '../lib/rules.mjs';
 import os from 'node:os';
+import { readyGate } from '../lib/dod.mjs';
+import { critiqueHolds, critiqueSkip, critiqueFiles, critiquePrompt, classExecutor } from '../lib/critique.mjs';
 import { startRun, stopRun, requeueRun, fillQueue, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt } from '../lib/runs.mjs';
 import { parseAfter, parseInputs, AfterError, makeEval, readyWords } from '../lib/after.mjs';
 import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../lib/epics.mjs';
@@ -65,6 +67,7 @@ import { usageWeek, formatUsageWeek } from '../lib/usageweek.mjs';
 import { slopCmd } from '../lib/slop/cli.mjs';
 import { testsCmd } from '../lib/testscli.mjs';
 import { openBlocks, findingLine } from '../lib/slop/host.mjs';
+import { scopeCheck, denyJson } from '../lib/scope.mjs';
 
 const USAGE = {
   'add question': 'norn rec add question --lane L --title T [--body TEXT | --body-file F] [--option "key|text|cost"]... [--recommend "key|why"] [--class i..v] [--blocks a,b] [--source S] [--owner-only]',
@@ -310,14 +313,14 @@ function setupCmd(argv, env, out, err) {
 
 // ---------- S4: norn run / norn stop / norn hook session ----------
 const RUN_USAGE = {
-  run: 'norn run --executor claude|codex-sol|codex-astra|fake|<configured typed executor name> --lane L --brief F [--parent RUN-n] [--worktree W] [--notes F] [--stage S] [--round N] [--budget-min N] [--agent A] [--model M] [--effort E] [--class C (the work class stamped on the run; else derived: workclass.mjs)] [--project <name | project.json> | --state D] [--locks D] [--machine F] [--budget F] [--no-tick] [--queue] [--wait (block until the run ends; exit 0 = DONE)] [--after "q:Q-n[:answered|applied],dlv:DLV-n[:merged],run:RUN-n[:done|ended|merged],dir:DIR-n[:done]"] [--inputs DLV-n,..] [--epic EP-n] [--priority P0|P1|P2|P3 (default: the epic priority)] [--item RM-n (links the run to its roadmap item)] [--labels a,b (always QUEUED; started by a machine serving every label: machine.json fed.labels, default its OS)]    exit 3 = worktree held, 4 = worker cap (--queue: QUEUED instead, exit 0; --after: always QUEUED, started by the fill once every condition is met, held as "needs a ruling" when one can no longer be met; exit 3 also = a second queued / running run of the same lane + stage + round)',
+  run: 'norn run --executor claude|codex-sol|codex-astra|fake|<configured typed executor name> --lane L --brief F [--parent RUN-n] [--worktree W] [--notes F] [--stage S] [--round N] [--budget-min N] [--agent A] [--model M] [--effort E] [--class C (the work class stamped on the run; else derived: workclass.mjs)] [--project <name | project.json> | --state D] [--locks D] [--machine F] [--budget F] [--no-tick] [--queue] [--wait (block until the run ends; exit 0 = DONE)] [--after "q:Q-n[:answered|applied],dlv:DLV-n[:merged],run:RUN-n[:done|ended|merged],dir:DIR-n[:done]"] [--inputs DLV-n,..] [--epic EP-n] [--priority P0|P1|P2|P3 (default: the epic priority)] [--item RM-n (links the run to its roadmap item)] [--labels a,b (always QUEUED; started by a machine serving every label: machine.json fed.labels, default its OS)]    exit 3 = worktree held, 4 = worker cap, 6 = the brief lacks its Ready lines Scope: / Tests: / Done: (policy.dod.ready refuse) (--queue: QUEUED instead, exit 0; --after: always QUEUED, started by the fill once every condition is met, held as "needs a ruling" when one can no longer be met; exit 3 also = a second queued / running run of the same lane + stage + round)',
   stop: 'norn stop RUN-n --as owner|dashboard|controller|checkin [--why W (required for checkin)] [--project project.json | --state D] [--locks D]    (a queued run is withdrawn; a check-in withdraws only a QUEUED run - a kill stays owner / controller)',
-  requeue: 'norn requeue RUN-n --after "<conditions as norn run --after> | none" --why W --as owner|dashboard|controller|checkin [--project project.json | --state D]    (a QUEUED run re-queued with new conditions: same launch args; the old one withdrawn naming the new one; every queued run waiting on it rewired onto it; exit 3 = not queued)',
+  requeue: 'norn requeue RUN-n --after "<conditions as norn run --after> | none" [--not-before ISO|none] --why W --as owner|dashboard|controller|checkin [--project project.json | --state D]    (a QUEUED run re-queued with new conditions: same launch args; the old one withdrawn naming the new one; every queued run waiting on it rewired onto it; exit 3 = not queued)',
   hook: 'norn hook session --state D | --project project.json    (Claude Code SessionStart / SessionEnd hook; payload on stdin; always exits 0)',
 };
 // SHIP-READY minor: a misused `norn run` says the short form, never the full option list with its record-id syntax
 const RUN_SHORT = 'norn run --executor E --lane L --brief F [options]    (every option: norn run --help)';
-const RUN_FLAGS = ['executor', 'labels', 'after', 'inputs', 'epic', 'priority', 'parent', 'via', 'lane', 'brief', 'worktree', 'notes', 'stage', 'round', 'budget-min', 'agent', 'model', 'effort', 'class', 'project', 'state', 'locks', 'machine', 'budget', 'no-tick!', 'queue!', 'as', 'why', 'wait!', 'item'];
+const RUN_FLAGS = ['executor', 'labels', 'after', 'inputs', 'epic', 'priority', 'parent', 'via', 'lane', 'brief', 'worktree', 'notes', 'stage', 'round', 'budget-min', 'agent', 'model', 'effort', 'class', 'project', 'state', 'locks', 'machine', 'budget', 'no-tick!', 'queue!', 'as', 'why', 'wait!', 'item', 'not-before'];
 function runFlags(cmd, argv) {
   const flags = {}, pos = [];
   for (let i = 0; i < argv.length; i++) {
@@ -428,12 +431,14 @@ function runCmd(argv, env, out, err) {
   try {
     if (cmd === 'hook') return hookCmd(rest, env, err);
     const { flags, pos } = runFlags(cmd, rest);
+    if (flags['not-before'] !== undefined && cmd !== 'requeue') throw new RunError('--not-before is a norn requeue flag');
     const { project, state, locks } = where(flags, env);
     if (cmd === 'requeue') {   // META-AUTONOMY R1
       if (pos.length !== 1) throw new RunError('requeue needs one RUN id');
       if (flags.after === undefined) throw new RunError('--after is required (the new conditions; none = no conditions)');
-      const r = requeueRun({ state, run: pos[0], after: flags.after === 'none' ? [] : afterOf(flags.after), by: flags.as || env.META_ROLE, why: flags.why });
-      out(`REQUEUED ${r.run} -> ${r.next} (after ${flags.after})${r.rewired.length ? `; rewired ${r.rewired.join(', ')}` : ''}`);
+      const nb = flags['not-before'];
+      const r = requeueRun({ state, run: pos[0], after: flags.after === 'none' ? [] : afterOf(flags.after), by: flags.as || env.META_ROLE, why: flags.why, notBefore: nb === 'none' ? null : nb });
+      out(`REQUEUED ${r.run} -> ${r.next} (after ${flags.after}${nb ? `; not before: ${nb}` : ''})${r.rewired.length ? `; rewired ${r.rewired.join(', ')}` : ''}`);
       for (const q of fillQueue(state)) out(`queue: ${q.queued} -> STARTED ${q.next}`);   // met now = starts now (as norn run --after)
       return 0;
     }
@@ -453,11 +458,19 @@ function runCmd(argv, env, out, err) {
       err(flags.worktree ? `error: worktree not found: ${wt}` : `error: lane ${o.lane} has no worktree (${wt}): create it with: norn lane new ${o.lane} --project ${project ? project.file.replace(/\\/g, '/') : '<project.json>'}`);
       return 2;
     }
+    // META-DOD 1 (DIR-68): the Definition of Ready - a brief without Scope: / Tests: / Done: is refused (exit 6) or warned per policy.dod.ready
+    const rg = readyGate({ brief: o.brief, policy: project?.policy, stage: o.stage, gate: project?.merge?.gate });
+    if (rg.refused) throw new RunRefused(rg.refused, 6);
+    if (rg.dod) o.dod = { ...rg.dod, ...(o.notes ? { notes: o.notes } : {}) };
     if (flags.item) openItem(state, flags.item);   // META-ROADMAP S3: refuse before any run is recorded
+    // META-DOD 3: a brief naming a plan whose review is not settled waits for it (critique.mjs; met now = no condition)
+    const holds = critiqueHolds(state, o.brief);
+    if (holds.length) o.after = [...(o.after || []), ...holds];
     const r = startRun(flags.queue ? { ...o, queue: true } : o);
     if (flags.item) linkItem(state, flags.item, 'run:' + r.run, 'launcher', err);
     if (r.queued) {
       out(`QUEUED ${r.run} lane ${o.lane} ${ex} ${o.model} ${o.effort} position ${r.position} (${r.why})`);
+      for (const c of holds) out(`WAITS ${r.run} for the plan review ${c.id} (after run:${c.id}:reviewed: a clean review releases it, findings wait for the check-in's review)`);
       if (o.after?.length || o.labels?.length) for (const q of fillQueue(state)) out(`queue: ${q.queued} -> STARTED ${q.next}`);   // S4: met now = starts now; FED: served here = starts now
       return 0;
     }
@@ -1222,11 +1235,12 @@ Plumbing:
   norn node                        one federation pull-agent job
   norn migrate                     bring local/machine.json (or an old meta dir) to the current shape
   norn hook                        the Claude Code session hook
+  norn scope                       the PreToolUse hook: what a run may touch
   norn eval                        replay check-ins against a copy of a state dir`;
 function usageOf(c) {
   const u = { rec: ALL_USAGE, migrate: MIGRATE_USAGE, ...SETUP_USAGE, ...RUN_USAGE, ...S5_USAGE, dash: DASH_USAGE, smoke: 'norn smoke [--keep] [--update-goldens]',
     calib: CALIB_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
-    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE,
+    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
     node: NODE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
   return u && 'usage: ' + u.replace(/^usage: /, '');
 }
@@ -1288,8 +1302,10 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'plan') return planCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'instructions') return instructionsCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'audit') return auditCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'critique') return critiqueCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'mergeq') return mergeqCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'mail') return mailCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'scope') return scopeCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'cv') return cvCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'guard') return guardCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'slop') return slopCmd(argv.slice(1), { env, out, err, where: f => (f.project || f.state || env.META_STATE || env.META_PROJECT ? where(f, env) : null) });
@@ -1539,6 +1555,36 @@ function instructionsCmd(argv, env, out, err) {
     return 0;
   } catch (e) {
     if (e instanceof RunError || e instanceof ConfigError || e instanceof RecordError) { err('error: ' + e.message); err('usage: ' + INS_USAGE); return 2; }
+    throw e;
+  }
+}
+
+// ---------- META-DOD 3: norn critique --run RUN-n (the plan review; the supervisor calls it when a planning run ends DONE) ----------
+const CRITIQUE_USAGE = 'norn critique --run RUN-n --project <name | project.json> [--state D] [--locks D] [--machine F] [--budget F] [--no-tick]    (queues ONE read-only review of the plan run\'s NOTES on the policy review executor, per policy.dod.critique)';
+function critiqueCmd(argv, env, out, err) {
+  try {
+    const flags = {};
+    for (let i = 0; i < argv.length; i++) {
+      const a = argv[i];
+      if (a === '--no-tick') { flags['no-tick'] = true; continue; }
+      if (!['--run', '--project', '--state', '--locks', '--machine', '--budget'].includes(a)) throw new RunError(`unexpected ${a}`);
+      if (i + 1 >= argv.length) throw new RunError(`${a} needs a value`);
+      flags[a.slice(2)] = argv[++i];
+    }
+    if (!flags.run) throw new RunError('--run RUN-n is required (the plan run)');
+    const w = where(flags, env), { project, state } = w;
+    if (!project) throw new RunError('norn critique needs --project (the policy and the review executor come from project.json)');
+    const items = loadState(state).items, it = items[flags.run], skip = critiqueSkip(it, items, project.policy);
+    if (skip) { out(`SKIPPED ${flags.run}: ${skip}`); return 0; }
+    const plan = String(it.data.notes).replace(/\\/g, '/'), files = critiqueFiles(plan), pick = classExecutor(project, 'review');
+    fs.writeFileSync(files.brief, critiquePrompt({ plan, brief: it.data.brief, filter: project.policy?.dod?.critique_filter, findings: files.findings }));
+    const o = runSpec({ executor: pick.executor, agent: pick.agent, model: pick.model, effort: pick.effort, class: 'review', lane: it.data.lane, stage: 'REVIEW',
+      brief: files.brief, worktree: it.data.worktree, notes: files.findings, machine: flags.machine, budget: flags.budget, 'no-tick': flags['no-tick'], as: 'launcher' }, env, w);
+    const r = startRun({ ...o, readonly: true, critique: { of: it.id, plan }, queue: true });
+    out(`${r.queued ? 'QUEUED' : 'STARTED'} ${r.run} review of ${it.id} (${plan}): ${o.executor}${o.agent ? ' ' + o.agent : ''} ${o.model ?? '-'} ${o.effort ?? '-'}, read-only; findings -> ${files.findings}`);
+    return 0;
+  } catch (e) {
+    if (e instanceof RunError || e instanceof ConfigError || e instanceof RecordError || e instanceof RunRefused) { err('error: ' + e.message); err('usage: ' + CRITIQUE_USAGE); return 2; }
     throw e;
   }
 }
@@ -2200,6 +2246,21 @@ function cvCmd(argv, env, out, err) {
     if (e instanceof RunError || e instanceof ConfigError) { err('error: ' + e.message); err(CV_USAGE); return 2; }
     throw e;
   }
+}
+
+// ---------- META-DOD 2: norn scope check --run RUN-n --state D (the PreToolUse hook; payload on stdin) ----------
+const SCOPE_USAGE = 'norn scope check --run RUN-n --state D    (the PreToolUse hook of a guarded run: the payload on stdin; a refusal prints the deny JSON with its reason; exit 0)';
+function scopeCmd(argv, env, out, err) {
+  const f = {};
+  for (let i = 1; i < argv.length; i += 2) { const k = { '--run': 'run', '--state': 'state' }[argv[i]]; if (!k || argv[i + 1] === undefined) { err('error: unexpected ' + argv[i]); err('usage: ' + SCOPE_USAGE); return 2; } f[k] = argv[i + 1]; }
+  if (argv[0] !== 'check' || !f.state) { err('error: ' + (argv[0] !== 'check' ? 'scope needs: check' : 'check needs --state')); err('usage: ' + SCOPE_USAGE); return 2; }
+  // the hook's --run $META_RUN_ID: a shell that did not expand it leaves the literal - the env names the run then
+  const run = f.run && /^RUN-\d+$/.test(f.run) ? f.run : env.META_RUN_ID;
+  let payload = null;
+  try { payload = JSON.parse(fs.readFileSync(0, 'utf8')); } catch (e) { payload = { tool_name: '?', tool_input: {}, unreadable: e.message }; }
+  const r = scopeCheck({ state: path.resolve(f.state), run: run || '-', payload, env });
+  if (r.deny) out(denyJson(r.deny));
+  return 0;
 }
 
 const MAIL_USAGE = 'norn mail send --to RUN-n|lane:L|role:checkin|role:controller --subject S (--body B (<= 2 KB) | --body-file F) [--urgent] [--as checkin|controller]'

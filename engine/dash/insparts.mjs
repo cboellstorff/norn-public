@@ -35,3 +35,39 @@ export function insPart(v, name) {
   }
   throw Object.assign(new Error(`unknown part ${name} (one of ${INS_PARTS.join(', ')})`), { status: 400 });
 }
+
+// META-UX-BUILD S4 (REPORT s.2, owner DIR-65 "3) A"): the Context tab = the Instructions view's cost half, in the sub-view pattern
+// (subviews.mjs). The summary answer carries what Per role, Is it growing? and Check-ins per day show; Per file loads the files
+// part; the checks are one link away and load their lists.
+/** [id, label]: the 4 sub-views of Context (the stop rule: never a fifth) */
+export const CONTEXT_SUBS = [['role', 'Per role'], ['file', 'Per file'], ['growing', 'Is it growing?'], ['checkins', 'Check-ins per day']];
+/** the parts each Context view loads beyond the summary (checks = the page one link away, not a sub-view) */
+// META-UX-BUILD S5: hints and suggest (Tighten) are Slop rows now - the checks page no longer loads them
+export const contextParts = sub => (sub === 'file' ? ['files'] : sub === 'checks' ? INS_PARTS.filter(k => k !== 'hints' && k !== 'suggest') : []);
+const tk = n => (!Number.isFinite(n) ? '-' : n >= 1000 ? `~${(n / 1000).toFixed(1)}k` : `~${n}`);
+const roleOf = (m, key) => (m?.roles || []).find(r => r.key === key);
+
+/** the summary numbers (4): one check-in and one worker before any work (measured median), today's load, the check-in load trend */
+export function contextNumbers(v) {
+  const m = v.measured, c = roleOf(m, 'checkin'), w = roleOf(m, 'worker');
+  const pts = (m?.trend?.rows || []).filter(r => r.key === 'checkin' && Number.isFinite(r.median_turn1) && r.median_turn1 > 0).sort((a, b) => a.day.localeCompare(b.day));
+  const pct = pts.length > 1 ? Math.round(100 * (pts.at(-1).median_turn1 - pts[0].median_turn1) / pts[0].median_turn1) : null;
+  return [{ n: tk(c?.median_turn1), label: 'tokens: one check-in, before any work' }, { n: tk(w?.median_turn1), label: 'tokens: one worker, before any work' },
+    { n: tk(v.total), label: `tokens loaded today by ${v.sessions ?? 0} sessions` },
+    pct === null ? { n: '-', label: 'check-in load: no trend yet' } : { n: `${pct > 0 ? '+' : ''}${pct} %`, label: `check-in load since ${pts[0].day} (${pct < 0 ? 'shrinking' : pct > 0 ? 'growing' : 'flat'})`, cls: pct < 0 ? 'ok' : pct > 0 ? 'warn' : '' }];
+}
+
+// a launch profile (instructions.mjs profileKey: checkin:<tick> | chat | worker:<family>[:<agent>]) -> the measured role key (standing.mjs keyOf)
+const profileRole = k => { const [kind, fam] = k.split(':'); return kind === 'worker' ? (fam === 'claude' ? 'worker' : `worker (${fam})`) : kind; };
+/** the ONE standing table: each measured role (median per session) with the per-profile estimates of the same role beneath it;
+ * an estimate with no measured run is its own row (measured: null) */
+export function standingRows(measured, standing = []) {
+  const out = (measured?.roles || []).map(r => ({ key: r.key, measured: r, profiles: [] }));
+  for (const s of standing || []) {
+    const k = profileRole(s.key);
+    let r = out.find(x => x.key === k);
+    if (!r) out.push(r = { key: k, measured: null, profiles: [] });
+    r.profiles.push(s);
+  }
+  return out;
+}

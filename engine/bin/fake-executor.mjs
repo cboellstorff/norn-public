@@ -4,6 +4,7 @@
 // say (a line on stderr = the run log), cache_read (the final's cache_read_input_tokens, default 20), ms (wait before finishing), read (files read at the end, logged in NOTES; one missing = STOPPED), until (file: finish once it exists - no clock; a test releases it), pids (file: {pid, grandchild} - sleep mode spawns a grandchild so a tree kill can be checked).
 // It appends a NOTES block ending in the mode's marker and prints a claude-like `--output-format json` result on stdout.
 // FAKE_RESULT=<file> (env): a read-only agent's answer - its text is the final `result` and no NOTES block is written (META-ADOPT A2: a canned draft).
+// FAKE_RO_RESULT=<file> (env): the same for a read-only launch only (--read-only; META-DOD 3: a plan review beside its writing plan run).
 import fs from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 
@@ -53,7 +54,8 @@ const finishRun = () => {
   if (notes && reads.length) fs.appendFileSync(notes, reads.join('\n') + '\n');
   const marker = { done: '## DONE', sleep: '## DONE', orphan: '## DONE', stopped: '## STOPPED: c - fixture says so', handoff: '## HANDOFF\nnext: the fake step', 'no-marker': '## fake notes\nno end marker' }[mode];
   const resumed = resumeSid ? `resumed session ${resumeSid} prompt: ${resumePrompt}\n` : '';
-  const canned = process.env.FAKE_RESULT ? fs.readFileSync(process.env.FAKE_RESULT, 'utf8') : null;
+  const cannedFile = process.env.FAKE_RESULT || (process.argv.includes('--read-only') ? process.env.FAKE_RO_RESULT : undefined);
+const canned = cannedFile ? fs.readFileSync(cannedFile, 'utf8') : null;
   if (notes && marker && canned === null) fs.appendFileSync(notes, `## fake ${process.env.META_RUN_ID || ''} (resumes ${resumes})\n${resumed}work\n${marker}\n`);
   process.stdout.write(JSON.stringify({ type: 'result', is_error: mode === 'crash', result: canned ?? `fake ${mode}`, session_id: process.env.META_SESSION_ID || null,
     total_cost_usd: 0, usage: { input_tokens: 10, cache_read_input_tokens: Number(brief.cache_read ?? 20), cache_creation_input_tokens: 30, output_tokens: 5 } }));

@@ -6,13 +6,16 @@ import { renderMarkdown } from './docs.mjs';
 import { parseLedger, ledgerInline, LEDGER_KINDS, recordBlocks } from './ledger.mjs';
 import { renderAdopt, adoptStep } from './adopt.mjs';
 import { renderHome } from './home.mjs';
-import { bars, columns, stack, board, lines, meter } from './widgets.mjs';
+import { bars, columns, stack, board, lines, meter, dodChips, critiqueChip, critiqueWord } from './widgets.mjs';
 import { orcLine, badgeLabel } from './norn/orc.mjs';
-import { INS_PARTS, INS_CAPS, LADDER_ORDER, LADDER_STATES } from './insparts.mjs';
+import { INS_CAPS, LADDER_ORDER, LADDER_STATES, CONTEXT_SUBS, contextParts, contextNumbers, standingRows } from './insparts.mjs';
+import { SUB_CAP, pickSub, subviewPage, subMore } from './subviews.mjs';
+import { GUARD_SUBS } from './guardparts.mjs';
+import { firstDoc, placeFindings, findingsByLine } from './docparts.mjs';
 export const TABS = [['home', 'Home'], ['overview', 'Overview'], ['inbox', 'Inbox'], ['lanes', 'Lanes'], ['agents', 'Agents'], ['map', 'Map'], ['roadmap', 'Roadmap'], ['plan', 'Plan'], ['records', 'Records'],
   ['usage', 'Usage'], ['tests', 'Tests'],
-  ['docs', 'Docs'], ['instructions', 'Instructions'], ['guard', 'Guard'], ['ledger', 'Ledger'], ['settings', 'Settings']];
-export const ONE_PROJECT = ['home', 'map', 'roadmap', 'records', 'docs', 'instructions', 'guard', 'ledger', 'settings', 'tests'];
+  ['docs', 'Docs'], ['context', 'Context'], ['slop', 'Slop'], ['ledger', 'Ledger'], ['settings', 'Settings']];
+export const ONE_PROJECT = ['home', 'map', 'roadmap', 'records', 'docs', 'context', 'slop', 'ledger', 'settings', 'tests'];
 
 // ---------- formatting ----------
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -73,7 +76,7 @@ export const pageTitle = (n, project, look = 'classic') => `${n > 0 ? `(${n}) ` 
 // the three Norns; routes, record kinds and the CLI are unchanged. [key, name, what it shows, tab ids in display order]
 export const NORN_GROUPS = [
   ['norn', 'Norn', 'the thread', ['home']],   // META-CONTROLLER C2 (Look 3, owner Q-25): the conversation is the home page
-  ['verdandi', 'Verdandi', 'what is', ['overview', 'map', 'agents', 'lanes', 'usage', 'tests', 'instructions', 'guard']],   // META-TEND P6: the Guard overview beside them (REPORT 5.3). META-TEND: Tests (suite time is a cost) and Instructions (steering files load now, REPORT 5.3) beside Usage
+  ['verdandi', 'Verdandi', 'what is', ['overview', 'map', 'agents', 'lanes', 'usage', 'tests', 'context', 'slop']],   // META-TEND P6: the Guard overview beside them (REPORT 5.3). META-TEND: Tests (suite time is a cost) and Instructions (steering files load now, REPORT 5.3) beside Usage
   ['urd', 'Urd', 'what was', ['records', 'ledger', 'docs']],
   ['skuld', 'Skuld', 'what shall be', ['plan', 'inbox', 'settings']],   // META-PLAN R1: the near term first
   ['wyrd', 'Wyrd', 'all three', ['roadmap']],   // META-ROADMAP S2: one roadmap row is all three at once (SPEC sec. 4 "Where it sits")
@@ -98,12 +101,21 @@ const art = (ctx, name, cls = '') => (ctx.look === 'norn' && ctx.art ? ctx.art(n
 const dlvGet = (get, q) => Promise.resolve().then(() => get(`/api/deliverables?${q}`)).catch(() => null);
 // META-TEND P6: the Guard rows for the chips in place (one project; a missing / failing /api/guard never breaks the tab)
 const guardGet = (get, q, all) => (all ? Promise.resolve(null) : Promise.resolve().then(() => get(`/api/guard?${q}`)).catch(() => null));
-// META-UX-BUILD S1: the Instructions parts of one view (project + its scan time), fetched in parallel after the summary paints
-export const insPartsKey = (project, v) => `${project}|${v.at}`;
-export async function loadInsParts(project, get) {
-  const q = `project=${encodeURIComponent(project)}`, xs = await Promise.all(INS_PARTS.map(k => get(`/api/instructions?${q}&part=${k}`)));
+// META-UX-BUILD S1 + S2: the ONE part loader. Instructions: its 5 parts of one view (project + its scan time), fetched in parallel after
+// the summary paints. A sub-view tab (subviews.mjs): the chosen sub-view's part of one view (project + sig + sub + limit).
+// META-UX-BUILD S3: Docs - the open file is its one part (&file=<key>) of one list (project + sig).
+// META-UX-BUILD S4: Context (the Instructions view's cost half) - the parts its sub-view needs (contextParts), of one view (project + scan
+// time + sub); its route stays /api/instructions (the Norn vocabulary rule: routes stay, labels and the URL tab move).
+const PART_NAMES = { context: d => contextParts(d.sub), slop: d => [d.sub], docs: d => (d.file ? ['file'] : []) };
+const PART_API = { context: 'instructions', slop: 'guard' };   // META-UX-BUILD S5: Slop (was Guard) keeps its route /api/guard
+export const partsKey = (tab, project, d) => (tab === 'context' ? `${project}|${d.at}|${d.sub}` : tab === 'docs' ? `${project}|${d.sig}|${d.file}` : `${project}|${d.sig}|${d.sub}|${d.limit}|${d.batch ?? ''}`);
+export async function loadParts(tab, project, d, get) {
+  const q = `project=${encodeURIComponent(project)}`, lim = tab === 'docs' ? `&file=${encodeURIComponent(d.file)}` : d.limit && tab !== 'context' ? `&limit=${d.limit}${d.batch ? `&batch=${encodeURIComponent(d.batch)}` : ''}` : '';
+  const xs = await Promise.all(PART_NAMES[tab](d).map(k => get(`/api/${PART_API[tab] ?? tab}?${q}&part=${k}${lim}`)));
   return Object.assign({}, ...xs);
 }
+/** the parts of this view already fetched (ctx.parts[tab] = { key, data }) or null */
+const partsHave = (ctx, tab, project, d) => (ctx.parts?.[tab]?.key === partsKey(tab, project, d) ? ctx.parts[tab].data : null);
 export async function loadTab(tab, project, get, ctx = {}) {
   // META-ADOPT A3: the setup page (not a nav tab) - Add a project with no project (or "+ Add a project"), else GET /api/adopt
   if (tab === 'adopt') {
@@ -133,15 +145,16 @@ export async function loadTab(tab, project, get, ctx = {}) {
     }
     return d;
   }
-  if (tab === 'docs') {
-    const [{ docs }, guard] = await Promise.all([get(`/api/docs?${q}`), guardGet(get, q, all)]);
-    const pickI = docs.some(d => d.i === ctx.doc && d.exists) ? ctx.doc : docs.find(d => d.exists)?.i;
-    return { docs, guard, doc: pickI === undefined ? null : await get(`/api/docs/${pickI}?${q}`) };
+  if (tab === 'docs') {   // META-UX-BUILD S3: the grouped list first; the open file is its own part (a URL pick, else the first file on a wide screen)
+    const limit = ctx.limit || SUB_CAP, d = { ...(await get(`/api/docs?${q}&limit=${limit}`)), limit, picked: !!ctx.doc, line: ctx.docLine ?? null, src: !!ctx.docSrc };
+    d.file = ctx.doc || (ctx.wide ? firstDoc(d) : null);
+    const have = d.file ? partsHave(ctx, 'docs', project, d) : null;
+    return { ...d, doc: have?.doc ?? null, parts_loading: !!d.file && !have };
   }
-  if (tab === 'instructions') {   // META-INSTRUCTIONS R1. META-UX-BUILD S1: the summary first; the parts of this view (ctx.insParts) or loading
-    const [v, file] = await Promise.all([get(`/api/instructions?${q}`), ctx.ins ? get(`/api/instructions/${encodeURIComponent(ctx.ins)}?${q}`).catch(() => null) : null]);
-    const have = !v.pending && ctx.insParts?.key === insPartsKey(project, v) ? ctx.insParts.data : null;
-    return { ...v, ...(have || {}), parts_loading: !v.pending && !v.error && !have, file, focus_line: file && ctx.insLine ? ctx.insLine : null };
+  if (tab === 'context') {   // META-INSTRUCTIONS R1. META-UX-BUILD S1: the summary first. S4: the sub-view (or the checks page) and its parts
+    const sub = ctx.sub === 'checks' ? 'checks' : pickSub(CONTEXT_SUBS, ctx.sub), v = { ...(await get(`/api/instructions?${q}`)), sub, limit: ctx.limit || SUB_CAP };
+    const need = !v.pending && !(v.error && !v.at) && contextParts(sub).length > 0, have = need ? partsHave(ctx, 'context', project, v) : null;
+    return { ...v, ...(have || {}), parts_loading: need && !have };
   }
   if (tab === 'ledger') return get(`/api/ledger?${q}${ctx.ledgerN ? `&count=${ctx.ledgerN}` : ''}`);
   if (tab === 'settings') {   // C6: /api/remote exists only while dash.remote is on (404 = off)
@@ -150,7 +163,14 @@ export async function loadTab(tab, project, get, ctx = {}) {
   }
   if (tab === 'usage') return get(`/api/usage?${q}`);
   if (tab === 'tests') return get(`/api/tests?${q}`);   // META-TEND TESTS
-  if (tab === 'guard') return get(`/api/guard?${q}`);   // META-TEND P6
+  if (tab === 'slop') {   // META-TEND P6. META-UX-BUILD S2: the summary first, then the chosen sub-view's part. S5: Slop (was Guard); one open batch
+    const sub = pickSub(GUARD_SUBS, ctx.sub);
+    const d = { ...(await get(`/api/guard?${q}&part=summary`)), sub, limit: ctx.limit || SUB_CAP, ...(sub === 'fix' && ctx.batch ? { batch: ctx.batch } : {}) };
+    const have = partsHave(ctx, 'slop', project, d);
+    // META-UX-BUILD S6: the Fix all sheet, open (ctx.fixall) = its own part of the same view, fetched when it opens
+    const sheet = ctx.fixall ? (await get(`/api/guard?${q}&part=sheet`)).sheet : null;
+    return { ...d, ...(have || {}), parts_loading: !have, ...(sheet ? { sheet, sheet_sent: ctx.fixall.sent ?? null, sheet_sel: ctx.fixall } : {}) };
+  }
   if (tab === 'plan') return get(`/api/plan?${q}`);
   throw new Error('unknown tab ' + tab);
 }
@@ -163,7 +183,7 @@ export function renderTab(tab, d, ctx = {}) {
   if (tab === 'usage') return panel(tab, usage(d, { ...ctx, now }));
   if (tab === 'plan') return panel(tab, plan(d, { ...ctx, now }));
   if (tab === 'home') return panel(tab, renderHome(d, { ...ctx, now }));
-  return panel(tab, ({ overview, inbox, lanes, agents, map, roadmap, records, docs, instructions, ledger, settings, tests, guard })[tab](d, { ...ctx, now }));
+  return panel(tab, ({ overview, inbox, lanes, agents, map, roadmap, records, docs, context, ledger, settings, tests, slop: guard })[tab](d, { ...ctx, now }));
 }
 
 // META-TEND TESTS (owner DIR-19 + DIR-47): lean tests, measured - count + suite time over time, the slowest, never-failing and
@@ -379,7 +399,7 @@ function agents(d, ctx) {
   const one = (n, lvl, kids, pid) => {
     const b = top[n.id];
     const feed = /^RUN-\d+$/.test(n.id) ? ` data-feed="${esc(n.id)}" data-project="${esc(n.project)}" title="Open the live feed"` : '';
-    return `<div class="node lvl${lvl}" id="node-${esc(n.id)}"${lvl ? ` data-p="${esc(pid)}"` : ''}${feed}><div class="name">${kids ? `<span class="caret" data-t="${esc(pid)}">&#9662;</span>` : '<span class="caret"></span>'}${chip(n.kind === 'subagent' ? 'idle' : exClass(n.executor), n.kind ?? 'run')}<span class="t">${projTag(ctx, n.project)}${name(n)}</span>${(n.guard || []).map(g => `<span class="guard-chip" title="${esc(`${g.id}: ${g.why}`)}">${chip(g.state === 'ruled' ? 'idle' : g.cls === 'runaway' ? 'bad' : 'warn', `${g.cls}${g.action ? ': ' + g.action : ''}`)}</span>`).join('')}${guardChip(guardOn(d.guard, r => r.run === n.id), { tab: 'guard' })}</div>
+    return `<div class="node lvl${lvl}" id="node-${esc(n.id)}"${lvl ? ` data-p="${esc(pid)}"` : ''}${feed}><div class="name">${kids ? `<span class="caret" data-t="${esc(pid)}">&#9662;</span>` : '<span class="caret"></span>'}${chip(n.kind === 'subagent' ? 'idle' : exClass(n.executor), n.kind ?? 'run')}<span class="t">${projTag(ctx, n.project)}${name(n)}</span>${n.dod_ready || n.dod ? dodChips(n.dod_ready, n.dod) : ""}${critiqueChip(n.critique)}${(n.guard || []).map(g => `<span class="guard-chip" title="${esc(`${g.id}: ${g.why}`)}">${chip(g.state === 'ruled' ? 'idle' : g.cls === 'runaway' ? 'bad' : 'warn', `${g.cls}${g.action ? ': ' + g.action : ''}`)}</span>`).join('')}${guardChip(guardOn(d.guard, r => r.run === n.id), { tab: 'slop' })}</div>
      <div>${exChip(n.kind === 'subagent' ? null : n.executor, n.model, n.effort)}</div><div>${runChip(n.state)}</div><div class="small">${age(n)}</div><div class="mono small">${tok(n)}</div>
      <div>${fin(n.ctx) ? ctxMeter(n) : dash}</div><div class="mono small">${fin(b?.pct_per_h) ? b.pct_per_h.toFixed(2) + ' %/h' : fin(n.burn30) && n.burn30 > 0 ? mTok(n.burn30) + ' /30 min' : '-'}</div></div>`;
   };
@@ -401,44 +421,98 @@ export const guardOn = (g, pick) => (g?.rows || []).filter(pick);
 export function guardChip(rows, go = null) {
   if (!rows?.length) return '';
   const cls = rows.some(r => r.severity === 'high') ? 'bad' : rows.some(r => r.severity === 'medium') ? 'warn' : 'idle';
-  const t = `${rows.length} Guard finding${rows.length === 1 ? '' : 's'}`, title = esc(`${t}: ${rows[0].why}`);
+  const t = `${rows.length} Slop finding${rows.length === 1 ? '' : 's'}`, title = esc(`${t}: ${rows[0].why}`);
   return go ? ` <button class="lnk gchip" ${goAttrs(go)} title="${title}">${chip(cls, t)}</button>` : ` <span class="gchip" title="${title}">${chip(cls, t)}</span>`;
 }
 /** a link to where a finding is fixed: data-go (the tab) + the tab's own target (a file + line, a doc, an element id) */
-export const goAttrs = go => [`data-go="${esc(go.tab)}"`, go.ins ? `data-goins="${esc(go.ins)}"` : '', go.line ? `data-goline="${esc(go.line)}"` : '',
+export const goAttrs = go => [`data-go="${esc(go.tab)}"`, go.sub ? `data-gosub="${esc(go.sub)}"` : '', go.ins ? `data-goins="${esc(go.ins)}"` : '', go.line ? `data-goline="${esc(go.line)}"` : '',
   go.doc !== undefined ? `data-godoc="${esc(go.doc)}"` : '', go.jump ? `data-gojump="${esc(go.jump)}"` : ''].filter(Boolean).join(' ');
-const G_TAB = { instructions: 'Instructions', tests: 'Tests', usage: 'Usage', agents: 'Agents', docs: 'Docs', guard: 'the Guard' };
+const G_TAB = { context: 'Context', tests: 'Tests', usage: 'Usage', agents: 'Agents', docs: 'Docs', slop: 'Slop' };
 const G_SEV = { high: 'bad', medium: 'warn', low: 'idle', count: 'idle' };
-const G_MAX = 80;
 const shortPath = p => String(p).replace(/\\/g, '/').split('/').slice(-2).join('/');
+const guardRow = (r, labels) => `<li class="grow" id="slop-${esc(r.id)}"><div>${chip(G_SEV[r.severity] ?? 'idle', r.severity)} ${chip('idle', labels[r.type] ?? r.type)}${r.new ? ' ' + chip('needs', 'new') : ''}
+    <span>${esc(r.why)}</span></div><div class="small mute">${esc(r.surface ?? '')}${r.path ? ` · ${esc(shortPath(r.path))}${r.line ? ':' + esc(r.line) : ''}` : ''} <button class="lnk" ${goAttrs(r.go)}>fix in ${esc(G_TAB[r.go?.tab] ?? r.go?.tab)}</button></div>${r.apply ? `<details><summary class="small">patch (norn instructions apply ${esc(r.apply)})</summary>${typeof r.patch === 'string' ? `<pre class="inspatch">${esc(r.patch)}</pre>` : ''}</details>` : ''}</li>`;
+// META-UX-BUILD S5 (REPORT s.2-3): To fix = ONE list in batches (check + the kind of fix the check declares), the kinds apart:
+// ready (the exact text is known), to draft (a worker writes the text), your call (two ways), and the rows that only count (folded).
+// A batch shows its first rows; "all n" opens it (one batch at a time, every row, capped + show more). The two ways are named here;
+// picking one is the Fix all sheet (slice 6).
+const bat = n => `${int(n)} batch${n === 1 ? '' : 'es'}`;
+const KIND_HEAD = { ready: ['Ready', 'the exact new text is known'], drafts: ['To draft', 'the fix is one sentence; a worker writes the text'],
+  call: ['Your call', 'two ways: you pick one'] };
+function slopBatch(b, labels, open) {
+  const paths = b.rows.filter(r => r.path).map(r => `${shortPath(r.path)}${r.line ? ':' + r.line : ''}`);
+  const all = b.n > b.rows.length ? ` <button class="lnk" data-act="slop-batch" data-batch="${esc(b.key)}">all ${int(b.n)}</button>` : '';
+  return `<li class="sbatch" id="slop-b-${esc(b.key.replace(/[^\w-]/g, '_'))}"><div><b>${esc(b.title)}</b> <span class="mute">× ${int(b.n)}</span> ${chip(G_SEV[b.severity] ?? 'idle', b.severity)}${b.new ? ' ' + chip('needs', `${int(b.new)} new`) : ''}</div>
+    ${open ? '' : `<div class="small mute sbpaths">${esc(paths.join(' · '))}${b.n > paths.length && paths.length ? ` +${int(b.n - paths.length)}` : ''}</div>`}
+    ${b.action ? `<div class="small"><i>fix: ${esc(b.action)}</i></div>` : ''}${b.ways ? `<div class="small sbways">${b.ways.map(w => chip('prov', w)).join(' ')}</div>` : ''}
+    ${open ? `<ol class="glist">${b.rows.map(r => guardRow(r, labels)).join('')}</ol>${subMore(b.rows.length, b.n)} <button class="lnk" data-act="slop-batch" data-batch="">close</button>`
+      : `<details class="sbrows"><summary class="small">the first ${int(b.rows.length)}</summary><ol class="glist">${b.rows.map(r => guardRow(r, labels)).join('')}</ol></details>${all}`}</li>`;
+}
+function slopFix(P, d, labels) {
+  const of = k => P.batches.filter(b => b.kind === k), rows = k => of(k).reduce((n, b) => n + b.n, 0);
+  const sec = k => !of(k).length ? '' : `<section class="card slopkind" id="slop-${k}" data-kind="${k}"><h2>${KIND_HEAD[k][0]} <span class="mute small">${int(rows(k))} · ${bat(of(k).length)} · ${KIND_HEAD[k][1]}</span></h2>
+    <ul class="sblist">${of(k).map(b => slopBatch(b, labels, P.open === b.key)).join('')}</ul></section>`;
+  const counts = of('count'), nc = rows('count');
+  const fold = counts.length ? `<details class="small" id="slop-count"${P.open && counts.some(b => b.key === P.open) ? ' open' : ''}><summary>${plural(nc, 'more row')} only count something (${esc(counts.map(b => b.title).join(', '))}): nothing to fix</summary>
+    <ul class="sblist">${counts.map(b => slopBatch(b, labels, P.open === b.key)).join('')}</ul></details>` : '';
+  const empty = P.n ? '' : `<p class="mute">${chip('ok', 'all clear')} nothing open</p>`;
+  const more = P.nb > P.batches.length ? subMore(P.batches.length, P.nb) : '';
+  return `<div class="small mute" id="slop-fixhead">${plural(P.n, 'open finding')} in ${bat(P.nb)} by check and kind of fix · ${int(d.warn ?? 0)} at warn level or above</div>
+    ${sec('ready')}${sec('drafts')}${sec('call')}${fold}${empty}${more}`;
+}
+// META-UX-BUILD S6 (REPORT s.3 "End to end" 1-2, DIR-65 Q2 A): the Fix all sheet - ready + to draft ticked, your call as its two ways
+// (a pick adds it), the owner's own files offered unticked; Send the fixer (n) = one decision + one directive (POST /api/fixall). Nothing
+// is edited and no run starts on this tap; the fixer's one result card (slice 7) is where a change lands, on Apply.
+const FX_HEAD = { ready: 'Ready now · the exact text is known', drafts: 'The fixer drafts these', call: 'Your call · not included until you pick' };
+function fixItem(i, sel) {
+  const head = `<b>${esc(i.title)}</b> <span class="mute">× ${int(i.n)}</span> ${chip(G_SEV[i.severity] ?? 'idle', i.severity)}${i.new ? ' ' + chip('needs', `${int(i.new)} new`) : ''}${i.own ? ' ' + chip('parked', 'your own file: not ticked for you') : ''}`;
+  const more = `<div class="small mute">${esc(i.paths.join(' · '))}${i.n > i.paths.length && i.paths.length ? ` +${int(i.n - i.paths.length)}` : ''}</div>${i.action ? `<div class="small"><i>fix: ${esc(i.action)}</i></div>` : ''}`;
+  if (i.kind === 'call') return `<li class="fxitem fxcall"><div class="fxbody"><span class="fxq" aria-hidden="true">?</span> ${head}${more}</div>
+    <div class="fxways">${i.ways.map(w => `<button class="ghost" data-act="fx-way" data-key="${esc(i.key)}" data-way="${esc(w)}" data-n="${i.n}" aria-pressed="${sel?.picks?.[i.key] === w}">${esc(w)}</button>`).join('')}</div></li>`;
+  return `<li class="fxitem"><label class="fxbody"><input type="checkbox" data-fx-key="${esc(i.key)}" data-n="${i.n}"${(sel?.keys ? sel.keys.has(i.key) : i.tick) ? ' checked' : ''}> ${head}${more}</label></li>`;
+}
+function fixAll(sh, sent, sel = null) {
+  const of = k => sh.items.filter(i => i.kind === k), n = k => of(k).reduce((a, i) => a + i.n, 0);
+  const on = sh.items.reduce((a, i) => a + ((i.kind === 'call' ? sel?.picks?.[i.key] : sel?.keys ? sel.keys.has(i.key) : i.tick) ? i.n : 0), 0);
+  const sec = k => (of(k).length ? `<h3 class="fxhead" id="fixall-${k}">${FX_HEAD[k]} <span class="mute small">${int(n(k))}</span></h3><ul class="fxlist">${of(k).map(i => fixItem(i, sel)).join('')}</ul>` : '');
+  const done = sent ? `<p class="small" id="fixall-sent">${chip('ok', 'sent')} ${esc(sent.id)} + ${esc(sent.directive)}: ${int(sent.n)} finding(s)${sent.again ? ' (sent already: no second record)' : ''}. Nothing is edited; the check-in starts the one fixer run, and its card is where you apply.</p>` : '';
+  return `<section class="card fixall" id="fixall"><h2>Fix all <span class="mute small">${int(sh.ticked)} ticked of ${int(n('ready') + n('drafts') + n('call'))} · nothing is edited when you tap</span></h2>
+    <p class="small">The fixer drafts every change. You get <b>one card</b> with the exact text, and you apply it there.</p>
+    ${sec('ready')}${sec('drafts')}${sec('call')}${sh.items.length ? '' : `<p class="mute">${chip('ok', 'all clear')} nothing to fix or decide</p>`}
+    ${done}<div class="fxfoot"><span class="small mute" id="fixall-usage">${esc(sh.usage?.line ?? '')}</span><span class="fxbtns"><button class="ghost" data-act="fixall-close">${sent ? 'Close' : 'Cancel'}</button>
+    <button class="strong" data-act="fixall-send" data-sig="${esc(sh.sig)}"${sent || !on ? ' disabled' : ''}>Send the fixer (<span id="fx-n">${int(on)}</span>)</button></span></div></section>`;
+}
+// META-UX-BUILD S2: the page = his section, then the sub-view pattern (subviews.mjs): 4 numbers, To fix / Per type / Rules / Is it
+// growing?, the chosen part. d = the summary (guardparts.mjs) + d[d.sub] once its part is here (parts_loading until then).
+// META-UX-BUILD S5 (DIR-64): the tab is Slop (the route /api/guard stays); the numbers are open + the three kinds of fix.
 function guard(d, ctx) {
-  const rows = d.rows || [], types = d.types || [], fresh = d.new || 0;
-  const typeLabel = Object.fromEntries(types.map(t => [t.type, t.label]));
+  const fresh = d.new || 0, total = d.total ?? 0, labels = d.labels || {}, K = d.kinds || {};
   const portrait = ctx.look === 'norn' && ctx.art ? '<span class="orc-portrait" aria-hidden="true"></span>' : '';
   const voice = d.voice || {}, pop = voice.popups ?? 'off', on = d.slop !== false;
+  const fixBtn = (K.ready ?? 0) + (K.drafts ?? 0) + (K.call ?? 0) ? `<button class="strong" data-act="fixall-open" id="slop-fixall">Fix all (${int(d.fixable ?? 0)})</button> ` : '';
   // META-BETA-PREP (DIR-52): SloppaChoppa off for the project = a plain list with a plain count badge, no orc, no pop-up line
-  const plain = `<section class="card" id="guard-plain"><h2>The Guard ${chip(fresh ? 'warn' : 'ok', fresh ? `${int(fresh)} new` : 'nothing new')}</h2>
-    <p class="small mute">Code checks at run end, their merge hold and pop-ups are off for this project · <button class="lnk" data-tab="settings">Settings</button> (Guard voice) turns them back on; code findings show again from the next check.</p></section>`;
-  const him = !on ? plain : `<section class="card orc-section" id="guard-orc">${portrait}<div><h2>SloppaChoppa <span class="mute small">the one voice of the Guard</span></h2>
-    <p class="orc-line" id="guard-line">${esc(orcLine({ rows, fresh, pending: d.pending }))}</p>
+  const plain = `<section class="card" id="slop-plain"><h2>Slop ${chip(fresh ? 'warn' : 'ok', fresh ? `${int(fresh)} new` : 'nothing new')}</h2>
+    <p class="small mute">Code checks at run end, their merge hold and pop-ups are off for this project · <button class="lnk" data-tab="settings">Settings</button> (Slop voice) turns them back on; code findings show again from the next check.</p>${fixBtn ? `<div>${fixBtn}</div>` : ''}</section>`;
+  const him = !on ? plain : `<section class="card orc-section" id="slop-orc">${portrait}<div><h2>SloppaChoppa</h2>
+    <p class="orc-line" id="slop-line">${esc(orcLine({ rows: d.top || [], total, fresh, pending: d.pending }))}</p>
     <div class="small orc-acts">${chip(fresh ? 'warn' : 'ok', fresh ? badgeLabel(fresh).replace(/^SloppaChoppa: /, '') : 'nothing new')}
-     <button data-act="orc-call">Call him up</button> <button class="ghost" data-act="orc-mute" data-days="1">Mute 1 day</button> <button class="ghost" data-act="orc-mute" data-days="7">Mute 7 days</button> <button class="ghost" data-act="orc-mute" data-days="0" id="guard-unmute">Unmute</button></div>
-    <div class="small mute" id="guard-popups">Pop-ups: <b>${esc(pop)}</b>${pop === 'off' ? ' (they ship off until the owner review on 2026-11-21, DIR-36)' : ''} · at most ${esc(voice.daily_cap ?? 3)} a day · only a new finding at warn level or above, once each · <button class="lnk" data-tab="settings">Settings</button>. Muted = silent, not blind: findings are still recorded.</div></div></section>`;
-  const tb = bars(types.map(t => ({ label: t.label, value: t.open, cls: t.warn ? 'hot' : '',
-    note: `${t.warn ? chip('warn', `${t.warn} warn`) : chip('ok', 'no warning')}${t.new ? ' ' + chip('needs', `${t.new} new`) : ''} <button class="lnk" ${goAttrs({ tab: t.tab })}>fix in ${esc(G_TAB[t.tab] ?? t.tab)}</button>` })), { id: 'guard-types', fmt: n => `${n} open` });
-  const trend = d.trend?.series?.length ? lines(d.trend.series, { days: d.trend.days, id: 'guard-trend', title: 'open findings by the day first seen' }) : '<p class="small mute">No open finding.</p>';
-  const L = d.ledger;
-  const ledger = L ? `${stack([['prose', 'prose only'], ['repeated', 'repeated'], ['enforced', 'enforced'], ['retired', 'retired']].map(([key, label]) => ({ key: 'rl-' + key, label, value: L[key] ?? 0 })), { id: 'guard-ledger' })}
-    <div class="small">${chip(L.prose ? 'warn' : 'ok', `${L.prose ?? 0} prose only`)} rules that no hook, test or gate enforces · <button class="lnk" ${goAttrs({ tab: 'instructions', jump: 'ins-ladder' })}>the ladder in Instructions</button></div>` : '<p class="small mute">The rule ledger is not scanned yet.</p>';
-  const list = rows.slice(0, G_MAX).map(r => `<li class="grow" id="guard-${esc(r.id)}"><div>${chip(G_SEV[r.severity] ?? 'idle', r.severity)} ${chip('idle', typeLabel[r.type] ?? r.type)}${r.new ? ' ' + chip('needs', 'new') : ''}
-    <span>${esc(r.why)}</span></div><div class="small mute">${esc(r.surface ?? '')}${r.path ? ` · ${esc(shortPath(r.path))}${r.line ? ':' + esc(r.line) : ''}` : ''} <button class="lnk" ${goAttrs(r.go)}>fix in ${esc(G_TAB[r.go?.tab] ?? r.go?.tab)}</button></div></li>`).join('');
-  return `<div class="banner">The Guard: every open finding of every check (instruction files, memory, rules, docs, tests, models${on ? ", and SloppaChoppa's code checks" : ''}) in one list. It owns no data: each row is fixed on the tab that owns the thing, where it also shows as a chip. Only a NEW finding warns.${d.pending ? ' The instruction-file scan is running: its rows follow.' : ''}</div>
-   ${(d.errors || []).length ? `<div class="small mute" id="guard-errors">${d.errors.map(esc).join(' · ')}</div>` : ''}
+     ${fixBtn}<button data-act="orc-call">Call him up</button> <button class="ghost" data-act="orc-mute" data-days="1">Mute 1 day</button> <button class="ghost" data-act="orc-mute" data-days="7">Mute 7 days</button> <button class="ghost" data-act="orc-mute" data-days="0" id="slop-unmute">Unmute</button></div>
+    <div class="small mute" id="slop-popups">Pop-ups: <b>${esc(pop)}</b>${pop === 'off' ? ' (they ship off until the owner review on 2026-11-21, DIR-36)' : ''} · at most ${esc(voice.daily_cap ?? 3)} a day · only a new finding at warn level or above, once each · <button class="lnk" data-tab="settings">Settings</button>. Muted = silent, not blind: findings are still recorded.</div></div></section>`;
+  const about = `<p class="small mute" id="slop-about">Slop: every open finding of every check (instruction files, memory, rules, docs, tests, models, the lint's hints and the tightening candidates${on ? ", and SloppaChoppa's code checks" : ''}) in one list, in batches by check and the kind of fix the check declares. It owns no data: each row is fixed on the tab that owns the thing, where it also shows as a chip. Only a NEW finding warns.${d.pending ? ' The instruction-file scan is running: its rows follow.' : ''}</p>`;
+  const P = d[d.sub];
+  const body = !P ? '' : d.sub === 'fix' ? `<div id="slop-rows">${slopFix(P, d, labels)}${about}</div>`
+    : d.sub === 'types' ? `<section class="card" id="slop-count-types"><h2>Open per type <span class="mute small">${plural(total, 'open finding')} · ${fresh} new at warn level</span></h2>${bars(P.rows.map(t => ({ label: t.label, value: t.open, cls: t.warn ? 'hot' : '',
+      note: `${t.warn ? chip('warn', `${t.warn} warn`) : chip('ok', 'no warning')}${t.new ? ' ' + chip('needs', `${t.new} new`) : ''} <button class="lnk" ${goAttrs({ tab: t.tab })}>fix in ${esc(G_TAB[t.tab] ?? t.tab)}</button>` })), { id: 'slop-types', fmt: n => `${n} open` })}</section>`
+    : d.sub === 'rules' ? `<section class="card" id="slop-ledger-card"><h2>The rule ledger <span class="mute small">every must / never rule by how it is enforced</span></h2>${P.ledger ? `${stack([['prose', 'prose only'], ['repeated', 'repeated'], ['enforced', 'enforced'], ['retired', 'retired']].map(([key, label]) => ({ key: 'rl-' + key, label, value: P.ledger[key] ?? 0 })), { id: 'slop-ledger' })}
+    <div class="small">${chip(P.ledger.prose ? 'warn' : 'ok', `${P.ledger.prose ?? 0} prose only`)} rules that no hook, test or gate enforces · <button class="lnk" ${goAttrs({ tab: 'context', sub: 'checks', jump: 'ins-ladder' })}>the ladder (Context › checks)</button></div>` : '<p class="small mute">The rule ledger is not scanned yet.</p>'}
+    <h3>Open rule findings <span class="mute small">${int(P.n)}</span></h3><ol class="glist" id="slop-rule-rows">${P.rows.map(r => guardRow(r, labels)).join('') || `<li class="mute">${chip('ok', 'all clear')} no rule finding open</li>`}</ol>${subMore(P.rows.length, P.n)}</section>`
+    : `<section class="card" id="slop-trend-card"><h2>Is it growing? <span class="mute small">the findings open now, by the day each was first seen (30 days)</span></h2>${P.trend?.series?.length ? lines(P.trend.series, { days: P.trend.days, id: 'slop-trend', title: 'open findings by the day first seen' }) : '<p class="small mute">No open finding.</p>'}</section>`;
+  const numbers = [{ n: int(total), label: `open · ${int(fresh)} new${K.count ? ` · ${int(K.count)} only count` : ''}`, cls: fresh ? 'warn' : '' }, { n: int(K.ready ?? 0), label: 'ready: the text is known', cls: K.ready ? 'ok' : '' },
+    { n: int(K.drafts ?? 0), label: 'to draft: a worker writes it' }, { n: int(K.call ?? 0), label: 'your call: two ways' }];
+  if (d.sheet) return fixAll(d.sheet, d.sheet_sent, d.sheet_sel);
+  return `${(d.errors || []).length ? `<div class="small mute" id="slop-errors">${d.errors.map(esc).join(' · ')}</div>` : ''}
    ${him}
-   <section class="card" id="guard-count"><h2>Open per type <span class="mute small">${plural(d.total ?? rows.length, 'open finding')} · ${fresh} new at warn level</span></h2>${tb}</section>
-   <section class="card" id="guard-trend-card"><h2>Is it growing? <span class="mute small">the findings open now, by the day each was first seen (30 days)</span></h2>${trend}</section>
-   <section class="card" id="guard-ledger-card"><h2>The rule ledger <span class="mute small">every must / never rule by how it is enforced</span></h2>${ledger}</section>
-   <section class="card" id="guard-rows"><h2>Every open finding <span class="mute small">new first, then by severity</span></h2><ol class="glist">${list || `<li class="mute">${chip('ok', 'all clear')} nothing open</li>`}</ol>${rows.length > G_MAX ? `<p class="small mute">+${rows.length - G_MAX} more (the owning tabs list them all)</p>` : ''}</section>`;
+   ${subviewPage('slop', { numbers, views: GUARD_SUBS.map(([k, label]) => [k, label, d.counts?.[k]]), active: d.sub, body, loading: d.parts_loading || !P })}`;
 }
 
 // ---------- the Plan tab (META-PLAN R1, norn DIR-13): what happens next, and when - /api/plan = engine/lib/plan.mjs per project ----------
@@ -509,6 +583,7 @@ function edgePath(a, b, kind) {
   return `M${x1} ${ya} C${m} ${ya} ${m} ${yb} ${x2} ${yb}`;
 }
 function mapNode(n, project) {
+  if (n.critique) n = { ...n, sub: `${n.id} · ${critiqueWord(n.critique)[1]}` };   // META-DOD 3: a plan run shows its review
   const small = n.h < 46, feed = n.feed ? ` data-feed="${esc(n.feed)}" data-project="${esc(project)}" role="button" tabindex="0"` : '';
   const tip = [n.label, n.sub, n.word, n.feed ? 'click: live feed' : ''].filter(Boolean).join(' · ');
   const more = n.type === 'lane' && (n.more > 0 || n.expanded)
@@ -638,7 +713,9 @@ function recText(key, parts) {
 function records(d, ctx) {
   const o = { project: ctx.project }, blk = (t, cpl) => recordBlocks(t, { ...o, cpl });
   const why = r => { if (!r.data.why) return { html: '', lines: 0 }; const b = blk(r.data.why, 50); return { html: `<div class="rwhy small mute">${b.html}</div>`, lines: b.lines }; };
-  const dir = d.directives.map(r => `<tr id="rec-${esc(r.id)}" data-state="${esc(r.state)}"><td class="id rnw">${esc(r.id)}</td><td>${chip(r.state)}</td><td class="rt">${recText(`${r.id}:text`, [blk(r.data.text, 110)])}${r.superseded_by ? `<div class="small mute">superseded by ${esc(r.superseded_by)}</div>` : ''}${history(r, ctx)}</td>
+  // META-UX-BUILD S6: a Fix all record (decision + directive) carries the finding ids it was sent with - folded under the text
+  const fids = r => (Array.isArray(r.data.findings) && r.data.findings.length ? `<details class="small recids"><summary>${int(r.data.findings.length)} finding ids${r.data.fixall ? ` · ${esc(r.data.fixall)}` : ''}</summary><span class="mono">${esc(r.data.findings.join(' '))}</span></details>` : '');
+  const dir = d.directives.map(r => `<tr id="rec-${esc(r.id)}" data-state="${esc(r.state)}"><td class="id rnw">${esc(r.id)}</td><td>${chip(r.state)}</td><td class="rt">${recText(`${r.id}:text`, [blk(r.data.text, 110)])}${fids(r)}${r.superseded_by ? `<div class="small mute">superseded by ${esc(r.superseded_by)}</div>` : ''}${history(r, ctx)}</td>
     <td class="small mute rnw">${fmtTime(r.created, ctx.now)} · ${esc(r.data.via ?? r.by)}</td><td>${r.state === 'active' ? `<button class="ghost" data-act="revoke" data-project="${esc(d.project)}" data-id="${esc(r.id)}">Revoke</button>` : ''}</td></tr>`).join('')
     || '<tr><td colspan="5" class="mute">no directives</td></tr>';
   const dec = d.decisions.map(r => `<tr id="rec-${esc(r.id)}" data-state="${esc(r.state)}"><td class="id rnw">${esc(r.id)}</td><td>${chip(r.state)}${r.data.fyi ? ' ' + chip('needs', 'FYI') : ''}</td><td>${esc(r.data.lane ?? '-')}</td><td class="rt" data-label="question">${recText(`${r.id}:q`, [blk(r.data.question, 50)])}</td>
@@ -652,11 +729,23 @@ function records(d, ctx) {
    <div class="tablecard"><h3>Decisions</h3><table class="rectab" data-rows="records"><thead><tr><th>id</th><th>state</th><th>lane</th><th>question</th><th>choice + why</th><th>by</th><th>source</th><th></th></tr></thead><tbody>${dec}</tbody></table></div>`;
 }
 
+// META-UX-BUILD S3 (REPORT s.2): Docs = the one reader. A side list of every file the agents read + the project's own docs, grouped by
+// who loads it (docparts.mjs; each group capped, "show more"); the Memory group is headed by its gauge. The open file is its own part:
+// Rendered (each paragraph with its age badge and its findings beside it) or Source (each finding beside its line). A wide screen shows
+// list + reader; a phone shows the list, a tap opens the reader with Back (index.html: the file is in the URL, &doc=).
 function docs(d, ctx) {
-  const btns = d.docs.map(x => x.exists ? `<button id="doc-${x.i}" data-doc="${x.i}" class="${d.doc?.i === x.i ? 'strong' : ''}" aria-pressed="${d.doc?.i === x.i}">${esc(x.tab)}${guardChip(guardOn(d.guard, r => r.go?.tab === 'docs' && r.go.doc === x.i))}</button>`
-    : `<button id="doc-${x.i}" disabled title="${esc(x.path)}">${esc(x.tab)} ${chip('bad', 'missing')}</button>`).join('');
-  return `<div class="filters">${btns || '<span class="mute">project.json lists no docs</span>'}<span class="small mute">tabs come from project.json "docs"</span></div>
-   ${d.doc ? docBody(d.doc, ctx) : ''}`;
+  const now = ctx.now ?? Date.now(), sel = d.doc?.key ?? d.file;
+  const wait = d.pending ? `<div class="small" id="docs-pending" style="margin:0 0 6px">${chip('run', 'refreshing')} <span class="mute">the first scan of the instruction files is running: they join this list when it lands</span></div>`
+    : d.error ? `<div class="small" style="margin:0 0 6px">${chip('bad', 'scan failed')} <span class="mute">${esc(d.error)}</span></div>` : '';
+  const row = r => `<li><button class="docfile${r.key === sel ? ' sel' : ''}" id="docf-${esc(r.key)}" data-docfile="${esc(r.key)}" aria-current="${r.key === sel}" title="${esc(r.path)}"${r.exists ? '' : ' disabled'}>
+    <span class="dfname">${esc(r.name)}${r.note ? ` <span class="mute small">(${esc(r.note)})</span>` : ''}${r.linked === 0 ? ` ${chip('warn', 'in no index')}` : ''}${r.exists ? '' : ` ${chip('bad', 'missing')}`}</span>
+    ${r.findings ? `<span class="gchip" title="${esc(`${r.findings} finding${r.findings === 1 ? '' : 's'} on this file`)}">${chip('warn', `${int(r.findings)} finding${r.findings === 1 ? '' : 's'}`)}</span>` : ''}<span class="mute small dftk">${r.tokens === null || r.tokens === undefined ? '' : tk(r.tokens)}</span></button></li>`;
+  const grp = g => `<div class="docgrp" id="docs-g-${esc(g.id)}"><h4 class="small"><span>${esc(g.label)}</span><span class="mute">${int(g.n)}</span></h4>${g.id === 'memory' && d.memory ? memGauge(d.memory, 'docs-memory') : ''}
+    <ul>${g.rows.map(row).join('')}</ul>${subMore(g.rows.length, g.n)}</div>`;
+  const list = `<div class="card doclist" id="docs-list" role="navigation" aria-label="Files">${(d.groups || []).map(grp).join('') || '<p class="small mute">no files yet</p>'}</div>`;
+  const reader = !d.file ? '<p class="small mute" id="docs-none">Pick a file on the left.</p>' : d.parts_loading ? `<p class="small mute" id="docs-loading">${chip('idle', 'loading')} the file ...</p>` : d.doc ? docReader(d.doc, { ...ctx, now }, d) : '';
+  return `<div class="dochead"><b>Docs</b> <span class="small mute">every file the agents read, and the project's own docs · ${int(d.files ?? 0)} files · rendered · findings beside the text</span></div>${wait}
+   <div class="docsplit${d.picked ? ' picked' : ''}" id="docs-split">${list}<section class="docread" id="docs-reader">${reader}</section></div>`;
 }
 // META-INSTRUCTIONS R1: every file that steers the agents - load class, ~size, what it cost today, drift, read-only hints; a row
 // opens the file rendered. R2 (the chat's verbs) adds "ask the controller to tighten this": a disabled stub until then.
@@ -673,34 +762,68 @@ function insRefreshing(d, now) {
   return `${d.refreshing ? `<div class="small" id="ins-refreshing" style="margin:0 0 6px">${chip('run', 'refreshing')} <span class="mute">the scan runs in the background; shown: the view of ${esc(fmtTime(d.at, now))}</span></div>` : ''}${d.error ? `<div class="small" style="margin:0 0 6px">${chip('bad', 'scan failed')} <span class="mute">${esc(d.error)}</span></div>` : ''}`;
 }
 const insMore = (shown, n, where) => (n > shown ? `<p class="small mute" style="padding:0 12px">showing ${int(shown)} of ${int(n)}${where ? ` · ${where}` : ''}</p>` : '');
-function instructions(d, ctx) {
+// META-UX-BUILD S4 (REPORT s.2): Context = what a session loads before any work and what it costs. The sub-view pattern: 4 numbers,
+// Per role (what one session loads + the ONE standing table) / Per file (the count card, the file map, most tokens per day, the files)
+// / Is it growing? / Check-ins per day. Reading is in the Docs reader (every file link lands there); the checks (Managed, Findings,
+// Said again, the ladder, Audits, Memory, Hints, Tighten) are one link away (`sub=checks`, no fifth sub-view) until Slop takes them.
+function context(d, ctx) {
   const now = ctx.now ?? Date.now();
   if (d.pending || (d.error && !d.at)) return `${insRefreshing(d, now)}`;
-  const wait = k => d.parts_loading && (k === 'rules' ? d.rules === undefined : k === 'files' ? d.rows === undefined : d[k] === undefined);
+  if (d.sub === 'checks') return `${insRefreshing(d, now)}${ctxChecks(d)}`;
+  const none = w => `<p class="small mute">${esc(w)}</p>`;
+  const body = d.sub === 'file' ? ctxFile(d, now) : d.sub === 'growing' ? insTrend(d.measured) || none('no measured session in the last 30 days')
+    : d.sub === 'checkins' ? insCheckins(d.checkins) || none('no check-in recorded yet') : `${insLoads(d)}${ctxRoles(d)}`;
+  const n = d.counts || {}, checks = (n.findings ?? 0) + (n.advisories ?? 0) + (n.hints ?? 0) + (n.suggest ?? 0);
+  return `${insRefreshing(d, now)}<div class="small mute" id="context-what">what every session loads before any work, and what that costs · last ${int(d.measured?.window_days ?? 7)} days</div>
+   ${subviewPage('context', { numbers: contextNumbers(d), views: CONTEXT_SUBS.map(([k, label]) => [k, label, k === 'file' ? n.files : undefined]), active: d.sub, body: d.parts_loading ? '' : body, loading: d.parts_loading })}
+   <div class="small mute" id="context-links">Read the files in <button class="lnk" data-tab="docs">Docs</button> · their checks (findings, rules, audits, memory): <button class="lnk" data-act="sub" data-sub="checks">open the checks</button> · every finding, hint and tightening candidate, in batches: <button class="lnk" data-go="slop" data-gosub="fix">Slop</button> (${int(checks)})</div>`;
+}
+// Per file: the count card, the file map + most tokens per day, the files (capped, show more); a name opens the Docs reader
+function ctxFile(d, now) {
   const load = r => r.load === 'role' ? `role ${r.role}` : r.load === 'session' && r.standing_tokens < r.tokens ? 'every session (description)' : INS_LOAD[r.load] ?? r.load;
-  const rows = (d.rows || []).map(r => `<tr id="ins-row-${esc(r.id)}"${d.file?.id === r.id ? ' class="sel"' : ''}>
+  const all = d.rows || [], shown = all.slice(0, d.limit || SUB_CAP);
+  const rows = shown.map(r => `<tr id="ins-row-${esc(r.id)}">
     <td><button class="lnk" data-ins="${esc(r.id)}"${r.exists ? '' : ' disabled'}>${esc(r.name)}</button>${r.exists || r.generated ? '' : ` ${chip('bad', 'missing')}`}${r.generated ? ` ${chip(DRIFT_CHIP[r.drift] ?? 'idle', `generated · ${r.drift || '?'}`)}` : ''}${r.stale ? ` ${chip('warn', `${r.stale} stale`)}` : ''}${r.findings ? ` ${chip('warn', `${r.findings} finding${r.findings > 1 ? 's' : ''}`)}` : ''}${insRuleChips(r.rules)}<div class="inspath mute">${esc(r.path)}</div></td>
     <td>${chip(INS_CHIP[r.load] ?? 'idle', load(r))}</td><td class="insopt">${esc((r.harness || []).join(', ') || 'any')}</td>
     <td class="num">${tk(r.tokens)}</td><td class="num">${r.cost_today ? `${tk(r.cost_today)}${r.via ? ' <span class="mute small">via</span>' : ''}<div class="small mute">${int(r.loads_today)} load(s)</div>` : dash}</td>
     <td class="insopt">${r.changed ? `${esc(fmtTime(r.changed, now))} <span class="small mute">${esc(r.changed_by)}</span>` : dash}</td>
     <td class="num">${r.hints ? chip('warn', `${r.hints} hint${r.hints > 1 ? 's' : ''}`) : dash}</td></tr>`).join('');
-  const standing = (d.standing || []).map(s => `<tr><td>${esc(s.label)}</td><td class="num">${int(s.sessions)}</td><td class="num">${tk(s.tokens)}</td></tr>`).join('');
-  const hints = (d.hints || []).map(h => `<li class="inshint">${chip('warn', h.kind)} <button class="lnk" data-ins="${esc(h.id)}">${esc(h.path.split('/').pop())}:${esc(h.line)}</button> ${esc(h.text)}</li>`).join('');
-  return `${insRefreshing(d, now)}${insMeasured(d.measured)}${insCheckins(d.checkins)}<div class="card"><b>${int(d.counts?.files ?? (d.rows || []).length)} files steer the agents</b> · ${tk(d.total)} tokens loaded today by ${int(d.sessions)} session(s)
+  return `<div class="card" id="ins-count"><b>${int(d.counts?.files ?? all.length)} files steer the agents</b> · ${tk(d.total)} tokens loaded today by ${int(d.sessions)} session(s)
      <div class="small mute">${esc(d.method)}. Cost today = size x the sessions that loaded it (runs.jsonl + the chat's starts). Read-only: hints are never applied.</div></div>
+   ${insFileMap(d)}
+   <div class="tablecard"><h3>Files <span class="mute small">tap a name to read it in Docs</span></h3><div class="inswrap"><table class="instab" id="ins-table"><thead><tr><th>file</th><th>loaded</th><th class="insopt">harness</th><th>size</th><th>today</th><th class="insopt">changed</th><th>hints</th></tr></thead><tbody>${rows || `<tr><td colspan="7" class="mute">no instruction files found</td></tr>`}</tbody></table></div>${subMore(shown.length, all.length)}</div>`;
+}
+// Per role: ONE standing table (META-UX-BUILD S4: "Standing context (measured)" + "Standing context per role" were two views of it) -
+// each measured role (median per session, last 7 days) with the steering files' estimate per launch profile of that role beneath it
+function ctxRoles(d) {
+  const m = d.measured, lab = k => esc(String(k).replace(/^(\w+)/, w => ROLE_LABEL[w] ?? w));
+  const reads = n => (n >= 1e6 ? `~${(n / 1e6).toFixed(1)}M` : tk(n));
+  // the estimates of a role: one profile inline; several = their range, each profile (label, sessions today, ~tokens) one tap away
+  const est = ps => {
+    if (!ps.length) return `<td class="num">${dash}</td><td class="num">${dash}</td>`;
+    const ts = ps.map(p => p.tokens), lo = Math.min(...ts), hi = Math.max(...ts), n = ps.reduce((k, p) => k + p.sessions, 0);
+    if (ps.length === 1) return `<td class="num">${int(n)}</td><td class="num">${tk(hi)}</td>`;
+    return `<td class="num">${int(n)}</td><td class="num"><details class="ctxprofs"><summary>${lo === hi ? tk(hi) : `${tk(lo)}-${tk(hi).slice(1)}`} <span class="small mute">${int(ps.length)} profiles</span></summary>
+      <ul class="small">${ps.map(p => `<li>${esc(p.label)} · ${int(p.sessions)} today · ${tk(p.tokens)}</li>`).join('')}</ul></details></td>`;
+  };
+  const rows = standingRows(m, d.standing).map(r => {
+    const x = r.measured;
+    return `<tr class="ctxrole"><td><b>${lab(r.key)}</b>${r.profiles.length === 1 ? `<div class="small mute">${esc(r.profiles[0].label)}</div>` : ''}</td>${x ? `<td class="num">${int(x.runs)}</td><td class="num"><b>${tk(x.median_turn1)}</b></td><td class="num insopt">${tk(x.median_create1)}</td><td class="num insopt">${x.median_turns ?? dash}</td><td class="num">${reads(x.cache_read)}</td>` : `<td class="num">${dash}</td><td class="num mute small">not measured</td><td class="insopt"></td><td class="insopt"></td><td class="num">${dash}</td>`}${est(r.profiles)}</tr>`;
+  }).join('');
+  return `<div class="tablecard" id="ctx-standing"><h3>Standing context per role <span class="mute small">measured: what one session loads before any work, re-read every turn, median per session, last ${int(m?.window_days ?? 7)} days · from files: the steering files' estimate per launch profile, today (tap a range for each profile)</span></h3>
+   <div class="inswrap"><table class="instab" id="ctx-roles"><thead><tr><th>role</th><th>runs</th><th>turn 1</th><th class="insopt">cache create</th><th class="insopt">turns</th><th>cache reads</th><th>sessions today</th><th>~tokens from files</th></tr></thead><tbody>${rows || `<tr><td colspan="8">${dash}</td></tr>`}</tbody></table></div>
+   ${m?.method ? `<div class="small mute" style="padding:6px 12px;overflow-wrap:anywhere">${esc(m.method)}</div>` : ''}</div>`;
+}
+// the checks page (one link from Context, not a sub-view): every check the Instructions tab showed, until the Slop slice moves them
+function ctxChecks(d) {
+  const wait = k => d.parts_loading && (k === 'rules' ? d.rules === undefined : k === 'files' ? d.rows === undefined : d[k] === undefined);
+  return `<div class="small" id="ctx-checks-head"><button class="lnk" data-act="sub" data-sub="role">‹ Context</button> · <b>The checks</b> <span class="mute">of the files a session loads; tap a file to read it in Docs</span> · the lint's hints and the tightening candidates are rows in <button class="lnk" data-go="slop" data-gosub="fix">Slop › To fix</button></div>
    ${insManaged(d.managed)}
-   ${insTrend(d.measured)}
-   ${insLoads(d)}
-   ${wait('files') ? '' : insFileMap(d)}
-   ${insMemory(d.memory_map)}
+   ${wait('findings') ? insWait('findings') : insFindings(d)}
    ${wait('rules') ? insWait('rules') : `${insRepeats(d.rules)}${insLadder(d.rules)}`}
    ${insAudits(d.audits)}
-   ${d.file ? insBody(d.file, ctx, d) : ''}
-   ${wait('findings') ? insWait('findings') : insFindings(d)}
-   <div class="tablecard"><h3>Standing context per role <span class="mute small">what one session of it loads before any work</span></h3><div class="inswrap"><table><thead><tr><th>role</th><th>sessions today</th><th>~tokens / session</th></tr></thead><tbody>${standing || `<tr><td colspan="3">${dash}</td></tr>`}</tbody></table></div></div>
-   ${wait('files') ? insWait('files') : `<div class="tablecard"><h3>Files</h3><div class="inswrap"><table class="instab" id="ins-table"><thead><tr><th>file</th><th>loaded</th><th class="insopt">harness</th><th>size</th><th>today</th><th class="insopt">changed</th><th>hints</th></tr></thead><tbody>${rows || `<tr><td colspan="7" class="mute">no instruction files found</td></tr>`}</tbody></table></div></div>`}
-   ${wait('hints') ? insWait('hints') : `<div class="tablecard"><h3>Hints <span class="mute small">${int(d.hints_n ?? (d.hints || []).length)} · lint, read-only</span></h3>${hints ? `<ul id="ins-hints">${hints}</ul>` : '<p class="mute" style="padding:0 12px">none</p>'}${insMore((d.hints || []).length, d.hints_n ?? 0)}</div>`}
-   ${wait('suggest') ? insWait('suggest') : insSuggest(d)}`;
+   ${insMemory(d.memory_map)}
+`;
 }
 // META-TEND P3 (REPORT 5.3 view 6): the ladder - every must / never rule as a card in its state's column (prose only -> repeated n
 // times -> enforced -> retired): its home (a click opens the source line), its enforcement, when that last fired. Built on board().
@@ -801,7 +924,7 @@ function insManaged(m) {
 }
 function insFindings(d) {
   const fs2 = d.findings || [];
-  if (!fs2.length) return '<div class="tablecard"><h3>Findings</h3><p class="mute" style="padding:0 12px">none</p></div>';
+  if (!fs2.length) return '<div class="tablecard" id="ins-findings-card"><h3>Findings</h3><p class="mute" style="padding:0 12px">none</p></div>';
   const groups = new Map();
   for (const f of fs2) { if (!groups.has(f.path)) groups.set(f.path, []); groups.get(f.path).push(f); }
   const li = [...groups].map(([p, xs]) => {
@@ -817,7 +940,7 @@ function insFindings(d) {
     }).join('');
     return `<li class="insfile"><div>${id ? `<button class="lnk" data-ins="${esc(id)}">${esc(name)}</button>` : `<b>${esc(name)}</b>`} ${cnt} <span class="inspath mute">${esc(p)}</span></div><ul>${rows}</ul></li>`;
   }).join('');
-  return `<div class="tablecard"><h3>Findings <span class="mute small">${int(d.findings_n ?? fs2.length)} · static checks, read-only</span></h3><ul id="ins-findings">${li}</ul>${insMore(fs2.length, d.findings_n ?? 0, 'the Guard lists every one')}</div>`;
+  return `<div class="tablecard" id="ins-findings-card"><h3>Findings <span class="mute small">${int(d.findings_n ?? fs2.length)} · static checks, read-only</span></h3><ul id="ins-findings">${li}</ul>${insMore(fs2.length, d.findings_n ?? 0, 'the Guard lists every one')}</div>`;
 }
 // META-STANDING-CONTEXT R1: the measured standing context (median per session, last 7 days) per role + where it goes (the parts)
 const ROLE_LABEL = { worker: 'workers', merge: 'merge runs', checkin: 'check-ins', chat: 'chat' };
@@ -826,14 +949,6 @@ function insCheckins(days) {
   if (!days?.length) return '';
   const li = days.map(x => `<tr><td>${esc(x.day)}</td><td>check-ins: <b>${int(x.n)}</b> (${int(x.mechanical)} mechanical, ${int(x.minor)} minor, ${int(x.full)} full)</td></tr>`).join('');
   return `<div class="tablecard" id="ins-checkins"><h3>Check-ins per day <span class="mute small">mechanical = a routine end handled by code, no model · minor = the reduced tick · full = the full check-in</span></h3><div class="inswrap"><table class="instab"><tbody>${li}</tbody></table></div></div>`;
-}
-function insMeasured(m) {
-  if (!m?.roles?.length) return '';
-  const lab = k => esc(k.replace(/^(\w+)/, w => ROLE_LABEL[w] ?? w));
-  const rows = m.roles.map(r => `<tr><td>${lab(r.key)}</td><td class="num">${int(r.runs)}</td><td class="num"><b>${tk(r.median_turn1)}</b></td><td class="num insopt">${tk(r.median_create1)}</td><td class="num insopt">${r.median_turns ?? dash}</td><td class="num">${r.cache_read >= 1e6 ? `~${(r.cache_read / 1e6).toFixed(1)}M` : tk(r.cache_read)}</td></tr>`).join('');
-  return `<div class="tablecard" id="ins-standing"><h3>Standing context <span class="mute small">what one session loads before any work, re-read every turn · median per session, last ${int(m.window_days ?? 7)} days</span></h3>
-   <div class="inswrap"><table class="instab"><thead><tr><th>role</th><th>runs</th><th>turn 1</th><th class="insopt">cache create</th><th class="insopt">turns</th><th>cache reads</th></tr></thead><tbody>${rows}</tbody></table></div>
-   <div class="small mute" style="padding:6px 12px;overflow-wrap:anywhere">${esc(m.method)}</div></div>`;
 }
 // META-TEND P1-VISUAL (REPORT 5.3 view 2): what one session loads - a stacked bar per role (the newest measured first request), the
 // memory switch per role (policy.launch.memory). Parts in the REPORT's order; Norn's prompt, the agents list and the prompt follow.
@@ -874,12 +989,20 @@ function insFileMap(d) {
    ${top.length ? `<div style="padding:0 12px 8px"><div class="small"><b>Most tokens per day</b></div>${bars(top.map(r => ({ label: r.name, value: cost(r), cls: `st-${MAP_STATE[r.map_state] ? r.map_state : 'fresh'}` })), { fmt: v => `${tk(v)} / day` })}</div>` : ''}</div>`;
 }
 // META-TEND P1-VISUAL (REPORT 5.3 view 5): memory - the 200-line / 25 KB gauge, MEMORY.md -> topic files, entries in no index, broken links
+// the MEMORY.md gauge (% of its load limit; over = full + red): Instructions' memory card and the head of the Docs Memory group
+function memBars(m) {
+  const g = (label, v, max, unit) => ({ label, value: 100 * v / max, cls: v > max ? 'over' : 'st-fresh', note: esc(`${v} of ${max} ${unit}`) });
+  return bars([g('lines', m.lines, m.max_lines, 'lines'), g('size', m.kb, m.max_kb, 'KB')], { fmt: v => `${Math.round(v)} %`, max: 100 });
+}
+function memGauge(m, id) {
+  const over = m.lines > m.max_lines || m.kb > m.max_kb;
+  return `<div class="docmem" id="${esc(id)}"><div class="small">${over ? `${chip('bad', 'over the limit')} past ${int(m.max_lines)} lines / ${int(m.max_kb)} KB the rest of MEMORY.md is not loaded` : `MEMORY.md loads whole: under ${int(m.max_lines)} lines and ${int(m.max_kb)} KB`}</div>${memBars(m)}
+    <div class="small mute">${int(m.topics)} topic files${m.orphans ? ` · ${int(m.orphans)} in no index` : ''}${m.broken ? ` · ${int(m.broken)} broken links` : ''}</div></div>`;
+}
 function insMemory(m) {
   if (!m) return '<div class="tablecard" id="ins-memory"><h3>Memory</h3><p class="small mute" style="padding:0 12px">No MEMORY.md for this repo: its auto-memory folder is empty, so no session loads memory.</p></div>';
   const lk = m.topics.filter(t => t.linked).length, ago = iso => (iso ? esc(fmtTime(iso)) : '<span class="mute">not in 30 days</span>');
-  const over = m.lines > m.max_lines || m.kb > m.max_kb;
-  const g = (label, v, max, unit) => ({ label, value: 100 * v / max, cls: v > max ? 'over' : 'st-fresh', note: esc(`${v} of ${max} ${unit}`) });   // % of the limit; over = full + red
-  const gauge = bars([g('lines', m.lines, m.max_lines, 'lines'), g('size', m.kb, m.max_kb, 'KB')], { fmt: v => `${Math.round(v)} %`, max: 100 });
+  const over = m.lines > m.max_lines || m.kb > m.max_kb, gauge = memBars(m);
   const shape = stack([{ key: 'linked', label: 'topic files in the index', value: lk }, { key: 'orphan', label: 'topic files in no index', value: m.orphans.length },
     { key: 'broken', label: 'broken links', value: m.broken.length }], { fmt: int });
   const broken = m.broken.map(e => `<li>${chip('bad', 'missing')} <span class="mute">L${esc(e.line)}</span> ${esc(e.title)} -&gt; ${esc(e.file)}</li>`).join('');
@@ -893,41 +1016,36 @@ function insMemory(m) {
    <details style="margin:6px 0"><summary class="small">all ${int(m.topics.length)} topic files, last opened first</summary><div class="inswrap"><table class="instab"><thead><tr><th>file</th><th>index</th><th>last opened</th><th class="insopt">last changed</th></tr></thead><tbody>${tops}</tbody></table></div></details>
    <div class="small mute" style="padding-bottom:6px">${esc(m.opened_method)}</div></div></div>`;
 }
-// META-TEND P1-VISUAL: the opened file's own findings above its text (the file map's click lands here)
-function insFileFindings(f, d) {
-  const xs = f.findings ?? (d.findings || []).filter(x => x.path === f.path || x.other === f.path);   // the file endpoint sends its own (the list part is capped)
-  if (!xs.length) return '<div class="small mute" id="ins-file-findings">no findings on this file</div>';
-  return `<ul class="small" id="ins-file-findings">${xs.map(x => `<li class="insfind">${chip(SEV_CHIP[x.severity], x.severity)} <span class="mute">C${esc(x.check)} L${esc(x.line)}${x.path !== f.path ? ` in ${esc(x.path.split('/').pop())}` : ''}</span> ${esc(x.why)} <i>fix: ${esc(x.fix.action)}</i></li>`).join('')}</ul>`;
-}
-const SUG_CHIP = { superseded: 'bad', duplicate: 'warn', stale: 'warn', 'one-role': 'prov', large: 'idle', lean: 'claude' };
-function insSuggest(d) {
-  const s = d.suggest || [];
-  const li = s.slice(0, 30).map(x => `<li class="inssug">${chip(SUG_CHIP[x.class] ?? 'idle', x.class)} <b>${tk(x.saved_per_day)} / day</b> <span class="mute small">${esc(x.id)}</span>
-    <div>${x.path ? `<button class="lnk" data-ins="${esc((d.rows || []).find(r => r.path === x.path)?.id ?? '')}">${esc(x.file)}:${esc(x.line)}</button> ` : `<b>${esc(x.file)}</b> `}<span class="mute">"${esc(x.head.slice(0, 120))}"</span>${x.owner_file ? ` ${chip('bad', 'owner file')}` : ''}</div>
-    <div class="small">${esc(x.why)} · <i>${esc(x.action)}</i></div>${x.patch ? `<details><summary class="small">patch (norn instructions apply ${esc(x.id)})</summary><pre class="inspatch">${esc(x.patch)}</pre></details>` : ''}</li>`).join('');
-  return `<div class="tablecard"><h3>Tighten <span class="mute small">${int(d.suggest_n ?? s.length)} candidates, ranked by ~tokens saved per day · read-only; apply = the owner's tap in the chat</span></h3>${li ? `<ul id="ins-suggest">${li}</ul>` : '<p class="mute" style="padding:0 12px">none</p>'}</div>`;
-}
 
-function insBody(f, ctx, d = {}) {
-  const src = /\.json$/i.test(f.path) ? '```json\n' + (f.text ?? '') + '\n```' : (f.text ?? '');
-  let { html, toc } = renderMarkdown(src, { sanitize: ctx.sanitize });
-  // META-STANDING-CONTEXT R1: each paragraph with its age badge (stated date / last commit / first seen; STALE; confirmed)
-  if (f.paras?.length && !/\.json$/i.test(f.path)) {
-    const lines = src.split(/\r?\n/);
-    html = f.paras.map(p => `<div class="inspara${p.stale ? ' stale' : ''}${d.focus_line && p.line <= d.focus_line && d.focus_line <= p.end ? ' focus" data-focus="1' : ''}" id="ins-${esc(p.anchor)}"><span class="agebadge chip ${p.stale ? 'warn' : p.confirmed ? 'ok' : 'idle'}" title="${esc([p.stated ? `stated ${p.stated}` : '', p.changed ? `changed ${p.changed.slice(0, 10)}` : '', p.confirmed ? 'confirmed' : '', p.why].filter(Boolean).join(' · '))}">${p.age_days ?? '?'} d${p.stale ? ' · STALE' : p.confirmed ? ' · confirmed' : ''}</span> <span class="small mute">#${esc(p.anchor)} L${esc(p.line)}</span>${renderMarkdown(lines.slice(p.line - 1, p.end).join('\n'), { sanitize: ctx.sanitize }).html}</div>`).join('');
+// the Docs reader (META-UX-BUILD S3): head (name, load, size, path) + Rendered / Source; the paragraph strip (META-TEND P5); findings
+// about the whole file on top; each other finding beside its paragraph (Rendered) or its line (Source). ctx.sanitize = DOMPurify.
+const docFind = x => `<div class="insfind">${chip(SEV_CHIP[x.severity] ?? 'idle', x.severity ?? 'note')} <span class="mute">${x.check ? `C${esc(x.check)} ` : ''}${x.line ? `L${esc(x.line)}` : 'whole file'}${x.surface ? ` · ${esc(x.surface)}` : ''}</span> ${esc(x.why)}${x.fix?.action ? `<div class="small mute">fix: ${esc(x.fix.action)}</div>` : ''}</div>`;
+const docAside = xs => (xs?.length ? `<aside class="docfind">${xs.map(docFind).join('')}</aside>` : '');
+const ageBadge = p => ((p.age_days !== null && p.age_days !== undefined) || p.changed || p.stated ?`<span class="agebadge chip ${p.stale ? 'warn' : p.confirmed ? 'ok' : 'idle'}" title="${esc([p.stated ? `stated ${p.stated}` : '', p.changed ? `changed ${p.changed.slice(0, 10)}` : '', p.confirmed ? 'confirmed' : '', p.why].filter(Boolean).join(' · '))}">${p.age_days ?? '?'} d${p.stale ? ' · STALE' : p.confirmed ? ' · confirmed' : ''}</span> ` : '');
+function docReader(f, ctx, d = {}) {
+  const json = /\.json$/i.test(f.path), text = f.text ?? '', src = json ? '```json\n' + text + '\n```' : text, lines = text.split(/\r?\n/);
+  const findings = f.findings || [], L = d.line, foc = (a, b) => (L && a <= L && L <= b ? ' focus" data-focus="1' : '');
+  let body, whole, toc = [];
+  if (d.src) {   // Source: every line numbered, its findings beside it
+    const by = findingsByLine(findings, lines.length); whole = by.whole;
+    body = `<div class="card docsrc" id="doc-src"><table><tbody>${lines.map((t, i) => `<tr id="docl-${i + 1}" class="${foc(i + 1, i + 1)}"><td class="ln mute">${i + 1}</td><td class="lt"><code>${esc(t)}</code></td><td>${docAside(by.at.get(i + 1))}</td></tr>`).join('')}</tbody></table></div>`;
+  } else {
+    const r = renderMarkdown(src, { sanitize: ctx.sanitize }); toc = r.toc;
+    if (f.paras?.length && !json) {   // each paragraph rendered on its own, its age badge + its findings beside it
+      const at = placeFindings(f.paras, findings); whole = at.whole;
+      body = f.paras.map(p => `<div class="inspara docpara${p.stale ? ' stale' : ''}${at.at.has(p.anchor) ? ' hasfind' : ''}${foc(p.line, p.end)}" id="ins-${esc(p.anchor)}"><div class="docptext">${ageBadge(p)}<span class="small mute">L${esc(p.line)}</span>${renderMarkdown(lines.slice(p.line - 1, p.end).join('\n'), { sanitize: ctx.sanitize }).html}</div>${docAside(at.at.get(p.anchor))}</div>`).join('');
+    } else { whole = findings; body = r.html; }
+    body = `<article class="card md" id="doc-body">${body}</article>`;
   }
   const links = toc.map(t => `<a class="toc${t.depth}" href="#${esc(t.id)}">${esc(t.text)}</a>`).join('');
-  return `<div class="small mute" style="margin-bottom:6px;overflow-wrap:anywhere">${esc(f.path)} · ${tk(f.tokens)} tokens · ${esc(int(f.lines))} lines <button data-ins="">Close</button>
-   <button disabled title="R2: needs the chat's verbs">Ask the controller to tighten this</button></div>${insStrip(f)}${insFileFindings(f, d)}<div class="docwrap"><nav class="doctoc" aria-label="Contents"><b class="small">Contents</b>${links || '<span class="small mute">no headings</span>'}</nav>
-   <article class="card md" id="ins-body">${html}</article></div>`;
-}
-
-// rendered markdown + contents sidebar (META-UX-R1 A); ctx.sanitize = DOMPurify in the browser
-function docBody(doc, ctx) {
-  const { html, toc } = renderMarkdown(doc.text ?? '', { sanitize: ctx.sanitize });
-  const links = toc.map(t => `<a class="toc${t.depth}" href="#${esc(t.id)}">${esc(t.text)}</a>`).join('');
-  return `<div class="small mute" style="margin-bottom:6px">${esc(doc.path)}</div><div class="docwrap"><nav class="doctoc" id="doc-toc" aria-label="Contents"><b class="small">Contents</b>${links || '<span class="small mute">no headings</span>'}</nav>
-   <article class="card md" id="doc-body">${html}</article></div>`;
+  const load = f.load ? ` ${chip(INS_CHIP[f.load] ?? 'idle', f.load === 'role' ? `role ${f.role}` : INS_LOAD[f.load] ?? f.load)}` : '';
+  const on = v => (v === 'src') === !!d.src;
+  const btn = (v, label) => `<button data-act="doc-view" data-view="${v}" aria-pressed="${on(v)}" class="${on(v) ? 'strong' : ''}">${label}</button>`;
+  return `<div class="dochd" id="docs-head"><button class="docback" data-act="doc-back">&larr; Back</button> <b class="dfname">${esc(f.name ?? f.tab)}</b>${load}
+    <span class="small mute">${f.tokens ? `${tk(f.tokens)} tokens · ` : ''}${int(f.lines ?? lines.length)} lines${f.changed ? ` · changed ${esc(fmtTime(f.changed, ctx.now))}` : ''} · <span class="inspath">${esc(f.path)}</span></span></div>
+   <div class="filters" id="docs-mode">${btn('md', 'Rendered')}${btn('src', 'Source')}<span class="small mute">${findings.length ? `${int(findings.length)} finding${findings.length === 1 ? '' : 's'} beside the text` : 'no findings on this file'}</span></div>
+   ${insStrip(f)}${whole.length ? `<div class="card small" id="doc-file-findings"><b>About the whole file</b>${whole.map(docFind).join('')}</div>` : ''}
+   ${d.src ? body : `<div class="docwrap"><nav class="doctoc" id="doc-toc" aria-label="Contents"><b class="small">Contents</b>${links || '<span class="small mute">no headings</span>'}</nav>${body}</div>`}`;
 }
 
 // Ledger (LEDGER-UX R1): one row per entry in the Records look, newest first - time, kind chip, headline + labelled sub-lines;

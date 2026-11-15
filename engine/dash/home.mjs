@@ -5,6 +5,7 @@
 // file, the run records, the ledger entries and the inbox rows); renderThread is the reusable component (Look 2's dock later
 // mounts the same list); renderHome is the Look 3 page around it. C3: approval cards (Approve once / Deny -> POST /api/chat/approve)
 // and done cards (Undo -> POST /api/chat/undo) come from the chat profile's outbox lines; a card without a verb keeps its button disabled.
+import { dodChips } from './widgets.mjs';   // META-DOD 1: a run's Ready / Done chips
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fin = v => typeof v === 'number' && Number.isFinite(v);
 const hhmm = iso => { const t = Date.parse(iso ?? ''); return Number.isFinite(t) ? new Date(t).toISOString().slice(11, 16) : ''; };
@@ -121,7 +122,7 @@ export function homeEvents({ thread = [], runs = [], items = null, ledger = [], 
     const head = { run: r.id, lane: d.lane ?? null, stage: d.stage ?? null, name: d.name ?? null };
     if (r.state !== 'queued') out.push({ key: `r${r.id}`, ts: startTs(r), cat, kind: 'run-start', ...head, executor: d.executor ?? null, model: d.model ?? null, effort: d.effort ?? null });
     const end = endOf(r), ets = endTs(r);
-    if (end && ets) out.push({ key: `e${r.id}`, ts: ets, cat, kind: 'run-end', ...head, outcome: end.outcome ?? r.state, why: end.why ?? null,
+    if (end && ets) out.push({ key: `e${r.id}`, ts: ets, cat, kind: 'run-end', ...head, outcome: end.outcome ?? r.state, why: end.why ?? null, dod_ready: d.dod_ready ?? null, dod: end.dod ?? null,
       images: imagePaths(`${end.marker_line ?? ''} ${end.why ?? ''}`) });
   }
   const checkins = runs.filter(r => r.data?.kind === 'checkin').map(r => ({ id: r.id, start: Date.parse(startTs(r) ?? ''), end: endTs(r) ? Date.parse(endTs(r)) : null }))
@@ -166,7 +167,7 @@ function card(e, ctx) {
   if (e.kind === 'run-start') return `<div class="head">${tag('run', 'STARTED')}${who}<span class="spacer"></span><span class="mute small">${at}</span></div>
     <div class="txt small mute">${[e.executor, SHORT(e.model), e.effort].filter(Boolean).map(esc).join(' · ') || '-'}</div>`;
   if (e.kind === 'run-end') { const [c, w] = OUT[e.outcome] ?? ['idle', String(e.outcome ?? 'ended').toUpperCase()];
-    return `<div class="head">${tag(c, w)}${who}<span class="spacer"></span><span class="mute small">${at}</span></div>${e.why ? `<div class="txt">${inline(e.why)}</div>` : ''}${shots(e.images, ctx.project)}`; }
+    return `<div class="head">${tag(c, w)}${who}<span class="spacer"></span><span class="mute small">${at}</span></div>${e.why ? `<div class="txt">${inline(e.why)}</div>` : ''}${e.dod_ready || e.dod ? `<div class="txt">${dodChips(e.dod_ready, e.dod, { evidence: true })}</div>` : ''}${shots(e.images, ctx.project)}`; }
   if (e.kind === 'question') { const rk = e.recommend?.key ?? e.recommend?.k ?? null;
     return `<div class="head">${tag('needs', 'NEEDS YOU')}${rid(e.id)} <b class="ttl">${esc(e.title)}</b><span class="spacer"></span><span class="mute small">${esc(e.lane ?? '')} · ${at}</span></div>
     ${e.body ? `<div class="txt">${inline(e.body)}</div>` : ''}<div class="acts">${(e.options || []).map(o => { const k = o.key ?? o.k, t = o.text ?? o.t ?? '';

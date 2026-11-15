@@ -35,6 +35,10 @@ export function modeOf(o, family, caps) {
 export function readHead(f, n = 8192) {
   try { const fd = fs.openSync(f, 'r'); try { const b = Buffer.alloc(n); return b.subarray(0, fs.readSync(fd, b, 0, n, 0)).toString('utf8'); } finally { fs.closeSync(fd); } } catch { return null; }
 }
+/** readHead on fs.promises (the feed's log banner) */
+export async function readHeadA(f, n = 8192) {
+  try { const fh = await fs.promises.open(f, 'r'); try { const b = Buffer.alloc(n); return b.subarray(0, (await fh.read(b, 0, n, 0)).bytesRead).toString('utf8'); } finally { await fh.close(); } } catch { return null; }
+}
 export const readText = f => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
 /** One JSON line -> its object, else null (blank, malformed, a scalar). */
 export const jsonObject = line => { try { const j = JSON.parse(line); return j && typeof j === 'object' ? j : null; } catch { return null; } };
@@ -69,16 +73,17 @@ export const FEED_MAX = 1024 * 1024;      // one poll reads at most 1 MB of appe
 
 /**
  * Complete lines appended to `file` since byte `offset` (null = first open: the backlog window, from a line boundary; an offset
- * past the end = the file was truncated / replaced: start over). -> { lines [{ text, end }], offset } | null (no file).
+ * past the end = the file was truncated / replaced: start over). -> Promise<{ lines [{ text, end }], offset } | null (no file)>.
+ * META-DASH-ASYNC R1 (DEC-338): the stat + the read run on fs.promises - the dash feed polls this every 2 s on its event loop.
  */
-export function readLines(file, offset, { backlog = FEED_BACKLOG, max = FEED_MAX } = {}) {
-  let st; try { st = fs.statSync(file); } catch { return null; }
+export async function readLines(file, offset, { backlog = FEED_BACKLOG, max = FEED_MAX } = {}) {
+  let st; try { st = await fs.promises.stat(file); } catch { return null; }
   let start = Number.isInteger(offset) && offset >= 0 && offset <= st.size ? offset : null, skip = false;
   if (start === null) { start = Math.max(0, st.size - backlog); skip = start > 0; }
   if (st.size <= start) return { lines: [], offset: start };
   const buf = Buffer.alloc(Math.min(st.size - start, max));
-  const fd = fs.openSync(file, 'r');
-  let n; try { n = fs.readSync(fd, buf, 0, buf.length, start); } finally { fs.closeSync(fd); }
+  const fh = await fs.promises.open(file, 'r');
+  let n; try { n = (await fh.read(buf, 0, buf.length, start)).bytesRead; } finally { await fh.close(); }
   let pos = 0;
   if (skip) { const nl = buf.indexOf(10); if (nl < 0 || nl >= n) return { lines: [], offset: start }; pos = nl + 1; }
   const lines = [];
@@ -90,12 +95,12 @@ export function readLines(file, offset, { backlog = FEED_BACKLOG, max = FEED_MAX
   return { lines, offset: start + pos };
 }
 
-/** Tail files [[key, path]] from cursor through parse(text, key) -> events[]; -> { events (each with its `at`), cursor }. */
-export function feedFiles(files, cursor, parse, env = {}) {
+/** Tail files [[key, path]] from cursor through parse(text, key) -> events[]; -> Promise<{ events (each with its `at`), cursor }>. */
+export async function feedFiles(files, cursor, parse, env = {}) {
   const cur = { ...(cursor || {}) }, events = [];
   for (const [key, file] of files) {
     if (!file) continue;
-    const r = readLines(file, cur[key], env);
+    const r = await readLines(file, cur[key], env);
     if (!r) continue;
     for (const l of r.lines) {
       cur[key] = l.end;
@@ -134,13 +139,13 @@ export function logLine(text) {
 /** The plain-log feed (a cli executor, fake, a run without a structured transcript): the run's log, optional extra files. */
 export const logFeed = (files, cursor, env) => feedFiles(files, cursor, logLine, env);
 
-/** env.memo-cached file lookup (a hit is kept; a miss is retried after retryMs, so a directory walk never runs every poll). */
-export function located(env, key, find, retryMs = 30000) {
+/** env.memo-cached file lookup (a hit is kept; a miss is retried after retryMs, so a directory walk never runs every poll); find may be async */
+export async function located(env, key, find, retryMs = 30000) {
   const m = env?.memo, now = Date.now();
   const c = m?.get(key);
   if (c?.file) return c.file;
   if (c && now - c.miss < retryMs) return null;
-  const file = find();
+  const file = await find();
   m?.set(key, file ? { file } : { miss: now });
   return file;
 }

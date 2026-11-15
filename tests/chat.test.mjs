@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { ADAPTERS, adapterFor, capsMatrix, formatCapsMatrix } from '../engine/lib/harness/index.mjs';
 import { CHATS } from '../engine/lib/harness/common.mjs';
 import { spawn } from 'node:child_process';
-import { createChat, readThread, threadState, rolePack, chatEnv } from '../engine/lib/chat.mjs';
+import { createChat, readThread, threadState, rolePack, chatEnv, threadFile, threadFlushed } from '../engine/lib/chat.mjs';
+import { snap, newSnap, readTextA } from '../engine/lib/fsnap.mjs';
 import { FAKE_CHAT } from '../engine/lib/harness/fake.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 import { fixture } from './helpers/dash-fixture.mjs';
@@ -142,6 +143,24 @@ test('chat: the role pack - records are the memory, file content is evidence nev
   assert.match(pack, /project p\b/);
   const roles = path.join(p.root, 'roles'); fs.mkdirSync(roles); fs.writeFileSync(path.join(roles, 'controller.md'), 'HOUSE RULE: speak plainly\n');
   assert.match(rolePack({ ...p, install: { roles } }), /HOUSE RULE: speak plainly/);
+});
+
+// META-DASH-ASYNC R1 (the readThread / enqueue race): a GET reads the thread into its request snapshot; a POST's line lands meanwhile
+// (its write queue empties, the forget is the POST's own snapshot) - readThread in the GET's snapshot must still count that line
+test('thread: a line that lands after a request snapshot read the thread is in readThread of that snapshot', async () => {
+  const p = proj(), chat = fakeChat(p);
+  try {
+    chat.note('undone', { line: 0 }); await threadFlushed(p.state);
+    await snap.run(newSnap(), async () => {
+      await readTextA(threadFile(p.state));   // the GET primes the thread (as server drainChatA / openChat)
+      await snap.run(newSnap(), async () => { chat.note('undone', { line: 1 }); await threadFlushed(p.state); });   // a POST: on disk now
+      const t = readThread(p.state);
+      assert.equal(t.count, 2, 'the landed line is counted');
+      assert.deepEqual(t.items.map(l => l.line), [0, 1]);
+      assert.deepEqual(readThread(p.state, 1).items.map(l => l.line), [1], 'and read from its cursor');
+    });
+    assert.deepEqual(readThread(p.state).items.map(l => l.line), [0, 1], 'outside a snapshot: the file');
+  } finally { await chat.close(); }
 });
 
 test('chat: messages queue in order on one process; an executor without chat is refused; empty text is refused', async () => {

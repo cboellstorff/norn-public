@@ -1,5 +1,5 @@
 // META-TEND P6: SloppaChoppa, the ONE voice (owner DIR-49 = option A; DEC-264 = Clippy-like). The pure part (node tests drive it):
-// the header badge (NEW warn-level findings since the Guard page was last opened), his line (a template, the number in plain words),
+// the header badge (NEW warn-level findings since the Slop page was last opened), his line (a template, the number in plain words),
 // the one best action, and the pop-up gate (Settings mode off / on / quiet, the daily cap, once per finding, never while the owner
 // types, Mute, one appearance at a time). The browser part (createStage) plays the ORC-1 round-6 strips frame by frame at their real
 // times; still frames when the mode is quiet or nothing may move (motion.mjs: QUIET, reduced motion, a hidden page).
@@ -14,7 +14,7 @@ const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eig
 export const inWords = n => (Number.isInteger(n) && n >= 0 && n <= 20 ? WORDS[n] : String(n));
 const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 const warns = s => s === 'high' || s === 'medium';
-const TAB_WORD = { instructions: 'Instructions', tests: 'Tests', usage: 'Usage', agents: 'Agents', docs: 'Docs' };
+const TAB_WORD = { context: 'Context', tests: 'Tests', usage: 'Usage', agents: 'Agents', docs: 'Docs' };
 
 /** the badge: warn-level findings first seen after the Guard page was last opened (never opened: the ones new in the last day) */
 export function badgeCount(rows = [], seenAt = 0) {
@@ -23,12 +23,12 @@ export function badgeCount(rows = [], seenAt = 0) {
 /** the one best action: the first ranked row (the server ranks new first, then severity) -> { label, go, row } */
 export function bestAction(rows = []) {
   const r = rows[0];
-  return r ? { label: `Fix it in ${TAB_WORD[r.go?.tab] ?? 'its tab'}`, go: r.go, row: r } : { label: 'Open the Guard', go: { tab: 'guard' }, row: null };
+  return r ? { label: `Fix it in ${TAB_WORD[r.go?.tab] ?? 'its tab'}`, go: r.go, row: r } : { label: 'Open Slop', go: { tab: 'slop' }, row: null };
 }
 /** his line: a template with the number in plain words */
-export function orcLine({ rows = [], fresh = 0, pending = false } = {}) {
-  if (!rows.length) return pending ? 'Still looking: the instruction-file scan is running.' : 'Nothing open. The tree is tended.';
-  const top = rows[0], n = fresh || rows.length, what = fresh ? 'new finding' : 'open finding';
+export function orcLine({ rows = [], fresh = 0, pending = false, total = rows.length } = {}) {   // total: the open count when rows holds only the top row (the Guard summary)
+  if (!rows.length || !total) return pending ? 'Still looking: the instruction-file scan is running.' : 'Nothing open. The tree is tended.';
+  const top = rows[0], n = fresh || total, what = fresh ? 'new finding' : 'open finding';
   return `${cap(inWords(n))} ${what}${n === 1 ? '' : 's'}. The worst: ${top.why}`;
 }
 /** the badge's accessible name */

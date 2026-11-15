@@ -52,3 +52,29 @@ export function lines(series, { days = [], fmt = String, id = '', title = '' } =
     <div class="wcolax small mute"><span>${esc(days[0] ?? '')}</span><span>max ${esc(fmt(max))}</span><span>${esc(days.at(-1) ?? '')}</span></div>
     <div class="small inslegend">${series.map((s, i) => `<span><i class="insdot ln-${(i % 9) + 1}"></i>${esc(s.label)} ${last(s) ? `<b>${esc(fmt(last(s).y))}</b>` : '-'}</span>`).join(' ')}</div></div>`;
 }
+
+// META-DOD 1 (DIR-68): a run's Definition of Ready (its brief's Scope / Tests / Done lines at norn run) and Definition of Done (Norn's
+// own run-end check) as two chips with the evidence; ready = the start record's dod_ready, done = the end record's dod (null = not checked)
+export const dodTest = x => `${x.name} exit ${x.code}${x.counts ? `, ${x.counts.pass} pass ${x.counts.fail} fail` : ''}`;
+export function dodEvidence(ready, done) {
+  const r = ready ? (ready.ok ? 'Ready: Scope / Tests / Done lines present' : `Ready: the brief lacks ${(ready.missing || []).join(', ')} (policy ${ready.mode})`) : null;
+  const d = done ? `Done: ${done.ok ? 'green' : done.why}${(done.tests || []).length ? ` · ${done.tests.map(dodTest).join(' · ')}` : ''}` : null;
+  return [r, d].filter(Boolean);
+}
+export function dodChips(ready, done, { evidence = false } = {}) {
+  if (!ready && !done) return '';
+  const [er, ed] = [ready ? dodEvidence(ready, null)[0] : '', done ? dodEvidence(null, done)[0] : ''];
+  const one = (v, word, ev) => `<span class="chip ${v.ok ? 'ok' : 'bad'}" title="${esc(ev)}">${word} ${v.ok ? '✓' : '✗'}</span>`;
+  const chips = [ready ? one(ready, 'Ready', er) : '', done ? one(done, 'Done', ed) : ''].filter(Boolean).join(' ');
+  return `<span class="dod">${chips}</span>${evidence ? `<div class="small mute dodev">${dodEvidence(ready, done).map(esc).join('<br>')}</div>` : ''}`;
+}
+// META-DOD 3: a plan run's fresh-eyes review (agents.mjs node.critique): queued / running / reviewed ✓ (n findings) / review ✗ (its end)
+export function critiqueWord(c) {
+  const n = c.findings, done = c.state === 'exited' && c.outcome === 'done';
+  return ['queued', 'running'].includes(c.state) ? ['warn', `review ${c.state}`] : done ? ['ok', `reviewed ✓ (${n ?? '?'} finding${n === 1 ? '' : 's'})`] : ['bad', `review ✗ (${c.outcome ?? c.state})`];
+}
+export function critiqueChip(c) {
+  if (!c) return '';
+  const [cls, word] = critiqueWord(c);
+  return ` <span class="dod"><span class="chip ${cls}" title="${esc(`${c.run}${c.file ? ': ' + c.file : ''}`)}">${word}</span></span>`;
+}

@@ -50,6 +50,7 @@ export const POLICY_DEFAULTS={
   checkin:{routine:['merge_done','worker_done_stage'],debounce_min:5,auto_stage:[],none_lanes:[],on_end_lanes:[],merge_agent:'',merge_model:'claude-sonnet-5-5',merge_effort:'medium'},
   speed_mode:{A:true,B:true,C:true,D:true},
   instructions:{stale_days:30},
+  dod:{ready:'off',scope:'off',critique:'off',critique_filter:'',test_cmd:'',timeout_min:20},   // META-DOD 1 (DIR-68): the Ready gate of norn run (off | warn | refuse) + the Done check's test runner (dod.mjs); META-DOD 2: the scope guard (off | on, scope.mjs); META-DOD 3: the plan review (off | on, critique.mjs)
   slop:{enabled:true},   // META-BETA-PREP (DIR-52): ONE switch for all of SloppaChoppa (slopOn)
   voice:{popups:'off',daily_cap:3},   // META-TEND P6 (DEC-264, DIR-36): SloppaChoppa's pop-ups ship OFF until the owner's 11-21 review; the badge works from day one
   launch:{roles:{worker:'full',merge:'full',checkin:'full',chat:'full'},profiles:{}},
@@ -90,6 +91,10 @@ export const SETTINGS=[
   S('agents','max_sol','Max codex-sol runs',int(0,8),'Runs of codex-sol (the faster, cheaper Codex model) inside the Codex total.','5','Cheap; mainly costs merge attention.',[CHECKIN]),
   S('agents','policy.delegate.max_per_parent','Max helpers per run',int(0,8),'Read-only meta delegate helpers one worker may have running at once.','4','More = more parallel questions per worker; each helper is one executor run.',['meta delegate (exit 4 past the cap)']),
   S('agents','policy.ask.max_per_day','Max meta asks per day',int(0,100),'Questions to ENDED runs (meta ask: a read-only fork of the session, else a cold helper) per UTC day.','10','Each ask is one helper run; a fork re-reads the whole session (~150-250k tokens of cache creation).',['meta ask (exit 4 past the cap)']),
+  S('agents','policy.dod.ready','Ready gate (brief Scope / Tests / Done)',en(['off','warn','refuse']),'A brief must carry three plain lines: Scope: (the paths the run may change), Tests: (the test files or a `command` that prove it), Done: (the end marker). refuse: norn run refuses a brief without them (exit 6); warn: it starts and says so; off: no check. With the lines, Norn checks the run itself when it ends DONE: a clean tree, every changed path in Scope, the Tests + the merge gate run by Norn. A red check sends the run back once with the evidence; a second red is STOPPED for the check-in.','refuse','Refuse = every brief needs the three lines; the run-end check runs the brief tests and the merge gate (minutes per run).',['norn run (exit 6)','the run supervisor (Done check)',CHECKIN]),
+  S('agents','policy.dod.scope','Scope guard (what a run may touch)',en(['off','on']),'on: while a claude run works, Norn refuses its edits outside the worktree, its extra folders and its NOTES folder (and outside the brief Scope: line when there is one), force pushes, pushes to main / master (merge runs and check-ins excepted), hard resets and branch or worktree deletes outside its own worktree, gh repo edit / delete and rm -r outside the worktree. The run is told why and can carry on; each refusal shows in the run feed and the Slop list. off: none of this. Read when a run starts.','on','No cost: one quick check per tool call.',['the run launch (norn run, the queue fill)',CHECKIN]),
+  S('agents','policy.dod.critique','Plan review (fresh eyes before the build)',en(['off','on']),'on: when a planning run ends DONE, Norn queues ONE review run itself: the review executor of the policy table, a fresh session, read-only, given the plan (the run NOTES) and the request it answers (its brief and the directive ids in it), asked for real problems only (the filter below). The findings sit beside the plan (<plan>-CRITIQUE.md). A build run whose brief names the plan waits for the review: a clean review releases it, findings wait until the check-in has read them (it reviews the review run). off: no review.','on','One review run per plan (the review executor, read-only).',['the run supervisor (a planning run end)','norn run (the build waits)',CHECKIN]),
+  S('agents','policy.dod.critique_filter','Plan review filter file',{type:'text'},'The file the review is held to (what counts as a real problem). Blank = the built-in filter: a concrete scenario on real data giving wrong output, a crash, nondeterminism, a test that passes while broken, a contract that forces a breaking change, a measurable performance bug, or over-engineering.','the project review filter file','—',['norn critique (the review brief)']),
   S('agents','policy.mail.nudge_after_min','Nudge after (min)',int(0,240),'An URGENT mail (meta mail send --urgent) a running run has not acked within this many minutes stops its tree and resumes its session with the mail as the prompt. Never while the project quiet flag is set or its machine lock is held. 0 = off.','10','A nudge cuts the run at its current tool call; shorter = faster replies, more cut work.',['the run supervisor (engine/lib/supervisor.mjs nudge)']),
   S('workers','policy.guard.k','Runaway alarm at (x the median of its peers)',num(1.5,20),'A live run whose cache reads (or turns) pass this many times the median of its peers (ended runs of the same kind + agent + effort, last 14 days, at least 3) raises a GRD alarm the check-in rules: let it run, mail it, stop it. Norn never stops a run by itself.','3','Lower = earlier alarms, more false ones; higher = a runaway burns longer unseen.',['norn guard','the tick (digest row 8)','dashboard Agents chip']),
   S('workers','policy.guard.floor_m','Runaway alarm floor (M cache reads)',num(0,1000),'No runaway alarm below this many million cache reads, whatever the ratio.','5','Lower = small runs alarm too.',['norn guard']),
@@ -199,7 +204,7 @@ export const SECTIONS=[
     {id:'ranks',label:'Allowed work classes',help:'Which classes each executor may be given; routing offers only allowed executors.'},
     {id:'harness',label:'Harness',help:'Only claude is wired today (H5 / H7 open the others).'},
     {id:'danger',label:'Danger zone',help:'A wrong value here skews the usage gate or breaks the one-writer rule.',danger:true}]},
-  {id:'voice',label:'Guard voice',help:'SloppaChoppa, the one voice of the Guard: his pop-ups and how often (DEC-264).',subs:[
+  {id:'voice',label:'Slop voice',help:'SloppaChoppa on the Slop page: his pop-ups and how often (DEC-264).',subs:[
     {id:'switch',label:'On / off',help:'One switch for all of SloppaChoppa in this project (DIR-52); his pop-ups are the row below.'},
     {id:'popups',label:'Pop-ups',help:'Off by default until the owner review of SloppaChoppa (DIR-36).'}]},
   {id:'notify',label:'Notifications',basic:true,help:'A phone or desktop ping when Norn needs you (machine.json notify; norn setup --notify).',info:true,subs:[
@@ -220,6 +225,7 @@ export const SECTION_RULES=[
   [/^policy\.context\.([a-z]+)\.[a-z_]+$/,'agents/context/$1'],
   [/^policy\.iteration\./,'agents/iteration'],
   [/^policy\.mail\./,'agents/iteration'],
+  [/^policy\.dod\./,'agents/iteration'],
   [/^policy\.instructions\./,'agents/iteration'],
   [/^policy\.slop\./,'voice/switch'],
   [/^policy\.voice\./,'voice/popups'],
@@ -282,6 +288,11 @@ export function atomicWrite(p,contents){const tmp=p+'.dash-'+randomUUID()+'.tmp'
 // goes over the file's budget (keys no setting names are kept), atomically. false = nothing changed, nothing written.
 export function writeBudget(file,budget,updated){const next=split(updated).budget;if(JSON.stringify(next)===JSON.stringify(budget))return false;
   fs.mkdirSync(path.dirname(file),{recursive:true});atomicWrite(file,JSON.stringify({...budget,...next},null,2)+'\n');return true;}
+// META-DASH-ASYNC R1 (option a): the dash server's forms on fs.promises (a sync write blocks the event loop); the CLI keeps the sync ones
+export async function atomicWriteAsync(p,contents){const fp=fs.promises,tmp=p+'.dash-'+randomUUID()+'.tmp';
+  try{await fp.writeFile(tmp,contents,{encoding:'utf8',flag:'wx'});await fp.rename(tmp,p);}finally{await fp.unlink(tmp).catch(()=>{/* renamed */});}}
+export async function writeBudgetAsync(file,budget,updated){const next=split(updated).budget;if(JSON.stringify(next)===JSON.stringify(budget))return false;
+  await fs.promises.mkdir(path.dirname(file),{recursive:true});await atomicWriteAsync(file,JSON.stringify({...budget,...next},null,2)+'\n');return true;}
 
 const parts=k=>k.split('.');
 export function getPath(o,k){let x=o;for(const p of parts(k)){if(x===null||typeof x!=='object')return undefined;x=x[p];}return x;}

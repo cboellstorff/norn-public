@@ -27,6 +27,11 @@ export const TRIAL_RUNS = 5;
 const CHEAP = { model: 'claude-sonnet-5-5', effort: 'medium' }, DEFAULT_MODEL = 'claude-opus-5-5';
 
 export const loadAdviceData = (file = ADVICE_FILE) => JSON.parse(fs.readFileSync(file, 'utf8'));
+/** META-DASH-ASYNC R1: the advice table on fs.promises (the dash passes it to advise() as o.data) */
+export const loadAdviceDataAsync = async (file = ADVICE_FILE) => JSON.parse(await fs.promises.readFile(file, 'utf8'));
+
+// META-UX-BUILD S5: the kind of fix of a model advice card (advisory.mjs FIX_KINDS) - a Settings change the owner takes or leaves
+export const ADVICE_FIX = { kind: 'call', ways: ['Try the change', 'Keep the current setting'] };
 
 /** The Settings keys that set class `cls`'s model / effort, or null (no setting routes it). */
 export function settingKeys(cls) {

@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { slopOn } from './policy.mjs';
 import { record, RecordError, loadState } from './records.mjs';
 import { providerEnv, limitPatterns, authPatterns, executorInfo } from './executors.mjs';
@@ -22,10 +23,13 @@ import { nodeUsage } from './fed.mjs';
 import { readGate, noteCheckin } from './gate.mjs';
 import { ledgerStep } from './ledger.mjs';
 import { checkBranch, slopPrompt } from './slop/runend.mjs';
+import { doneCheck, dodPrompt, testLine } from './dod.mjs';
+import { critiqueOn, findingsCount } from './critique.mjs';
 import { hostWrite } from './slop/host.mjs';
 import { ctxRole, ctxLimits, ctxLevel, transcriptCtx, specPolicy } from './ctxlimit.mjs';
 import { findTranscript } from './harness/claude.mjs';
 
+const NORN_BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'norn.mjs');
 const spec = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const { run, state } = spec;
 const iso = () => new Date().toISOString();
@@ -99,7 +103,7 @@ if (cmd) {
   } catch (e) { finish(null, null, String(e.message)); }
 }
 
-function finish(code, signal, error) {
+async function finish(code, signal, error) {
   if (finished) return;
   finished = true;
   clearInterval(timer);
@@ -109,7 +113,7 @@ function finish(code, signal, error) {
   for (const fd of fds) { try { fs.closeSync(fd); } catch { /* closed */ } }
   logLine(`exit=${code}${signal ? ' signal=' + signal : ''}${error ? ' error=' + error : ''}`);
   // a read-only helper cannot write: its final message (claude json result / a cli executor's plain stdout) becomes the answer file
-  if ((spec.role === 'helper' || spec.kind === 'audit') && spec.notes && !(read(spec.notes) || '').trim()) {   // META-TEND P5: an audit's report = its final message
+  if ((spec.role === 'helper' || spec.kind === 'audit' || spec.critique) && spec.notes && !(read(spec.notes) || '').trim()) {   // META-TEND P5: an audit's report = its final message; META-DOD 3: so are a plan review's findings
     const raw = read(spec.final) || '';
     let text = raw;
     if (cmd?.parse === 'claude') { try { text = String(JSON.parse(raw).result ?? ''); } catch { text = ''; } }
@@ -159,6 +163,18 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
       }
     } catch { /* no projects dir */ }
   }
+  // META-DOD 1 (DIR-68): a DONE counts only on Norn's own green Done check (dod.mjs) - the agent's words are never the evidence.
+  // The heartbeat beats on while the brief's tests and the gate run; a red check ends the run STOPPED with the evidence (dodEnd resumes it once)
+  if (outcome === 'done' && dodOn()) {
+    const hb = setInterval(beat, spec.hbMs);
+    try { data.dod = await doneCheck({ worktree: spec.worktree, dod: spec.dod, logDir: path.dirname(spec.log), run }); }
+    catch (e) { data.dod = { ok: false, why: `Done check could not run: ${e.message.split(/\r?\n/)[0]}`, at: iso(), dirty: [], changed: [], out_of_scope: [], tests: [], problems: [] }; }
+    finally { clearInterval(hb); }
+    logLine(`dod: Done ${data.dod.ok ? 'green' : 'RED: ' + data.dod.why}${data.dod.tests.length ? ' (' + data.dod.tests.map(testLine).join('; ') + ')' : ''}`);
+    if (!data.dod.ok) { outcome = 'stopped'; data.outcome = 'stopped'; data.why = `Done check failed: ${data.dod.why}`; }
+  }
+  // META-DOD 3: a plan review's end names its findings file and count (critique.mjs: 0 = clean, the build it holds goes)
+  if (spec.critique) data.critique = { ...spec.critique, file: String(spec.notes).replace(/\\/g, '/'), findings: findingsCount(read(spec.notes)) };
   try { record(state, { kind: 'run', ev: 'end', id: run, by: 'launcher', data }); }
   catch (e) {   // killed meanwhile: `norn stop` owns the cleanup
     logLine(`end not recorded: ${e.message}`);
@@ -190,6 +206,8 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   if (outcome === 'handoff') resumed = autoResume();
   else if (outcome === 'nudged') resumed = nudgeResume();
   else if (outcome === 'done') resumed = slopEnd();
+  else if (data.dod?.ok === false) resumed = dodEnd(data.dod);
+  if (outcome === 'done' && !resumed) critiqueEnd();   // a slop resume reviews its own DONE later
   try { for (const f of fillQueue(state)) logLine(`queue: ${f.queued} -> ${f.next}`); } catch (e) { logLine(`queue fill failed: ${e.message}`); }
   if (!resumed && spec.tick && spec.policy?.trigger_on_exit !== false) {
     // CI-RED-319CAF8: born inside this run's job, the tick died with this exit whenever the supervisor had spawned a console child
@@ -222,12 +240,15 @@ function gitEvidence(wt) {
   } catch { return {}; }
 }
 
-// a usage-limit exit runs again, same spec, once the limit resets (+2 min) or in 60 min when the reset is not in the log
+// a usage-limit exit runs again, same spec: a read reset is held by the limit gate (limitgate.mjs: open at the reset + 2 min, or at
+// once on a limit-<family> decision - DEC-337: a not_before clock could not follow the owner's early reset); an unread reset closes
+// nothing, so it waits 60 min
 function requeue(limit) {
-  const notBefore = new Date(limit.reset ? Date.parse(limit.reset) + 120000 : Date.now() + 3600000).toISOString();
+  const notBefore = limit.reset ? undefined : new Date(Date.now() + 3600000).toISOString();
   try {
     const { run: _r, log: _l, final: _f, session_id: _s, lockFile: _k, fromQueue: _q, ...rest } = spec;
-    logLine(`usage limit (${limit.line}) -> re-queued ${queueRun({ ...rest, notBefore, requeueOf: run }).run} not before ${notBefore}`);
+    const held = notBefore ? `not before ${notBefore}` : `held by the limit gate until ${limit.reset} (+2 min)`;
+    logLine(`usage limit (${limit.line}) -> re-queued ${queueRun({ ...rest, notBefore, requeueOf: run }).run} ${held}`);
   } catch (e) { logLine(`re-queue failed: ${e.message}`); }
 }
 
@@ -316,6 +337,35 @@ function slopEnd() {
   catch (e) { if (!(e instanceof RecordError)) throw e; logLine(`resume not recorded: ${e.message}`); }
   if (next) write(next);
   logLine(next ? `slop: resumed ${next} with ${open.length} BLOCK finding(s)` : `slop: resume refused: ${refused}`);
+  return !!next;
+}
+
+// META-DOD 3: a planning run ended DONE -> `norn critique` queues its ONE review (the CLI resolves the review executor as norn run does;
+// it says SKIPPED when policy.dod.critique is off or the run is no plan run). Before the queue fill below, so the review starts at once.
+function critiqueEnd() {
+  if (spec.kind === 'checkin' || spec.role === 'helper' || spec.critique || !spec.notes || !spec.ctx_from || killedByMeta()) return;
+  try { if (loadState(state).items[run]?.data.class !== 'planning' || !critiqueOn(specPolicy(spec))) return; } catch (e) { logLine(`critique: policy not read: ${e.message}`); return; }
+  const r = spawnSync(process.execPath, [NORN_BIN, 'critique', '--run', run, '--project', spec.ctx_from, '--state', state, ...(spec.locksDir ? ['--locks', spec.locksDir] : []),
+    ...(spec.tick ? [] : ['--no-tick'])], { encoding: 'utf8', timeout: 60000, windowsHide: true });
+  logLine(`critique: ${`${r.stdout || ''}${r.stderr || ''}`.trim().split(/\r?\n/)[0] || `exit ${r.status ?? r.error?.message}`}`);
+}
+
+// META-DOD 1: the Done check applies to a lane work run whose brief passed the Ready gate (spec.dod.ready, norn run)
+function dodOn() {
+  return !!spec.dod?.ready && !!spec.worktree && spec.kind !== 'checkin' && spec.role !== 'helper' && !spec.readonly && !killedByMeta();
+}
+// a red Done check goes back to the SAME lane once, as a resume with the evidence (the slopEnd pattern); the resumed run is never
+// resumed again for it: a second red stays STOPPED and is the check-in's to decide
+function dodEnd(d) {
+  if (spec.dodOf) { logLine(`dod: red again after the Done resume of ${spec.dodOf}: no second resume, the check-in decides`); return false; }
+  let next = null, refused = null;
+  try {
+    const { run: _r, log: _l, final: _f, session_id: sid, lockFile: _k, nudge: _n, resumeSid: _rs, ...rest } = spec;
+    next = startRun({ ...rest, resumeOf: run, dodOf: run, ...(nudgeable() ? { resumeSid: sid } : {}), promptText: dodPrompt(d, spec.brief) }).run;
+  } catch (e) { refused = e instanceof RunRefused ? `${e.code === 3 ? 'writer' : 'worker cap'}: ${e.message}` : `error: ${e.message}`; }
+  try { record(state, { kind: 'run', ev: 'resume', id: run, by: 'launcher', data: next ? { next, dod: d.why } : { refused, dod: d.why } }); }
+  catch (e) { if (!(e instanceof RecordError)) throw e; logLine(`resume not recorded: ${e.message}`); }
+  logLine(next ? `dod: resumed ${next} with the Done check's evidence` : `dod: resume refused: ${refused}`);
   return !!next;
 }
 

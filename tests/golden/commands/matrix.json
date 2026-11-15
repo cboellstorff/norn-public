@@ -646,6 +646,7 @@
     "<FAKE>",
     "--brief",
     "<DIR>/probe-brief.md",
+    "--read-only",
     "--resumes",
     "0"
    ],

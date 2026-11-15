@@ -135,6 +135,39 @@ export function writeViews(stateDir, st, paths = {}, { only = null, ready = null
   return res;
 }
 
+/** META-DASH-ASYNC R1 (option a): writeViews on fs.promises - the dash server's write path (a sync write blocks the event loop the
+ * page and its streams run on). The same views, hashes and hand-edit guard as writeViews; the CLI keeps the sync form. */
+export async function writeViewsAsync(stateDir, st, paths = {}, { only = null, ready = null } = {}) {
+  const fp = fs.promises, queue = only?.length === 1 && only[0] === 'queue';
+  const vdir = path.join(stateDir, 'views');
+  await fp.mkdir(vdir, { recursive: true });
+  const hashFile = path.join(vdir, queue ? 'queue-hashes.json' : 'hashes.json');
+  const readOr = async f => { try { return await fp.readFile(f, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } };
+  const ht = await readOr(hashFile), hashes = ht === null ? {} : JSON.parse(ht);
+  const res = { written: [], unchanged: [], refused: [] };
+  const evalAfter = makeEval(stateDir);
+  for (const [name, render] of Object.entries(RENDER)) {
+    if (only ? !only.includes(name) : name === 'queue') continue;
+    const p = path.resolve(paths[name] || path.join(queue ? stateDir : vdir, VIEW_FILES[name]));
+    const text = render(queue ? loadState(stateDir) : st, { evalAfter, ready });
+    const cur = await readOr(p);
+    if (cur !== null) {
+      if (cur === text) { hashes[p] = sha(text); res.unchanged.push(p); continue; }
+      if (hashes[p] !== sha(cur)) { res.refused.push(p); continue; }
+    }
+    await fp.mkdir(path.dirname(p), { recursive: true });
+    const tmp = `${p}.${process.pid}.tmp`;
+    await fp.writeFile(tmp, text);
+    await fp.rename(tmp, p);
+    hashes[p] = sha(text);
+    res.written.push(p);
+  }
+  const tmp = `${hashFile}.${process.pid}.tmp`;
+  await fp.writeFile(tmp, JSON.stringify(hashes, null, 1) + '\n');
+  await fp.rename(tmp, hashFile);
+  return res;
+}
+
 /** META-ROADMAP S1: (re)write ONE generated file under the same hand-edit guard, its hashes in their own file -> written | unchanged | refused */
 export function writeGuarded(hashFile, file, text) {
   const p = path.resolve(file);
@@ -157,6 +190,33 @@ export function writeGuarded(hashFile, file, text) {
     const tmp = `${hashFile}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(hashes, null, 1) + '\n');
     fs.renameSync(tmp, hashFile);
+  }
+  return res;
+}
+
+/** META-DASH-ASYNC R1 (option a): writeGuarded on fs.promises for the dash server (the same guard and hashes); the CLI keeps the sync form */
+export async function writeGuardedAsync(hashFile, file, text) {
+  const fp = fs.promises, p = path.resolve(file);
+  const readOr = async f => { try { return await fp.readFile(f, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } };
+  const ht = await readOr(hashFile), hashes = ht === null ? {} : JSON.parse(ht);
+  let res = 'written';
+  const cur = await readOr(p);
+  if (cur !== null) {
+    if (cur === text) res = 'unchanged';
+    else if (hashes[p] !== sha(cur)) return 'refused';
+  }
+  if (res === 'written') {
+    await fp.mkdir(path.dirname(p), { recursive: true });
+    const tmp = `${p}.${process.pid}.tmp`;
+    await fp.writeFile(tmp, text);
+    await fp.rename(tmp, p);
+  }
+  if (hashes[p] !== sha(text)) {
+    hashes[p] = sha(text);
+    await fp.mkdir(path.dirname(hashFile), { recursive: true });
+    const tmp = `${hashFile}.${process.pid}.tmp`;
+    await fp.writeFile(tmp, JSON.stringify(hashes, null, 1) + '\n');
+    await fp.rename(tmp, hashFile);
   }
   return res;
 }
@@ -193,5 +253,7 @@ export function renderDigest(d, { level = 2 } = {}) {
   if (s.guard) sec('8 Usage guard', s.guard, r => (r.kind === 'drift' ? `- ${r.run} drift` : `- ${r.id} ${r.run} ${r.cls}`) + `${r.lane ? ' ' + r.lane : ''}: ${r.why}`);
   if (s.slop) sec('9 SloppaChoppa', s.slop, r => '- ' + r.line);
   if (s.advice) sec('10 Model advice', s.advice, r => '- ' + r.line);   // META-TEND P4: one tap on the Inbox card applies or keeps each
+  // META-DOD 3: read the findings, then review the review run (it releases the build it holds) or withdraw / requeue the build
+  if (s.critique) sec('11 Plan reviews to read', s.critique, r => `- ${r.id} review of ${r.of} (${r.plan}): ${r.outcome === 'done' ? '' : r.outcome + ', '}${r.findings ?? '?'} finding${r.findings === 1 ? '' : 's'} in ${r.file}; holds ${r.holds.length ? r.holds.join(', ') : 'no queued run'}`);
   return L.join('\n') + '\n';
 }

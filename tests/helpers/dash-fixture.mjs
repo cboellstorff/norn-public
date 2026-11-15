@@ -7,6 +7,7 @@ import { createDashboard } from '../../engine/dash/server.mjs';
 import { loadProject } from '../../engine/lib/config.mjs';
 import { record } from '../../engine/lib/records.mjs';
 import { mkTmp } from './tmp.mjs';
+import { watchServer } from './loopwatch.mjs';
 export const HERE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const ENGINE = path.join(HERE, '..', 'engine');
 export const FIX = path.join(HERE, 'fixtures', 'agents');
@@ -68,6 +69,7 @@ export async function fixture(extra = {}) {
   const quietFile = path.join(root, 'common-rules.txt'); fs.writeFileSync(quietFile, 'QUIET: no GPU while the owner plays\n');
   const app = createDashboard({ projects: [pa, pb], machine: { home: root }, budgetFile, platform, projectsDir, codexDir: path.join(root, 'codex-sessions'),
     liveUsage, quietFile, sessionsDir: path.join(root, 'sessions'), spawnFn: extra.spawnFn, ...(extra.dash || {}) });
+  watchServer(app.server);   // META-CI-WORKCLASS R3: a page timeout names when this server received / answered each request
   await new Promise(r => app.server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${app.server.address().port}`;
   const get = async r => { const x = await fetch(url + r); return { status: x.status, data: await x.json() }; };

@@ -4,9 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { record, readEvents, fold, recordsFile, RecordError, holdOf, holdMessage, HELD_EXIT, noteRefusal } from './records.mjs';
+import { runSteps, runStepsAsync } from './steps.mjs';
+import { record, recordAsync, readEvents, fold, recordsFile, RecordError, holdOf, holdMessage, HELD_EXIT, noteRefusal } from './records.mjs';
 import { busyRefusal, BUSY_EXIT } from './checkinguards.mjs';
 import { BUILTIN, isApi, capDefault, capsOfRun, executorInfo, providerEnv } from './executors.mjs';
 import { adapterFor, harnessOf } from './harness/index.mjs';
@@ -21,6 +22,8 @@ import { briefMarker } from './mergebrief.mjs';
 import { openEpic, joinEpic, EpicError } from './epics.mjs';
 import { PRIORITIES } from './records.mjs';
 import { hookCommand } from './mail.mjs';
+import { scopeHookOf, scopeSettings, scopeOn } from './scope.mjs';
+import { specPolicy } from './ctxlimit.mjs';
 import { unserved, osLabel, fedOf, fetchClaims, claimKey, claimRun, releaseClaim, leaseExpired, writeOffers, importForeign, importNotes } from './fed.mjs';
 import { workClass, isFable } from './workclass.mjs';
 import { resolveAtFill } from './launchpolicy.mjs';
@@ -67,6 +70,14 @@ export function mailHookOf(o) {
   const a = fam ? adapterFor(fam) : null;
   return a?.mailHook && a.caps.hooks === 'settings' && o.state ? hookCommand(o.state) : undefined;
 }
+// META-DOD 2: the same executors get the scope guard (scope.mjs): deny rules, the write block and the PreToolUse hook - write runs only
+// ROUND 2: only for a project whose CURRENT policy.dod.scope is on (default off), read at each launch (a resume too)
+export function scopeOfLaunch(o) {
+  const h = mailHookOf(o) && scopeHookOf(o);
+  return h && scopeOn(specPolicy({ ctx_from: policySource(o) })) ? scopeSettings(o, h) : undefined;
+}
+/** the project.json whose CURRENT policy binds a run (policy.context, policy.dod.scope) */
+const policySource = o => o.ctx_from ?? o.refill?.project_file ?? o.env?.META_PROJECT;
 
 export function buildCommand(o) {
   const family = harnessOf(o.executor, o.provider);
@@ -116,6 +127,12 @@ export function releaseLock(file, run) {
   const cur = readJson(file);
   if (cur && cur.run === run) { try { fs.unlinkSync(file); } catch { /* gone */ } }
 }
+/** releaseLock on fs.promises (the dash server's stop) */
+export async function releaseLockAsync(file, run) {
+  if (!file) return;
+  let cur = null; try { cur = JSON.parse(await fs.promises.readFile(file, 'utf8')); } catch { /* none */ }
+  if (cur && cur.run === run) { try { await fs.promises.unlink(file); } catch { /* gone */ } }
+}
 
 export function acquireLock(locksDir, wt, { run, pid = process.pid, staleMs = STALE_MS } = {}) {
   fs.mkdirSync(locksDir, { recursive: true });
@@ -141,7 +158,7 @@ export function acquireLock(locksDir, wt, { run, pid = process.pid, staleMs = ST
 // executor) also the main checkout - from the brief's meta-merge marker (`main`), else the project's (spec main_checkout). Every
 // lock holder (startRun, the supervisor's beat + exit, norn stop, the fill's wait) takes the list from here.
 export function writeTrees(o) {
-  if (o.kind === 'audit') return [];   // META-TEND P5: a read-only audit writes no tree - it never holds the main checkout's lock
+  if (o.kind === 'audit' || o.critique) return [];   // META-TEND P5: a read-only audit writes no tree - it never holds the main checkout's lock; nor does a plan review (META-DOD 3)
   const own = o.worktree ? [o.worktree] : [];
   if (!isMergeStage(o.stage)) return own;
   let m = null;
@@ -286,7 +303,9 @@ const startFields = (o, info) => ({
   agent: o.agent, model: o.model, effort: o.effort, worktree: o.worktree, brief: o.brief, notes: o.notes });
 const runTail = o => ({ budget_min: o.budgetMin, resumes: o.resumes || 0, resume_of: o.resumeOf, parent: o.parent, via: o.via, role: o.role, ...classStamp(o), q: o.q, tick_class: o.tickClass, trial: o.trial, fallback_of: o.fallbackOf,
   from_queue: o.fromQueue, requeue_of: o.requeueOf, after: o.after?.length ? o.after : undefined, inputs: o.inputs?.length ? o.inputs : undefined,
-  epic: o.epic, priority: o.priority, nudge: o.nudge, flow: o.flow, slop_of: o.slopOf,   // flow: META-GTP-FLOW piece 2 ({ name, step, vars }); slop_of: META-SLOP-A (the run-end slop resume)
+  epic: o.epic, priority: o.priority, nudge: o.nudge, flow: o.flow, slop_of: o.slopOf, dod_of: o.dodOf, dod_ready: o.dod ? { mode: o.dod.mode, ok: o.dod.ok, missing: o.dod.missing } : undefined,   // META-DOD 1: the Ready verdict + the Done-check resume
+  critique: o.critique,   // META-DOD 3: a plan review ({ of: the plan run, plan: its file }; critique.mjs)
+    // flow: META-GTP-FLOW piece 2 ({ name, step, vars }); slop_of: META-SLOP-A (the run-end slop resume)
   labels: o.labels?.length ? o.labels : undefined, claim_of: o.claim_of, replaces: o.replaces,
   launch_profile: o.profile && o.profile.name !== 'full' ? o.profile.name : undefined, memory: o.memory === 'off' ? 'off' : undefined, at_fill: o.atFill });   // memory: META-PRACTICE-P1 (auto memory off for this launch)   // META-STANDING-CONTEXT R1: a lean launch (launchpolicy.mjs profileOf)   // replaces: META-AUTONOMY R1 (norn requeue)   // claim_of: META-GTP-FED piece 3 ({ home, project, run, node } on a node)   // META-GTP-FED piece 1: the machines that may run it (none = home)
 // META-TEND P2: the work class on EVERY run (workclass.mjs: class + how it was decided; o.workPolicy = the project's policy table)
@@ -384,7 +403,7 @@ export function startRun(o) {
     // META-GTP-MAIL piece 3: a nudge resumes the SAME session (claude --resume <sid> keeps its id unless --fork-session)
     const session_id = o.resumeSid || (info.harness === 'claude' || info.harness === 'fake' ? crypto.randomUUID() : null);
     const resumes = o.resumes || 0;
-    const warnings = [...notesWarnings(o), ...fableNotice(o)];
+    const warnings = [...notesWarnings(o), ...fableNotice(o), ...(o.dod?.mode === 'warn' && !o.dod.ok && !o.resumeOf ? [o.dod.why] : [])];   // META-DOD 1: policy.dod.ready warn
     const ev = record(o.state, { kind: 'run', ev: 'start', by: 'launcher', data: drop({ ...startFields(o, info), log, final, session_id, ...runTail(o), warnings: warnings.length ? warnings : undefined }) });
     const run = ev.id;
     if (o.epic && isNew(o)) joinEpic(o.state, o.epic, run);
@@ -393,8 +412,8 @@ export function startRun(o) {
     fs.mkdirSync(path.join(o.state, 'logs'), { recursive: true });
     writeAtomic(hbPath(o.state, run), { run, pid: null, supervisor_pid: null, ts: new Date().toISOString() });
     const { atFill: _af, ...ro } = o;   // META-QUEUE-SPEC R1: at_fill belongs to this start record only (a resume of the spec is no fill)
-    const spec = { ...ro, run, log, final, session_id, resumes, hbMs, staleMs, lockFile: lock.file, lockFiles: lock.files, mail_hook: o.mail_hook ?? mailHookOf(o),
-      ctx_from: o.ctx_from ?? o.refill?.project_file ?? o.env?.META_PROJECT };   // META-CTX-ENFORCE R1: the project.json whose CURRENT policy.context binds the run (ctxlimit.mjs)
+    const spec = { ...ro, run, log, final, session_id, resumes, hbMs, staleMs, lockFile: lock.file, lockFiles: lock.files, mail_hook: o.mail_hook ?? mailHookOf(o), scope: scopeOfLaunch(o),
+      ctx_from: policySource(o) };   // META-CTX-ENFORCE R1: the project.json whose CURRENT policy.context binds the run (ctxlimit.mjs)
     const specFile = path.join(o.state, 'runs', run + '.spec.json');
     fs.mkdirSync(path.dirname(specFile), { recursive: true });
     fs.writeFileSync(specFile, JSON.stringify(spec, null, 1));
@@ -742,10 +761,10 @@ export function classifyLimit(text, pats, now = new Date()) {
 // itself die, then pid's group. A detached child leads its own group (the supervisor's executor), so a group kill alone missed it
 // when the caller did not know its pid yet - a stop that read the hb just before the first beat (CIRED-b2caf4d).
 const signal = (pid, sig) => { try { process.kill(-pid, sig); } catch { try { process.kill(pid, sig); } catch { /* gone */ } } };
-function descendants(pid) {
-  const r = spawnSync('ps', ['-A', '-o', 'pid=', '-o', 'ppid='], { encoding: 'utf8' });
+const PS = ['-A', '-o', 'pid=', '-o', 'ppid='];
+function descendants(pid, psOut = spawnSync('ps', PS, { encoding: 'utf8' }).stdout) {
   const kids = {};
-  for (const l of (r.stdout || '').split('\n')) { const [c, p] = l.trim().split(/\s+/).map(Number); if (c && p) (kids[p] ||= []).push(c); }
+  for (const l of (psOut || '').split('\n')) { const [c, p] = l.trim().split(/\s+/).map(Number); if (c && p) (kids[p] ||= []).push(c); }
   const out = [], todo = [pid];
   while (todo.length) for (const c of kids[todo.pop()] || []) if (!out.includes(c)) { out.push(c); todo.push(c); }
   return out;
@@ -757,25 +776,39 @@ export function killTree(pid) {
   for (const c of descendants(pid)) signal(c, 'SIGKILL');
   signal(pid, 'SIGKILL');
 }
+const execA = (cmd, args) => new Promise(ok => execFile(cmd, args, { encoding: 'utf8', windowsHide: true, timeout: 15000 }, (e, out) => ok(String(out || ''))));
+/** killTree off the event loop (the dash server's stop): taskkill / ps as async children */
+export async function killTreeAsync(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return;
+  if (process.platform === 'win32') { await execA('taskkill', ['/PID', String(pid), '/T', '/F']); return; }
+  signal(pid, 'SIGSTOP');
+  for (const c of descendants(pid, await execA('ps', PS))) signal(c, 'SIGKILL');
+  signal(pid, 'SIGKILL');
+}
+const SYNC_IO = { record: (s, ev) => record(s, ev), kill: killTree, unlink: f => { try { fs.unlinkSync(f); } catch { /* none */ } }, release: releaseLock };
+const ASYNC_IO = { record: (s, ev) => recordAsync(s, ev), kill: killTreeAsync, unlink: async f => { try { await fs.promises.unlink(f); } catch { /* none */ } }, release: releaseLockAsync };
 
 // Record the kill first (a supervisor still alive then fails its `end` and stops), then kill the tree, then free lock + heartbeat.
-export function stopRun({ state, locksDir, run, by, why }) {
+export const stopRun = a => runSteps(stopSteps(a), SYNC_IO);
+/** stopRun for the dash server: the same steps, each write / kill awaited (META-DASH-ASYNC R1) */
+export const stopRunAsync = a => runStepsAsync(stopSteps(a), ASYNC_IO);
+function* stopSteps({ state, locksDir, run, by, why }) {
   const cur = runsOf(state).find(x => x.id === run);
   // META-AUTONOMY R1: the check-in withdraws a QUEUED run (with its ruling as --why); a kill stays owner / controller
   if (by === 'checkin' && cur && cur.state !== 'queued') throw new RunRefused(`${run} is ${cur.state}: a check-in withdraws only a QUEUED run - a kill stays owner / controller`, 3);
   if (by === 'checkin' && !why) throw new RunError('a check-in withdraw needs --why (its ruling, e.g. DEC-n)');
-  if (cur?.state === 'queued') return record(state, { kind: 'run', ev: 'withdraw', id: run, by, data: drop({ why }) });
+  if (cur?.state === 'queued') return yield ['record', state, { kind: 'run', ev: 'withdraw', id: run, by, data: drop({ why }) }];
   const hb = readJson(hbPath(state, run)) || {};
-  const ev = record(state, { kind: 'run', ev: 'kill', id: run, by, data: drop({ why, pid: hb.pid, supervisor_pid: hb.supervisor_pid }) });
-  killTree(hb.supervisor_pid);
-  killTree(hb.pid);
-  try { fs.unlinkSync(hbPath(state, run)); } catch { /* none */ }
+  const ev = yield ['record', state, { kind: 'run', ev: 'kill', id: run, by, data: drop({ why, pid: hb.pid, supervisor_pid: hb.supervisor_pid }) }];
+  yield ['kill', hb.supervisor_pid];
+  yield ['kill', hb.pid];
+  yield ['unlink', hbPath(state, run)];
   const it = runsOf(state).find(x => x.id === run);
   // META-MERGELOCK: every lock the run took (its spec's lockFiles: a MERGE holds the main checkout's too), else its worktree's
   const files = readJson(path.join(state, 'runs', run + '.spec.json'))?.lockFiles;
-  if (files?.length) for (const lf of files) releaseLock(lf, run);
-  else if (it?.data.worktree && locksDir) releaseLock(lockPath(locksDir, it.data.worktree), run);
-  stopOrphans(state);
+  if (files?.length) for (const lf of files) yield ['release', lf, run];
+  else if (it?.data.worktree && locksDir) yield ['release', lockPath(locksDir, it.data.worktree), run];
+  yield* orphanSteps(state);
   return ev;
 }
 
@@ -785,9 +818,11 @@ export function stopRun({ state, locksDir, run, by, why }) {
 // there, after.mjs follow); every queued run whose after: names the old one is rewired onto the new one (a rewire event + its spec).
 // Roles: owner / dashboard / controller / checkin; --why required; never a RUNNING run (exit 3). -> { run, next, rewired: [ids] }
 export const REQUEUE_ROLES = ['owner', 'dashboard', 'controller', 'checkin'];
-export function requeueRun({ state, run, after = [], by, why }) {
+// notBefore: undefined keeps the old run's not_before, null clears it (DEC-337: a limit clock the early reopen left behind), an ISO sets it.
+export function requeueRun({ state, run, after = [], by, why, notBefore }) {
   if (!REQUEUE_ROLES.includes(by)) throw new RunError(`role ${by ?? '(none)'} may not re-queue a run (allowed: ${REQUEUE_ROLES.join(', ')})`);
   if (!why || !String(why).trim()) throw new RunError('norn requeue needs --why (the ruling, e.g. DEC-n)');
+  if (notBefore && Number.isNaN(Date.parse(notBefore))) throw new RunError(`--not-before ${notBefore}: an ISO time or none`);
   const cur = runsOf(state).find(r => r.id === run);
   if (!cur) throw new RunError(`${run} does not exist in ${state}`);
   if (cur.state !== 'queued') throw new RunRefused(`${run} is ${cur.state}: only a QUEUED run is re-queued (a kill stays owner / controller: norn stop)`, 3);
@@ -796,7 +831,8 @@ export function requeueRun({ state, run, after = [], by, why }) {
   if (!spec) throw new RunError(`${run}: its queue spec is missing (${fwd(queueSpecPath(state, run))})`);
   if (after.some(c => c.kind === 'run' && c.id === run)) throw new RunError(`--after names ${run} itself`);
   const { replaces: _r, ...keep } = spec;
-  const next = queueRun({ ...keep, state, after, replaces: run, notBefore: cur.data.not_before }).run;
+  const nb = notBefore === undefined ? cur.data.not_before : notBefore === null ? undefined : new Date(Date.parse(notBefore)).toISOString();
+  const next = queueRun({ ...keep, state, after, replaces: run, notBefore: nb }).run;
   try { record(state, { kind: 'run', ev: 'withdraw', id: run, by, data: { why: String(why), next } }); } catch (e) {
     if (!(e instanceof RecordError)) throw e;   // the fill started it meanwhile: undo the re-queue
     record(state, { kind: 'run', ev: 'withdraw', id: next, by: 'launcher', data: { why: `re-queue of ${run} lost a race: ${e.message}` } });
@@ -815,7 +851,8 @@ export function requeueRun({ state, run, after = [], by, why }) {
 
 // Children are stopped with the parent (metadelegate sec. 2): a running helper whose parent run is no longer running is
 // recorded lost (role launcher; the helper's supervisor then fails its `end` and exits) and its process tree is killed.
-export function stopOrphans(state, { by = 'launcher' } = {}) {
+export const stopOrphans = (state, o) => runSteps(orphanSteps(state, o), SYNC_IO);
+function* orphanSteps(state, { by = 'launcher' } = {}) {
   const runs = runsOf(state), byId = Object.fromEntries(runs.map(r => [r.id, r])), stopped = [];
   for (const it of runs) {
     if (it.state !== 'running' || it.data.role !== 'helper' || !it.data.parent) continue;
@@ -823,11 +860,11 @@ export function stopOrphans(state, { by = 'launcher' } = {}) {
     const p = byId[it.data.parent];
     if (p?.state === 'running') continue;
     const hb = readJson(hbPath(state, it.id)) || {};
-    try { record(state, { kind: 'run', ev: 'lost', id: it.id, by, data: { why: `parent ${it.data.parent} ${p?.state ?? 'missing'}` } }); }
+    try { yield ['record', state, { kind: 'run', ev: 'lost', id: it.id, by, data: { why: `parent ${it.data.parent} ${p?.state ?? 'missing'}` } }]; }
     catch (e) { if (!(e instanceof RecordError)) throw e; continue; }
-    killTree(hb.supervisor_pid);
-    killTree(hb.pid);
-    try { fs.unlinkSync(hbPath(state, it.id)); } catch { /* none */ }
+    yield ['kill', hb.supervisor_pid];
+    yield ['kill', hb.pid];
+    yield ['unlink', hbPath(state, it.id)];
     stopped.push(it.id);
   }
   return stopped;

@@ -228,20 +228,20 @@ export function mergeCheck({ base, head, added = [], texts = {}, corpus = [], li
       const fresh = Object.entries(f.cov).reduce((n, [src, lines]) => n + lines.filter(l => !others.get(src)?.has(l)).length, 0);
       if (fresh === 0) out.push(advisory({ phase: 'TESTS', check: 'no-new-coverage', key: 'tests-no-new-coverage', severity: 'medium', surface: 'test file', path: f.file,
         why: `${f.tests.length} new test(s) cover no engine line the rest of the suite does not already cover`, source: TESTS_SOURCE,
-        fix: { tier: 'card', action: 'keep only if it checks a failure the others miss (mutation), else drop it' } }));
+        fix: { tier: 'card', action: 'keep only if it checks a failure the others miss (mutation), else drop it', kind: 'call', ways: ['Keep it', 'Drop it'] } }));
     }
   }
   for (const [file, text] of Object.entries(texts)) {
     const c = copyPaste(text, corpus.filter(o => o.name !== file));
     if (c.pct > limits.copy_pct) out.push(advisory({ phase: 'TESTS', check: 'copy-paste', key: 'tests-copy-paste', severity: 'low', surface: 'test file', path: file,
       why: `${c.pct}% of its tokens are in a 50-token run that is repeated (limit ${limits.copy_pct}%)`, source: TESTS_SOURCE + '; jscpd min-tokens 50',
-      items: c.clones.slice(0, 10).map(x => ({ line: x.line, text: `same as ${x.with}` })), fix: { tier: 'card', action: 'fold the copies into one helper or a table of cases' } }));
+      items: c.clones.slice(0, 10).map(x => ({ line: x.line, text: `same as ${x.with}` })), fix: { tier: 'card', action: 'fold the copies into one helper or a table of cases', kind: 'drafts' } }));
   }
   const old = base.files.filter(f => changed.includes(f.file)).reduce((n, f) => n + f.ms, 0), now = head.files.reduce((n, f) => n + f.ms, 0);
   const total = base.files.reduce((n, f) => n + f.ms, 0), est = total - old + now;
   if (total && est > total * (1 + limits.suite_up_pct / 100)) out.push(advisory({ phase: 'TESTS', check: 'suite-time', key: 'tests-suite-slower', severity: 'medium', surface: 'suite time',
     why: `the changed test files take the suite from ~${Math.round(total / 1000)} s to ~${Math.round(est / 1000)} s of file time (+${Math.round(100 * (est - total) / total)}%, limit ${limits.suite_up_pct}%)`,
-    source: TESTS_SOURCE, items: head.files.map(f => ({ path: f.file, text: `${Math.round(f.ms / 100) / 10} s` })), fix: { tier: 'card', action: 'see the slowest list on the Tests tab' } }));
+    source: TESTS_SOURCE, items: head.files.map(f => ({ path: f.file, text: `${Math.round(f.ms / 100) / 10} s` })), fix: { tier: 'card', action: 'see the slowest list on the Tests tab', kind: 'count' } }));
   return out;
 }
 

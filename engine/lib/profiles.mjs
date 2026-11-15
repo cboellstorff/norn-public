@@ -19,8 +19,10 @@ const STAND_IN = { review: 'planner', diagnosis: 'planner' };
 
 const read = f => JSON.parse(fs.readFileSync(path.join(PROFILES_DIR, f), 'utf8').replace(/^﻿/, ''));
 /** { profiles (by order, the default first), cost: { cheap, balanced, quality } } */
+// META-DASH-ASYNC R1: shipped engine data, read once at module load (as config.mjs reads its schemas) - a dash request never re-reads it
+const ALL = fs.readdirSync(PROFILES_DIR).filter(f => f.endsWith('.json')).sort().map(read);
 export function loadProfiles() {
-  const all = fs.readdirSync(PROFILES_DIR).filter(f => f.endsWith('.json')).sort().map(read);
+  const all = structuredClone(ALL);
   return { profiles: all.filter(x => x.kind === 'profile').sort((a, b) => a.order - b.order), cost: all.find(x => x.kind === 'cost')?.levels ?? {} };
 }
 const known = (what, n, list) => new Error(`unknown ${what} ${n} (known: ${list.join(', ')})`);

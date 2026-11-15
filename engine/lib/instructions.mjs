@@ -295,6 +295,12 @@ export function dailyCost(rows, sessions, { policy = null } = {}) {
 }
 
 // ---------- lint (read-only hints) ----------
+// META-UX-BUILD S5: each hint kind's kind of fix (advisory.mjs FIX_KINDS) and its batch title on the Slop page
+export const HINT_FIX = {
+  'missing-path': { kind: 'drafts', title: 'Names a path that does not exist' }, 'unknown-command': { kind: 'drafts', title: 'Names a norn command that does not exist' },
+  'stale-citation': { kind: 'drafts', title: 'Cites a revoked or superseded record' }, duplicate: { kind: 'drafts', title: 'The same paragraph twice' },
+  'directive-clash': { kind: 'call', ways: ['Follow the newer directive', 'Keep this line'], title: 'Says the opposite of a newer directive' },
+};
 /** the top-level norn commands: the HELP list + the dispatch of engine/bin/norn.mjs */
 export function knownCommands() {
   const src = readText(path.join(ENGINE, 'bin', 'norn.mjs')) || '';
@@ -616,6 +622,14 @@ function deletePatch(r, text, p) {
   return `--- a/${r.path}\n+++ b/${r.path}\n@@ -${p.line},${n} +${p.line - 1},0 @@\n${gone.map(l => '-' + l).join('\n')}\n`;
 }
 export const LARGE_TOKENS = 400;
+// META-UX-BUILD S5: each tightening class's kind of fix (advisory.mjs FIX_KINDS) and its batch title on the Slop page. Stale paragraphs carry
+// a patch too, but it deletes old text of the owner's: your call, never ticked for him (REPORT s.3).
+export const TIGHTEN_FIX = {
+  superseded: { kind: 'ready', title: 'Tighten: cites a record no longer in force' }, duplicate: { kind: 'ready', title: 'Tighten: a duplicate paragraph' },
+  stale: { kind: 'call', ways: ['Delete it', 'Confirm it'], title: 'Tighten: a stale paragraph' },
+  'one-role': { kind: 'drafts', title: 'Tighten: a one-role paragraph every session loads' }, large: { kind: 'drafts', title: 'Tighten: a large block loaded every time' },
+  lean: { kind: 'call', ways: ['Switch the role to lean', 'Keep the full profile'], title: 'Tighten: a lean launch profile' },
+};
 const LEAN_DROPS = { skills: s => s.skills === false, plugins: s => s.user_setup === false || s.skills === false, hooks: s => s.user_setup === false, mcp: s => s.mcp === 'norn' || s.mcp === 'none' };
 
 /**

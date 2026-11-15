@@ -181,7 +181,9 @@ test('the tick fills a slot a kill freed before its gate (tick.log names the fil
 });
 
 // ---------- usage-limit exits ----------
-test('limit exit: outcome limit + reset; re-queued with not_before = reset + 2 min (unparsed: + 60 min); a crash stays a crash', async () => {
+// 11-15 (DEC-337): a read reset is held by the limit gate (open at reset + 2 min, or at once on a limit-<family> decision), no longer by a
+// not_before clock the early reopen could not move; the unread reset keeps its 60 min clock (the gate closes nothing then)
+test('limit exit: outcome limit + reset; re-queued, held by the limit gate until reset + 2 min (unparsed: not_before + 60 min); a crash stays a crash', async () => {
   let d = sandbox();
   const epoch = Math.floor(Date.now() / 1000) + 7200;
   const r = startRun(d.opts({ brief: d.brief(`mode: crash\nsay: Claude AI usage limit reached|${epoch}\n`), budget: {} }));
@@ -190,7 +192,10 @@ test('limit exit: outcome limit + reset; re-queued with not_before = reset + 2 m
   assert.equal(it.end.reset, new Date(epoch * 1000).toISOString());
   const rq = await waitFor(() => d.runs().find(x => x.data.requeue_of === r.run));
   assert.equal(rq.state, 'queued');
-  assert.equal(rq.data.not_before, new Date(epoch * 1000 + 120000).toISOString());
+  assert.equal(rq.data.not_before, undefined, 'no clock: the gate holds it');
+  const held = now => readiness(d.state, { now }).find(x => x.id === rq.id).terms.some(t => /^limit: /.test(t));
+  assert.ok(held(epoch * 1000 + 60000), 'held 1 min past the reset');
+  assert.ok(!held(epoch * 1000 + 121000), 'released past reset + 2 min');
   assert.equal(rq.data.lane, 'demo'); assert.equal(rq.data.brief, it.data.brief);
   d = sandbox();   // META-LIMIT-GATE: that limit closes the fake family until its reset (norn run refuses it) - the next exits in a fresh state
 

@@ -9,7 +9,7 @@
 // injectable ({ post(url, { headers, body }) -> { status, text }, run(cmd, args, { env }) -> { status } }) so tests stay offline.
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { remoteUrl } from './remote.mjs';
 
@@ -59,7 +59,9 @@ export function subscribeLink(n) { return ntfyServer(n.server) + n.topic; }
 export const defaultTransport = {
   post: async (url, { headers, body }) => { const r = await fetch(url, { method: 'POST', headers, body, signal: AbortSignal.timeout(15000) }); return { status: r.status, text: await r.text() }; },
   put: async (url, { headers, body }) => { const r = await fetch(url, { method: 'PUT', headers, body, signal: AbortSignal.timeout(60000) }); return { status: r.status, text: await r.text() }; },
-  run: (cmd, args, { env }) => spawnSync(cmd, args, { env, windowsHide: true, encoding: 'utf8', timeout: 15000 }),
+  // META-DASH-ASYNC R1: a child on its own (the dashboard's test ping is a request path): { status, stderr, error } like spawnSync's, never blocking the loop
+  run: (cmd, args, { env }) => new Promise(ok => execFile(cmd, args, { env, windowsHide: true, encoding: 'utf8', timeout: 15000 }, (e, _out, stderr) =>
+    ok({ status: e ? (Number.isInteger(e.code) ? e.code : null) : 0, stderr, error: e && !Number.isInteger(e.code) ? e : undefined }))),
 };
 
 export function ntfyServer(s = 'https://ntfy.sh') {
@@ -160,7 +162,7 @@ async function send({ title, body, priority = 'default', cls, file, machine, sta
     if (!DESKTOP[platform]) throw new NotifyError(`the desktop backend knows macOS, Linux and Windows (not ${platform})`);
     const text = bytes ? `${body}\nfile: ${path.resolve(file)}` : body, [cmd, args] = DESKTOP[platform](title, text);
     send = async () => {
-      const r = transport.run(cmd, args, { env: { ...env, META_NOTIFY_TITLE: title, META_NOTIFY_BODY: text } });
+      const r = await transport.run(cmd, args, { env: { ...env, META_NOTIFY_TITLE: title, META_NOTIFY_BODY: text } });
       return { status: r.status === 0 ? 200 : 500, text: String(r.stderr || r.error?.message || '') };
     };
   } else throw new NotifyError(`unknown notify backend ${JSON.stringify(backend)} (${BACKENDS.join('|')})`);

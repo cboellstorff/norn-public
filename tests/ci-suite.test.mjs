@@ -142,3 +142,20 @@ test('ci-suite --measure OUT --coverage: per file the tests (subtest before pare
   assert.equal(bad.status, 2); assert.match(bad.stderr, /--coverage needs --measure/);
   cleanTmp();
 });
+
+// CI-HANG-B7F6833 R2: a file that never exits is killed at the per-file wall cap, its output so far is printed, and the suite fails naming it
+test('ci-suite: each file prints "start <file>"; a file past --file-cap is killed (tree), its output printed, the suite red naming it', { timeout: 120000 }, async () => {
+  const t0 = Date.now();
+  const r = spawnSync(process.execPath, [CI, '--file-cap', '5', 'tests/fixtures/ci-suite-hang/*.test.mjs'],
+    { cwd: REPO, encoding: 'utf8', env: suiteEnv(process.env), timeout: 90000 });
+  assert.equal(r.error, undefined, 'the suite itself ended (no hang)');
+  assert.ok(Date.now() - t0 < 60000, 'ended near the cap');
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /ci-suite: start tests\/fixtures\/ci-suite-hang\/hang\.test\.mjs/);
+  assert.match(r.stdout, /ci-suite: start tests\/fixtures\/ci-suite-hang\/ok\.test\.mjs/);
+  assert.match(r.stdout, /hang-fixture: before the hang/, 'the buffered output so far is printed');
+  assert.match(r.stdout, /HANG RED: tests\/fixtures\/ci-suite-hang\/hang\.test\.mjs :: no exit within the 5 s per-file cap \(killed\)/);
+  assert.doesNotMatch(r.stdout, /HANG RED: tests\/fixtures\/ci-suite-hang\/ok\.test\.mjs/);
+  const bad = spawnSync(process.execPath, [CI, '--file-cap', '0', 'tests/fixtures/ci-suite-hang/ok.test.mjs'], { cwd: REPO, encoding: 'utf8' });
+  assert.equal(bad.status, 2); assert.match(bad.stderr, /--file-cap/);
+});
