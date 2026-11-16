@@ -254,7 +254,7 @@ export function world({ stateDir, project = {}, now = Date.now(), git = makeGit(
   const sc = () => {
     if (scan === undefined) {
       scan = null;
-      if (cfg.repo) try { scan = scanRepo(cfg.repo, { main: cfg.main, remote: cfg.remote, cache: {}, git, installed: hasInstall ? lastInstall(cfg)?.commits || [] : [] }); } catch { scan = null; }
+      if (cfg.repo) try { scan = scanRepo(cfg.repo, { main: cfg.main, remote: cfg.remote, cache: {}, git, installed: hasInstall ? lastInstall(cfg)?.commits || [] : [], history: cfg.history || [] }); } catch { scan = null; }
       if (scan && !scan.mainSha) scan = null;
     }
     return scan;

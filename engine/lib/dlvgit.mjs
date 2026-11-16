@@ -40,11 +40,13 @@ export function globToRe(glob) {
 const branchRe = globs => globs.map(globToRe);
 
 /**
- * scanRepo(repo, { main, remote, cache, git, native, installed }) -> { mainSha, refs, branches(globs), tipOf(branch), info(branch, fallbackTip),
- *   rehearse(tip), rehearseMany(tips) (one merge-tree for every uncached tip; then rehearse() reads the cache) }
+ * scanRepo(repo, { main, remote, cache, git, native, installed, history }) -> { mainSha, refs, branches(globs), tipOf(branch), info(branch, fallbackTip),
+ *   rehearse(tip), rehearseMany(tips) (one merge-tree for every uncached tip; then rehearse() reads the cache), installed, history }
  * cache: a plain object (persisted by the caller), mutated in place. native: path globs (null = unknown). installed: commit ids.
+ * history: commit-ish of EARLIER main lines (a repo whose main was restarted, e.g. moved to a new repo without its old history): a
+ * tip on one of them counts as merged, as on main.
  */
-export function scanRepo(repo, { main = 'main', remote = 'origin', cache = {}, git = makeGit(), native = null, installed = [] } = {}) {
+export function scanRepo(repo, { main = 'main', remote = 'origin', cache = {}, git = makeGit(), native = null, installed = [], history = [] } = {}) {
   // ENGINE-GIT (DEC-88): the one listing also carries every ref's ahead / behind against main (`%(ahead-behind:<main>)`, git 2.41;
   // one commit walk for all refs): merged-on-main is ahead == 0 and the behind counts need no rev-list per branch. main is the local
   // branch, else the remote's (scanRepo's order); a repo with neither lists without the counts (they are then asked per tip below).
@@ -90,13 +92,13 @@ export function scanRepo(repo, { main = 'main', remote = 'origin', cache = {}, g
     if (!(id in c.full)) c.full[id] = (git(repo, ['rev-parse', '--verify', '--quiet', id + '^{commit}'], { allowFail: true }) || '').trim() || null;
     return c.full[id];
   };
-  const inst = installed.map(full).filter(Boolean);
+  const inst = installed.map(full).filter(Boolean), hist = history.map(full).filter(Boolean);
   const tipOf = branch => refs.get(`refs/remotes/${remote}/${branch}`)?.sha || refs.get('refs/heads/' + branch)?.sha || null;
   const nativeRe = native ? native.map(globToRe) : null;
   const info = (branch, fallbackTip = null) => {
     const ref = refs.get(`refs/remotes/${remote}/${branch}`) || refs.get('refs/heads/' + branch) || null;
     const tip = ref?.sha || fallbackTip || null;
-    const merged = onBase(tip, mainSha);
+    const merged = onBase(tip, mainSha) || hist.some(h => onBase(tip, h));
     const installedHit = inst.some(s => onBase(tip, s));
     const r = { branch, tip, ref_date: ref?.date ?? null, subject: ref?.subject ?? null, exists: !!ref, merged, installed: installedHit, behind: null, ahead: null, native: null, native_files: [] };
     if (tip && mainSha && !merged) {
@@ -161,10 +163,10 @@ export function scanRepo(repo, { main = 'main', remote = 'origin', cache = {}, g
     const res = branchRe(globs), pre = `refs/remotes/${remote}/`;
     return [...refs.keys()].filter(k => k.startsWith(pre)).map(k => k.slice(pre.length)).filter(b => res.some(re => re.test(b))).sort();
   };
-  return { mainSha, refs, branches, tipOf, info, rehearse, rehearseMany, installed: inst };
+  return { mainSha, refs, branches, tipOf, info, rehearse, rehearseMany, installed: inst, history: hist };
 }
 
-// keep the cache small: merged sets of the current main + installed bases, behind counts of the current main, native by live tips
+// keep the cache small: merged sets of the current main + installed / history bases, behind counts of the current main, native by live tips
 export function pruneCache(c, { mainSha, keepBases = [], tips = [] }) {
   const keep = new Set([mainSha, ...keepBases].filter(Boolean));
   for (const k of Object.keys(c.merged || {})) if (!keep.has(k)) delete c.merged[k];
