@@ -98,6 +98,13 @@ function landedOn(sc, repo, tip, main, remote, git) {
   return w[k];
 }
 
+// the same rule against the EARLIER main lines (deliverables.history, resolved in the scan): a line never moves, so each (tip, line)
+// answer is cached until the tip is gone (dlvgit pruneCache), not per main sha
+function landedOnHistory(sc, repo, tip, git) {
+  const h = (sc.c.hist ||= {});
+  return (sc.s.history || []).some(line => { const k = `${tip}:${line}`; if (!(k in h)) h[k] = workOnMain(repo, tip, line, { git }); return h[k]; });
+}
+
 const lastEv = (it, evs) => [...it.history].reverse().find(h => evs.includes(h.ev)) || null;
 
 /**
@@ -121,7 +128,7 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
     const target = d.target || (own ? cfg.target : 'main');
     const sc = scanner.get(d.repo);
     const g = sc.s ? sc.s.info(d.branch, tipAtDone) : { tip: tipAtDone, merged: false, installed: false, behind: null, ahead: null, native: null, native_files: [] };
-    if (!g.merged && g.tip && sc.s?.mainSha && landedOn(sc, d.repo, g.tip, own ? cfg.main : 'main', cfg.remote || 'origin', git)) Object.assign(g, { merged: true, ahead: 0 });
+    if (!g.merged && g.tip && sc.s?.mainSha && (landedOn(sc, d.repo, g.tip, own ? cfg.main : 'main', cfg.remote || 'origin', git) || landedOnHistory(sc, d.repo, g.tip, git))) Object.assign(g, { merged: true, ahead: 0 });
     if (g.tip) sc.tips.push(g.tip);
     const state = g.merged ? (g.installed && target === 'install' ? 'installed' : 'merged') : 'done';
     const at_target = target === 'main' ? state !== 'done' : state === 'installed';

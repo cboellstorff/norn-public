@@ -104,22 +104,26 @@ test('a deliverable whose branch is gone falls back to its recorded tip', () => 
 });
 
 test('history: after main restarts on a new root, a branch merged on the EARLIER line is merged once deliverables.history names it', () => {
-  const { repo, a } = fixture();
+  const { repo, a, b } = fixture();
   const state = tmp('state');
   mkDlv(state, { repo, branch: 'feat/a', tip: a, delivers: 'native a', done_utc: at(-30).toISOString() });
+  mkDlv(state, { repo, branch: 'fix/b', tip: b, delivers: 'docs b', done_utc: at(-30).toISOString() });
   g(repo, 'merge', '-q', '--no-ff', '-m', 'merge a', 'feat/a');
+  g(repo, 'merge', '-q', '--no-ff', '-m', 'merge b', 'fix/b');
   g(repo, 'tag', 'old-main');
+  // fix/b landed, then main was merged INTO it (a merge-queue update): its tip is no ancestor of the old line, its work is on it
+  g(repo, 'checkout', '-q', 'fix/b'); g(repo, 'merge', '-q', '--no-ff', '-m', 'merge: main into fix/b', 'main');
+  g(repo, 'update-ref', 'refs/remotes/origin/fix/b', g(repo, 'rev-parse', 'HEAD'));
   // main restarts: a new root commit with the same files and none of the old history (a repo moved without its history)
   g(repo, 'checkout', '-q', '--orphan', 'fresh'); g(repo, 'commit', '-q', '-m', 'fresh root');
   g(repo, 'branch', '-q', '-f', 'main', 'fresh'); g(repo, 'checkout', '-q', 'main'); g(repo, 'branch', '-q', '-D', 'fresh');
-  const without = deliverablesView({ stateDir: state, project: { ...project(repo, tmp('doors')), state }, now: NOW }).rows[0];
-  assert.equal(without.state, 'done', 'not on the new main');
+  const states = p => deliverablesView({ stateDir: state, project: p, now: NOW }).rows.map(r => [r.branch, r.state, r.ahead]);
+  assert.deepEqual(states({ ...project(repo, tmp('doors')), state }).map(r => r[1]), ['done', 'done'], 'neither is on the new main');
   const p = { ...project(repo, tmp('doors'), { history: ['old-main'] }), state };
-  const r = deliverablesView({ stateDir: state, project: p, now: NOW }).rows[0];
-  assert.equal(r.state, 'merged'); assert.equal(r.ahead, 0);
+  assert.deepEqual(states(p), [['feat/a', 'merged', 0], ['fix/b', 'merged', 0]], 'feat/a by ancestry, fix/b by its work');
   // an unknown history entry is skipped, not an error
   const p2 = { ...project(repo, tmp('doors'), { history: ['no-such-ref', 'old-main'] }), state };
-  assert.equal(deliverablesView({ stateDir: state, project: p2, now: NOW }).rows[0].state, 'merged');
+  assert.deepEqual(states(p2).map(r => r[1]), ['merged', 'merged']);
 });
 
 test('git cost: a warm scan of every feat/* + fix/* ref is ONE git call; a main move re-checks with batched calls', () => {
