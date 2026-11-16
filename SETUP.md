@@ -260,6 +260,24 @@ node engine/bin/norn.mjs project remove <name> --dry-run
 skill files it installed, but keeps any you edited (and says so), and unregisters the project. It removes the scheduler only
 with the last project. It keeps the project's state unless you pass `--purge-state`, and it never deletes your project.json.
 
+### A monorepo: one project per folder
+
+When one repo holds several separate things, make each folder its own project. Give `init` (or `project new --root`) the folder,
+not the repo: `node engine/bin/norn.mjs init <repo>/<folder>`. `project new --root <repo> --subdir <folder>` does the same. The
+project.json then has `root` = the repo's top level and `subdir` = the folder, and the project is named after the folder. Each
+project has its own rules, roadmap, merge gate, lanes and check-ins, and several can share one repo:
+
+- The adopt scan and read look only at the folder's files and commits. Its README, CLAUDE.md and manifests count as the
+  project's own, and every source stays repo-relative (`<folder>/README.md:3`). The draft's first rule keeps workers in the folder.
+- The merge gate runs from the folder, so `merge.gate.cmd` is written as it runs there. Set `merge.gate.dir` to run it from
+  another folder, or `""` for the top level.
+- A run whose brief has no `Scope:` line may change files only under the folder. The scope guard is on for such a project
+  unless `policy.dod.scope` is `off`.
+- Lanes branch as `norn/<project>/<lane>`, and the merge queue keeps its own scratch worktree (`<repo>-mq-<project>`), so two
+  projects on one repo never share a branch or a scratch worktree.
+
+Workers still get a worktree of the whole repo, and Claude Code still loads the top-level CLAUDE.md as well as the folder's.
+
 ## 10. Never
 
 - Run an install command without the human's consent.

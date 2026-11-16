@@ -30,7 +30,7 @@ export function readyGate({ brief, policy, stage, gate = null }) {
   const ready = parseReady(text), ok = text !== null && !ready.missing.length;
   const why = text === null ? `brief ${fwd(brief ?? '-')} is not readable` : `brief ${fwd(brief)} lacks ${ready.missing.join(', ')}`;
   const msg = `${why} (policy.dod.ready = ${mode}): add the lines Scope: / Tests: / Done: (the paths the run may change, the tests that prove it, the end marker)`;
-  const dod = { mode, ok, missing: ready.missing, ...(ok ? { ready } : {}), ...(gate?.cmd ? { gate: { cmd: gate.cmd, timeout_min: gate.timeout_min } } : {}),
+  const dod = { mode, ok, missing: ready.missing, ...(ok ? { ready } : {}), ...(gate?.cmd ? { gate: { cmd: gate.cmd, timeout_min: gate.timeout_min, ...(gate.dir ? { dir: gate.dir } : {}) } } : {}),
     ...(policy?.dod?.test_cmd ? { test_cmd: policy.dod.test_cmd } : {}), timeout_min: policy?.dod?.timeout_min ?? 20, ...(ok ? {} : { why: msg }) };
   if (ok) return { refused: null, warning: null, dod };
   return mode === 'refuse' ? { refused: msg, warning: null, dod } : { refused: null, warning: msg, dod };
@@ -82,9 +82,9 @@ export async function doneCheck({ worktree, dod, logDir, run }) {
   const docs = bb && out.changed.length > 0 && out.changed.every(p => inScope(p, DOCS_ONLY));
   if (docs && dod.gate?.cmd) out.gate_skipped = `docs-only branch (every changed path in the CI paths-ignore: ${DOCS_ONLY.join(' ')})`;
   const jobs = [...(t.cmds || []).map((cmd, i) => ({ name: t.cmds.length > 1 ? `tests-${i + 1}` : 'tests', cmd, timeout_min: dod.timeout_min ?? 20 })),
-    ...(dod.gate?.cmd && !docs ? [{ name: 'gate', cmd: dod.gate.cmd, timeout_min: dod.gate.timeout_min ?? dod.timeout_min ?? 20 }] : [])];
+    ...(dod.gate?.cmd && !docs ? [{ name: 'gate', cmd: dod.gate.cmd, dir: dod.gate.dir, timeout_min: dod.gate.timeout_min ?? dod.timeout_min ?? 20 }] : [])];
   for (const j of jobs) {
-    const log = path.join(logDir, `${run}-dod-${j.name}.log`), r = await runGate({ cmd: j.cmd, timeout_min: j.timeout_min }, { cwd: worktree, log });
+    const log = path.join(logDir, `${run}-dod-${j.name}.log`), r = await runGate({ cmd: j.cmd, timeout_min: j.timeout_min, ...(j.dir ? { dir: j.dir } : {}) }, { cwd: worktree, log });
     let text = '';
     try { text = fs.readFileSync(log, 'utf8'); } catch { /* no log */ }
     out.tests.push({ name: j.name, cmd: j.cmd, code: r.code, ok: r.ok, ms: r.ms, counts: testCounts(text), log: fwd(log), ...(r.timedOut ? { timed_out: true } : {}) });

@@ -27,6 +27,7 @@ import { authDoctorLines } from './authguard.mjs';
 import { profileDoctorLines } from './standing.mjs';
 import { checkinDoctorLines } from './checkins.mjs';
 import { limitLines } from './limitgate.mjs';
+import { splitRepo, normSubdir } from './monorepo.mjs';
 const ENGINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 export class SetupError extends Error { constructor(msg, code = 2) { super(msg); this.code = code; } }
@@ -272,11 +273,19 @@ export function projectNew(o) {
   const meta = metaRoot(env);
   if (!exists(machineFile(meta))) throw new SetupError('no machine.json: run norn setup first');
   const machine = loadMachine(machineFile(meta), { meta });
-  const root = path.resolve(o.root || process.cwd());
-  if (git(root, 'rev-parse', '--is-inside-work-tree') !== 'true') throw new SetupError(`${fwd(root)} is not a git repo (git rev-parse --is-inside-work-tree)`);
+  const given = path.resolve(o.root || process.cwd());
+  if (git(given, 'rev-parse', '--is-inside-work-tree') !== 'true') throw new SetupError(`${fwd(given)} is not a git repo (git rev-parse --is-inside-work-tree)`);
+  // a monorepo: a folder below the repo's top level (or --subdir) = a project of that folder (project.subdir); root = the top level
+  const split = splitRepo(given);
+  if (!split) throw new SetupError(`${fwd(given)}: git rev-parse --show-toplevel failed`);
+  let subdir;
+  try { subdir = o.subdir !== undefined ? normSubdir(o.subdir) : split.subdir; } catch (e) { throw new SetupError(e.message); }
+  if (o.subdir !== undefined && split.subdir && subdir !== split.subdir) throw new SetupError(`--root ${fwd(given)} is the folder ${split.subdir} of its repo, --subdir says ${subdir}: give one of them`);
+  const root = path.resolve(split.root);
+  if (subdir && !exists(path.join(root, subdir))) throw new SetupError(`subdir ${subdir}: no such folder in ${fwd(root)}`);
   const originHead = git(root, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD');
   const detected = {
-    name: slug(path.basename(root)),
+    name: slug(path.basename(subdir || root)),
     branch: originHead ? originHead.replace(/^origin\//, '') : git(root, 'symbolic-ref', '--short', 'HEAD') || 'main',
     ci: githubRepo(git(root, 'remote', 'get-url', 'origin')) || 'none',
   };
@@ -301,7 +310,7 @@ export function projectNew(o) {
     if (!have.includes(x)) throw new SetupError(`executor ${x} not detected on this machine (codex not found: run norn setup after installing it)`);
   }
   const draft = {
-    schema: 1, name, title, root: fwd(root),
+    schema: 1, name, title, root: fwd(root), ...(subdir ? { subdir } : {}),
     ledger: '${state}/progress.md', briefs_dir: '${state}/briefs',
     views: { questions: '${state}/views/OWNER-QUESTIONS.md', directives: '${state}/views/DIRECTIVES.md', decisions: '${state}/views/DECISIONS-LOG.md' },
     lane_defaults: { worktree: '${state}/wt/${lane}', notes: '${state}/notes/${lane}/NOTES.md' },
@@ -328,7 +337,7 @@ export function projectNew(o) {
   fs.mkdirSync(path.join(dir, 'agents'), { recursive: true });
   for (const n of ROLE_AGENTS) { const t = path.join(dir, 'agents', n + '.md'); if (!exists(t)) fs.copyFileSync(path.join(ENGINE, 'agents', n + '.md'), t); }
   fs.writeFileSync(file, JSON.stringify(draft, null, 1) + '\n', { flag: 'wx' });
-  out(`wrote ${fwd(file)}`);
+  out(`wrote ${fwd(file)}${subdir ? ` (the folder ${subdir} of ${fwd(root)}: its own rules, roadmap, gate and lanes)` : ''}`);
   if (o.register !== false && projectAdd(file, { env, out, err })) return 1;
   out(`project ${name}: OK (${fwd(file)})`);
   if (nr) {

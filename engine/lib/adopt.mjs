@@ -14,6 +14,7 @@ import { laneSteps, LANE_IO } from './lanenew.mjs';
 import { runSteps, runStepsAsync } from './steps.mjs';
 import { writeBudget, writeBudgetAsync, withDefaults } from './policy.mjs';
 import { startRun } from './runs.mjs';
+import { normSubdir, subdirOf } from './monorepo.mjs';
 
 export class AdoptError extends Error { constructor(msg, code = 2) { super(msg); this.code = code; } }
 // META-DASH-ASYNC R1 (option a): the review's writes (decide / close / rule / apply) are yielded effects (lib/steps.mjs): the CLI and the
@@ -60,24 +61,33 @@ function commandsOf(files, read) {
   return out;
 }
 
-/** FACTS about a repo (read-only; writes nothing anywhere). o.now = the clock for branch ages; o.forge = parsed forge answers (A6). */
+/**
+ * FACTS about a repo (read-only; writes nothing anywhere). o.now = the clock for branch ages; o.forge = parsed forge answers (A6).
+ * o.subdir = a monorepo project's folder (project.subdir): only the files, commits and TODO markers under it count, matched as if it
+ * were the top level (its README, CLAUDE.md, manifests); every path FACTS names stays repo-relative (<subdir>/...).
+ */
 export function scan(root, o = {}) {
   const t0 = Date.now();
   root = path.resolve(root);
   if (sh(root, ['rev-parse', '--is-inside-work-tree']) !== 'true') throw new AdoptError(`${fwd(root)} is not a git repo`);
+  let sub;
+  try { sub = normSubdir(o.subdir); } catch (e) { throw new AdoptError(e.message); }
+  const pre = sub ? sub + '/' : '', only = sub ? ['--', sub] : [];
   const head = sh(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])?.replace(/^origin\//, '') || sh(root, ['symbolic-ref', '--short', 'HEAD']) || 'main';
-  const files = (sh(root, ['ls-tree', '-r', '--name-only', head]) || '').split('\n').filter(Boolean);
-  const read = f => sh(root, ['show', `${head}:${f}`]);
+  const files = (sh(root, ['ls-tree', '-r', '--name-only', head, ...only]) || '').split('\n').filter(Boolean)
+    .filter(f => f.startsWith(pre)).map(f => f.slice(pre.length));
+  if (sub && !files.length) throw new AdoptError(`subdir ${sub}: no tracked file under it on ${head}`);
+  const read = f => sh(root, ['show', `${head}:${pre}${f}`]);
   const ext = {};
   for (const f of files) { const e = path.extname(f).toLowerCase() || '(none)'; ext[e] = (ext[e] || 0) + 1; }
   const origin = sh(root, ['remote', 'get-url', 'origin']);
   const gh = /github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(origin || '');
-  const commits = Number(sh(root, ['rev-list', '--count', head]) || 0);
-  const dates = (sh(root, ['log', '--format=%cI', head]) || '').split('\n').filter(Boolean);
-  const authors = new Set((sh(root, ['log', '--format=%ae', head]) || '').split('\n').filter(Boolean)).size;
+  const commits = Number(sh(root, ['rev-list', '--count', head, ...only]) || 0);
+  const dates = (sh(root, ['log', '--format=%cI', head, ...only]) || '').split('\n').filter(Boolean);
+  const authors = new Set((sh(root, ['log', '--format=%ae', head, ...only]) || '').split('\n').filter(Boolean)).size;
   // one spawn for every branch: %(ahead-behind:<base>) (git >= 2.41); an older git answers nothing and each branch costs one rev-list
   const SEP = '\t', branches = [], fmt = ['%(refname:short)', '%(committerdate:iso-strict)', '%(refname)'];
-  const hasHead = commits > 0;
+  const hasHead = sub ? sh(root, ['rev-parse', '--verify', '--quiet', head]) !== null : commits > 0;
   const refs = (hasHead ? sh(root, ['for-each-ref', '--format=' + [...fmt, '%(ahead-behind:' + head + ')'].join(SEP), 'refs/heads', 'refs/remotes']) : null)
     ?? sh(root, ['for-each-ref', '--format=' + fmt.join(SEP), 'refs/heads', 'refs/remotes']) ?? '';
   for (const l of refs.split('\n').filter(Boolean)) {
@@ -107,20 +117,26 @@ export function scan(root, o = {}) {
   const docFiles = files.filter(f => /.md$/i.test(f)), names = branches.map(b => b.name);
   const imported = files.filter(f => PLAN_RE.test(f)).map(f => ({ file: f, ...importPlan(read(f) || '', { file: f, branches: names, docs: docFiles }) }));
   const plans = imported.map(p => ({ file: p.file, items: p.count, themes: p.themes.length }));
-  const todo = (hasHead ? sh(root, ['grep', '-c', '-I', '-E', 'TODO|FIXME', head, '--', '.', ':!*.md']) || '' : '').split('\n').filter(Boolean)
+  const todo = (hasHead ? sh(root, ['grep', '-c', '-I', '-E', 'TODO|FIXME', head, '--', sub || '.', ':!*.md']) || '' : '').split('\n').filter(Boolean)
     .reduce((s, l) => s + Number(l.split(':').pop()), 0);
   const forge = gh ? { kind: 'github', repo: `${gh[1]}/${gh[2]}`, ...(o.forge ? { linked: true, issues: o.forge.issues || [], prs: o.forge.prs || [] } : { linked: false }) } : null;
   const tests = files.filter(f => /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[a-z]+$|_test\.(go|py)$/.test(f)).length;
   const planItems = plans.reduce((s, p) => s + p.items, 0), issues = forge?.issues?.length || 0, live = branches.filter(b => !b.merged).length;
   // NEW = nothing to read yet: the interview fills the draft. ADOPT = the repo answers most of it (SPEC sec. 2)
   const young = commits < 20 && planItems === 0 && issues === 0 && live === 0;
-  return { schema: 1, root: fwd(root), name: slugOf(path.basename(root)), default_branch: head, origin, forge,
+  // a subdir scan matched paths as if the folder were the top level: FACTS names them repo-relative again (a source "file:line" too)
+  const P = f => (f && pre ? pre + f : f), Psrc = s => (pre && s ? pre + s : s);
+  const docs = { readme: files.find(f => /^README(\.md|\.rst|\.txt)?$/i.test(f)) || null, contributing: files.find(f => /^(\.github\/)?CONTRIBUTING\.md$/i.test(f)) || null,
+    changelog: files.find(f => /^(CHANGELOG|CHANGES|HISTORY)(\.md)?$/i.test(f)) || null, license: files.find(f => /^LICEN[SC]E/i.test(f)) || null, design };
+  return { schema: 1, root: fwd(root), ...(sub ? { subdir: sub } : {}), name: slugOf(path.basename(sub || root)), default_branch: head, origin, forge,
     history: { commits, first: dates.at(-1) || null, last: dates[0] || null, authors, tags: (sh(root, ['tag']) || '').split('\n').filter(Boolean).length },
     size: { files: files.length, by_ext: Object.fromEntries(Object.entries(ext).sort((a, b) => b[1] - a[1]).slice(0, 8)), tests, todo_markers: todo },
-    docs: { readme: files.find(f => /^README(\.md|\.rst|\.txt)?$/i.test(f)) || null, contributing: files.find(f => /^(\.github\/)?CONTRIBUTING\.md$/i.test(f)) || null,
-      changelog: files.find(f => /^(CHANGELOG|CHANGES|HISTORY)(\.md)?$/i.test(f)) || null, license: files.find(f => /^LICEN[SC]E/i.test(f)) || null, design },
-    manifests: files.filter(f => MANIFEST_RE.test(f)).sort(),
-    agent_files, plans, imported: imported.map(({ file, themes }) => ({ file, themes })), commands, ci, branches,
+    docs: pre ? { readme: P(docs.readme), contributing: P(docs.contributing), changelog: P(docs.changelog), license: P(docs.license), design: design.map(P) } : docs,
+    manifests: files.filter(f => MANIFEST_RE.test(f)).sort().map(P),
+    agent_files: agent_files.map(a => ({ ...a, file: P(a.file) })), plans: plans.map(p => ({ ...p, file: P(p.file) })),
+    imported: imported.map(({ file, themes }) => ({ file: P(file), themes })),
+    commands: commands.map(c => ({ ...c, source: Psrc(c.source), ...(c.ci ? { ci: Psrc(c.ci) } : {}) })),
+    ci: ci.map(c => ({ ...c, file: P(c.file) })), branches,
     path: young ? 'new' : 'adopt',
     path_why: young ? `${commits} commit(s), no planning file, no open issue, no branch in flight`
       : `${commits} commits, ${planItems} planning item(s) in ${plans.length} file(s), ${issues} open issue(s), ${live} branch(es) in flight`,
@@ -402,11 +418,13 @@ export function draftFacts(facts, { answers = {}, existing = {} } = {}) {
   part('commands', cmds.map(c => ({ id: c.id, text: c.cmd, source: c.source,
     ...((c.id === 'test' ? ex.gate === c.cmd : inRules('`' + c.cmd + '`')) ? { already: true } : {}) })),
     cmds.length ? {} : { empty: `no test command found (${facts.manifests.length ? 'manifests only in sub-folders: ' + facts.manifests.join(', ') : 'no manifest, no CI test step'}): merges are not gated until you name your test command as merge.gate.cmd in project.json` });
-  const rules = [];
+  const rules = [], sub = facts.subdir, inSub = cmd => (sub ? `cd ${sub} && ${cmd}` : cmd);
+  // a monorepo project: the one folder it is about comes first (the scope guard holds a run without Scope: inside it as well)
+  if (sub) rules.push({ text: `This project is the ${sub}/ folder of the repository: change files only under ${sub}/, unless the brief's Scope names another path. Run its commands from ${sub}/.`, source: `project.json subdir ${sub}` });
   for (const a of facts.agent_files) rules.push({ text: `Read ${a.file} before you change anything: it is the repository's own instruction file.`, source: `${a.file} (${a.lines} lines)` });
   if (facts.docs.contributing) rules.push({ text: `Follow ${facts.docs.contributing} for branches, commits and reviews.`, source: facts.docs.contributing });
   const test = cmds.find(c => c.id === 'test');
-  if (test) rules.push({ text: `Run \`${test.cmd}\` before you report DONE; never loosen or skip a test to make it pass.`, source: test.source });
+  if (test) rules.push({ text: `Run \`${inSub(test.cmd)}\` before you report DONE; never loosen or skip a test to make it pass.`, source: test.source });
   rules.push({ text: `Work only in your lane's worktree and branch; never push to ${facts.default_branch}.`, source: `scan: default branch ${facts.default_branch}` });
   if (answers.never) rules.push({ text: `Never: ${answers.never}`, source: 'your answer (never)' });
   part('rules', rules.map((r, i) => ({ id: 'u' + (i + 1), ...r, ...(inRules(r.text) ? { already: true } : {}) })));
@@ -484,7 +502,7 @@ function openFor(stateDir, { project, by, answers = {} }) {
   if (!project?.root) throw new AdoptError('adopt needs a project (its root is the repo to read)');
   const bad = Object.keys(answers).filter(k => !ANSWER_KEYS.includes(k));
   if (bad.length) throw new AdoptError(`unknown answer ${bad.join(', ')} (answers: ${ANSWER_KEYS.join(', ')})`);
-  const facts = scan(project.root);
+  const facts = scan(project.root, { subdir: subdirOf(project) });
   fs.mkdirSync(stateDir, { recursive: true });
   let p = proposalOf(stateDir), created = false;
   if (!p || p.state !== 'open') {
@@ -687,6 +705,7 @@ const ADOPT_MD = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '
 /** the read's brief: engine/prompts/ADOPT.md with the repo, the facts and the answers filled in; a retry says why the last answer failed */
 export function readBrief(facts, answers = {}, { retry } = {}) {
   const fill = { root: facts.root, branch: facts.default_branch, facts: JSON.stringify(facts, null, 1), answers: JSON.stringify(answers, null, 1),
+    focus: facts.subdir ? `\n- FOCUS: this project is only the folder ${facts.subdir}/ of the repository (a monorepo). Read files under ${facts.root}/${facts.subdir}/;\n  outside it read only a top-level README or agent file that applies to the whole repo. Every goal, command, rule, roadmap item\n  and first task is about ${facts.subdir}/ alone: leave out the other folders' work. A command runs from ${facts.subdir}/ (write it as\n  run there, without a cd). Sources stay repo-relative (${facts.subdir}/README.md:3).` : '',
     retry: retry ? `\nRETRY: your last answer was not one valid JSON object (${String(retry).slice(0, 300)}). Answer again: the JSON object, then ## DONE.\n` : '' };
   return fs.readFileSync(ADOPT_MD, 'utf8').replace(/\{\{(\w+)\}\}/g, (m, k) => (k in fill ? fill[k] : m));
 }
@@ -793,6 +812,9 @@ export function draftRead(facts, { read, problems = [] }, { answers = {}, existi
   put('commands', cmds);
   const rules = (read.rules || []).map(r => ({ text: r.text.trim(), source: String(r.source ?? 'the read'), ...(r.unverified ? { unverified: true } : {}) }));
   if (rules.length && answers.never) rules.push({ text: `Never: ${answers.never}`, source: 'your answer (never)' });
+  // a monorepo project: the facts draft's folder rule leads the read's rules too
+  const own = facts.subdir ? P('rules').lines.find(l => l.source === `project.json subdir ${facts.subdir}`) : null;
+  if (own && !rules.some(r => r.text === own.text)) rules.unshift({ text: own.text, source: own.source });
   put('rules', rules.map((r, i) => ({ id: 'u' + (i + 1), ...r, ...(inRules(r.text) ? { already: true } : {}) })));
   put('instructions', []);
   const road = [];
