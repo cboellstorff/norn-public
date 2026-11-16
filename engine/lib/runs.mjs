@@ -27,6 +27,7 @@ import { specPolicy } from './ctxlimit.mjs';
 import { unserved, osLabel, fedOf, fetchClaims, claimKey, claimRun, releaseClaim, leaseExpired, writeOffers, importForeign, importNotes } from './fed.mjs';
 import { workClass, isFable } from './workclass.mjs';
 import { resolveAtFill } from './launchpolicy.mjs';
+import { floorOf, raiseToFloor, floorBinds } from './floor.mjs';
 
 const fwd = p => String(p).replace(/\\/g, '/');
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -304,13 +305,21 @@ const startFields = (o, info) => ({
 const runTail = o => ({ budget_min: o.budgetMin, resumes: o.resumes || 0, resume_of: o.resumeOf, parent: o.parent, via: o.via, role: o.role, ...classStamp(o), q: o.q, tick_class: o.tickClass, trial: o.trial, fallback_of: o.fallbackOf,
   from_queue: o.fromQueue, requeue_of: o.requeueOf, after: o.after?.length ? o.after : undefined, inputs: o.inputs?.length ? o.inputs : undefined,
   epic: o.epic, priority: o.priority, nudge: o.nudge, flow: o.flow, slop_of: o.slopOf, dod_of: o.dodOf, dod_ready: o.dod ? { mode: o.dod.mode, ok: o.dod.ok, missing: o.dod.missing } : undefined,   // META-DOD 1: the Ready verdict + the Done-check resume
-  critique: o.critique,   // META-DOD 3: a plan review ({ of: the plan run, plan: its file }; critique.mjs)
+  critique: o.critique, floor: o.floor,   // floor: the worker floor raised this run (floor.mjs); META-DOD 3: a plan review ({ of: the plan run, plan: its file }; critique.mjs)
     // flow: META-GTP-FLOW piece 2 ({ name, step, vars }); slop_of: META-SLOP-A (the run-end slop resume)
   labels: o.labels?.length ? o.labels : undefined, claim_of: o.claim_of, replaces: o.replaces,
   launch_profile: o.profile && o.profile.name !== 'full' ? o.profile.name : undefined, memory: o.memory === 'off' ? 'off' : undefined, at_fill: o.atFill });   // memory: META-PRACTICE-P1 (auto memory off for this launch)   // META-STANDING-CONTEXT R1: a lean launch (launchpolicy.mjs profileOf)   // replaces: META-AUTONOMY R1 (norn requeue)   // claim_of: META-GTP-FED piece 3 ({ home, project, run, node } on a node)   // META-GTP-FED piece 1: the machines that may run it (none = home)
 // META-TEND P2: the work class on EVERY run (workclass.mjs: class + how it was decided; o.workPolicy = the project's policy table)
 const classStamp = o => { const w = workClass(o, o.workPolicy); return { class: w.class, class_basis: w.basis }; };
 // owner Q4: Fable is the cost class - a run on it carries a notice (printed at launch, shown on the Usage tab with the week's count)
+// the worker floor (floor.mjs, local/budget.json worker_min_model / worker_min_effort): a worker run below it is raised to it; the
+// start / queue record carries floor: { model?: [from, to], effort?: [from, to] } and a notice. A check-in keeps its own model.
+function withFloor(o) {
+  if (!floorBinds(o) || (!o.model && o.executor !== 'claude')) return o;
+  const r = raiseToFloor({ model: o.model, effort: o.effort }, floorOf(o.budget));
+  return r.raised ? { ...o, model: r.model, effort: r.effort, floor: { ...(o.floor || {}), ...r.raised } } : o;
+}
+const floorNotice = o => (o.floor ? [`raised to the worker floor: ${Object.entries(o.floor).map(([k, [a, b]]) => `${k} ${a || '(default)'} -> ${b}`).join(', ')}`] : []);
 const fableNotice = o => (isFable(o) ? [`Fable (${o.model || o.executor}) is the cost class: use it for the hardest long work only (the Usage tab counts the week's Fable runs)`] : []);
 // META-GTP-DAG piece 2: a NEW run (not a fill / resume / re-queue of one) named --epic joins that open epic; no --priority = the epic's
 const isNew = o => !o.fromQueue && !o.resumeOf && !o.requeueOf && !o.replaces;
@@ -360,7 +369,7 @@ const noCaller = ({ caller: _c, ...o }) => o;
 export function startRun(o) {
   if (!o.fromQueue) heldRefusal(o.state, o.lane, o.caller);
   const caller = o.caller;
-  o = withEpic(noCaller(o));
+  o = withFloor(withEpic(noCaller(o)));
   duplicateCheck(o);
   busyDoor({ ...o, caller });
   if (o.after?.length && !o.fromQueue) {   // NORN-WATCH S4: a run with `after:` conditions always queues; fillPass starts it once all are met
@@ -403,7 +412,7 @@ export function startRun(o) {
     // META-GTP-MAIL piece 3: a nudge resumes the SAME session (claude --resume <sid> keeps its id unless --fork-session)
     const session_id = o.resumeSid || (info.harness === 'claude' || info.harness === 'fake' ? crypto.randomUUID() : null);
     const resumes = o.resumes || 0;
-    const warnings = [...notesWarnings(o), ...fableNotice(o), ...(o.dod?.mode === 'warn' && !o.dod.ok && !o.resumeOf ? [o.dod.why] : [])];   // META-DOD 1: policy.dod.ready warn
+    const warnings = [...notesWarnings(o), ...floorNotice(o), ...fableNotice(o), ...(o.dod?.mode === 'warn' && !o.dod.ok && !o.resumeOf ? [o.dod.why] : [])];   // META-DOD 1: policy.dod.ready warn
     const ev = record(o.state, { kind: 'run', ev: 'start', by: 'launcher', data: drop({ ...startFields(o, info), log, final, session_id, ...runTail(o), warnings: warnings.length ? warnings : undefined }) });
     const run = ev.id;
     if (o.epic && isNew(o)) joinEpic(o.state, o.epic, run);
@@ -460,7 +469,7 @@ export const queueSpecPath = (state, run) => path.join(state, 'runs', run + '.qu
 export function queueRun(o) {
   if (!o.fromQueue) heldRefusal(o.state, o.lane, o.caller);
   const caller = o.caller;
-  o = withEpic(noCaller(o));
+  o = withFloor(withEpic(noCaller(o)));
   duplicateCheck(o);
   busyDoor({ ...o, caller });
   const info = launchable(o);
@@ -468,7 +477,7 @@ export function queueRun(o) {
     try { checkRefs(o.state, o.after, o.inputs); } catch (e) { if (e instanceof AfterError) throw new RunError(e.message); throw e; }
   }
   const { queue: _q, notBefore, run: _r, log: _l, final: _f, session_id: _s, lockFile: _k, lockFiles: _ks, fromQueue: _fq, now: _n, ...spec } = o;
-  const ev = record(o.state, { kind: 'run', ev: 'queue', by: 'launcher', data: drop({ ...startFields(o, info), ...runTail(spec), not_before: notBefore, warnings: fableNotice(o).length ? fableNotice(o) : undefined }) });
+  const ev = record(o.state, { kind: 'run', ev: 'queue', by: 'launcher', data: drop({ ...startFields(o, info), ...runTail(spec), not_before: notBefore, warnings: [...floorNotice(o), ...fableNotice(o)].length ? [...floorNotice(o), ...fableNotice(o)] : undefined }) });
   if (o.epic && isNew(o)) joinEpic(o.state, o.epic, ev.id);
   const file = queueSpecPath(o.state, ev.id);
   fs.mkdirSync(path.dirname(file), { recursive: true });

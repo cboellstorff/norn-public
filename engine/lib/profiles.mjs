@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WORK_CLASSES, BASIC_KEYS } from './policy.mjs';
 export { BASIC_KEYS };
+import { raiseToFloor } from './floor.mjs';
 
 export const PROFILES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'presets', 'profiles');
 export const COSTS = ['cheap', 'balanced', 'quality'];
@@ -43,17 +44,19 @@ const OWN_CAP = { max_sol: 'codex-sol', max_astra: 'codex-astra' };
 const hasCodex = found => CODEX.some(x => found.includes(x));
 
 /** The machine budget keys of a profile: its budget + its Codex caps (0 when setup found no Codex), check-in / worker model + effort by cost. */
-export function profileBudget(p, { found = ['claude'], cost } = {}) {
+export function profileBudget(p, { found = ['claude'], cost, floor = null } = {}) {
   const c = costOf(cost), on = k => (k === 'max_codex' ? hasCodex(found) : found.includes(OWN_CAP[k]));   // a closed / retired executor keeps 0
   const b = { ...p.budget, ...Object.fromEntries(Object.entries(p.codex).map(([k, v]) => [k, on(k) ? v : 0])) };
   for (const k of ['checkin_model', 'claude_model']) if (b[k]) b[k] = model(b[k], c);
   for (const k of ['checkin_effort', 'claude_effort']) if (b[k]) b[k] = step(b[k], c.effort_step);
+  const w = raiseToFloor({ model: b.claude_model, effort: b.claude_effort }, floor);   // the worker floor in force (floor.mjs); check-ins keep theirs
+  if (w.raised) Object.assign(b, { ...(b.claude_model ? { claude_model: w.model } : {}), ...(b.claude_effort ? { claude_effort: w.effort } : {}) });
   return b;
 }
 
 /** { executors, fallbacks } of a profile for this machine: executors not found -> the Claude stand-in (fallbacks: wait), the generic
  *  roles -> the project's own agent of that role (agents), model / effort by cost. */
-export function profilePolicy(p, { found = ['claude'], cost, agents = [] } = {}) {
+export function profilePolicy(p, { found = ['claude'], cost, agents = [], floor = null } = {}) {
   const c = costOf(cost);
   const role = r => agents.find(a => a === r) ?? agents.find(a => a.endsWith('-' + r)) ?? r;
   const name = x => (ROLES.includes(x) ? role(x) : x);
@@ -61,7 +64,8 @@ export function profilePolicy(p, { found = ['claude'], cost, agents = [] } = {})
   for (const cls of Object.keys(WORK_CLASSES)) {
     let [ex, m, e] = p.routing[cls];
     if (CODEX.includes(ex) && !found.includes(ex)) [ex, m, e] = [STAND_IN[cls] ?? 'implementer', 'claude-sonnet-5-5', 'medium'];
-    executors[cls] = { executor: name(ex), model: model(m, c), effort: step(e, c.effort_step) };
+    const r = raiseToFloor({ model: model(m, c), effort: step(e, c.effort_step) }, floor);   // the worker floor in force (floor.mjs)
+    executors[cls] = { executor: name(ex), model: r.model, effort: r.effort };
   }
   const fallbacks = Object.fromEntries(Object.entries(p.fallbacks).map(([k, v]) => [k, CODEX.includes(v) && !found.includes(v) ? 'wait' : name(v)]));
   return { executors, fallbacks };

@@ -99,6 +99,11 @@ Around the dashboard:
   you approve each part.
 - **Monorepos** (`norn init <repo>/<folder>`): each folder can be its own project, with its own rules, roadmap, merge gate and
   lanes, and work stays inside the folder. See [SETUP.md](SETUP.md#a-monorepo-one-project-per-folder).
+- **Minimum worker model** (Settings > Executors & models > Minimum for workers, or `worker_min_model` /
+  `worker_min_effort` in `local/budget.json`): no worker run goes below it. Merge runs, helpers and reviews count as workers;
+  check-ins and the chat keep their own model. A run asked for less is raised to the minimum, and the run record says so.
+  A worker setting below the minimum is refused. Raising the minimum raises the settings below it in the same save. A
+  profile is raised to it too. Only Claude models are compared; Codex runs keep their own models.
 - **Done checks** (per project): see [Done checks](#done-checks) below.
 - **Notifications** and **phone access**: see [On your phone](#on-your-phone) below.
 - **MCP server** (`norn mcp`): agents in Claude Code or Codex can use Norn's commands; `norn harness install` adds it.

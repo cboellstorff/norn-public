@@ -15,7 +15,8 @@ import { createChat, readThread, threadFile, threadFlushed, threadState, chatCos
 import { ActError, showRoots, outboxDir } from '../lib/chatact.mjs';
 import { genWhyNot } from '../lib/setup.mjs';
 import { profileChoices, profileChanges, getProfile, loadProfiles, COSTS } from '../lib/profiles.mjs';
-import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudgetAsync, atomicWriteAsync as atomicA, onlyChanged, retiredExecutors, capOfExecutor, getPath } from '../lib/policy.mjs';
+import { floorOf } from '../lib/floor.mjs';
+import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudgetAsync, atomicWriteAsync as atomicA, onlyChanged, floorChanges, retiredExecutors, capOfExecutor, getPath } from '../lib/policy.mjs';
 import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin } from '../lib/records.mjs';
 import { remoteOf, classify, cookieOf, setCookie, createPairing, devicesFile, POSTS_PER_MIN } from '../lib/remote.mjs';
 import { possibleAnswers } from '../lib/qreconcile.mjs';
@@ -270,7 +271,7 @@ export function createDashboard(o) {
   // off, never to a retired one (retiredExecutors: its own cap 0 while Codex is open); the role names are the project's own agents
   const CODEX_EX = ['codex-sol', 'codex-astra'];
   const profileFor = (p, s = settingsState(p)) => { const gone = retiredExecutors(s.budget);
-    return { found: ['claude', ...CODEX_EX.filter(x => machine.codex?.exe && p.executors?.[x]?.enabled !== false && !gone.includes(x))], agents: exExtra(p).agents }; };
+    return { found: ['claude', ...CODEX_EX.filter(x => machine.codex?.exe && p.executors?.[x]?.enabled !== false && !gone.includes(x))], agents: exExtra(p).agents, floor: floorOf(s.budget) }; };   // the worker floor: a profile is raised to it (profiles.mjs)
   const capsRec = i => i.kind === 'decision' && i.state !== 'overruled' && /caps profile$/.test(i.data?.question ?? '');
   /** the profile in force: the latest caps profile decision + how many of its keys (or the owner's own keys of that save) now differ */
   function profileNow(p, s = settingsState(p)) {
@@ -285,6 +286,7 @@ export function createDashboard(o) {
   function reviewSettings(p, changes, version) {
     const s = settingsState(p);
     if (version !== s.version) throw fail(409, 'Settings changed elsewhere. Reload and review the diff again.');
+    const fc = floorChanges(s.view, changes, exExtra(p)), asked = changes; changes = fc.changes;   // the worker floor raises the settings it leaves below it
     const updated = applySettings(s.view, changes, exExtra(p)), rows = settingsView(s.view, exExtra(p)), retired = retiredExecutors(s.budget);
     const rulings = Object.values(st(p).items).filter(i => (i.kind === 'directive' && i.state === 'active') || (i.kind === 'decision' && i.state !== 'overruled' && !capsRec(i)));
     const words = v => (v === null || v === undefined ? 'unset' : Array.isArray(v) ? v.join(', ') || '(none)' : String(v));
@@ -300,6 +302,7 @@ export function createDashboard(o) {
       if (typeof to === 'string' && retired.includes(to) && /^policy\.(executors\.[a-z_]+\.executor|fallbacks\.)/.test(k)) flags.push(`${to} is retired (${capOfExecutor(to)} is 0)`);
       const capX = retired.find(x => capOfExecutor(x) === k);
       if (capX && to > 0) flags.push(`re-enables retired ${capX} (${k} is 0)`);
+      if (!Object.hasOwn(asked, k)) flags.push('raised to the worker minimum');
       const label = row?.label ?? k;
       return { key: k, label, from, to, text: `${label}: ${words(from)} -> ${words(to)}`, flags };
     });
@@ -1235,13 +1238,14 @@ data: ${JSON.stringify(l)}
       try { prof = getProfile(String(profile.name)); } catch (e) { throw fail(400, e.message); }
       values = profileChanges(prof, { ...profileFor(p, s), cost: profile.cost });
     }
+    const asked = changes; changes = floorChanges(s.view, changes, exExtra(p)).changes;   // the worker floor: raises ride in the same save
     const updated = applySettings(s.view, changes, exExtra(p)), next = onlyChanged(s.view, changes, updated), parts = split(next), written = [];
     const was = withDefaults(s.view).policy.cadence.checkin_interval_min, now = updated.policy.cadence.checkin_interval_min;
     if (await writeBudgetAsync(o.budgetFile, s.budget, next)) written.push(o.budgetFile);
     if (JSON.stringify(parts.policy) !== JSON.stringify(s.proj.policy ?? {})) { await atomicA(p.file, JSON.stringify({ ...s.proj, policy: parts.policy }, null, 2) + '\n'); written.push(p.file); }
     let decision = null;
     if (prof) {
-      const own = Object.keys(changes).filter(k => !(k in values) || JSON.stringify(values[k]) !== JSON.stringify(changes[k])), from = Object.keys(changes).length - own.length;
+      const own = Object.keys(asked).filter(k => !(k in values) || JSON.stringify(values[k]) !== JSON.stringify(changes[k])), from = Object.keys(asked).length - own.length;
       decision = (await rec(p, { kind: 'decision', ev: 'create', by: 'dashboard', data: { lane: 'settings', question: 'caps profile', choice: `${prof.label} (${profile.cost})`,
         why: `saved from Settings: ${from} setting(s) from the profile${own.length ? `, ${own.length} of the owner's own` : ''}`, profile: prof.name, cost: profile.cost, values, own } })).id;
     }

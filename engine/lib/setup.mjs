@@ -21,6 +21,7 @@ import { readDash, dashRows } from './dashlive.mjs';
 import { starterPolicy, allowedExecutors, ROLE_AGENTS, slopOn } from './policy.mjs';
 import { HEADLESS_SLOP } from './harness/common.mjs';
 import { getProfile, checkChoice, profileBudget, profilePolicy } from './profiles.mjs';
+import { floorOf } from './floor.mjs';
 import { newTopic, subscribeLink, ntfyServer } from './notify.mjs';
 import { remoteDoctor } from './remote.mjs';
 import { authDoctorLines } from './authguard.mjs';
@@ -319,7 +320,7 @@ export function projectNew(o) {
     // META-OOTB F-2: the engine's generic role agents, copied next to project.json (yours to edit) and installed from there
     install: { agents: '${project_dir}/agents' },
     policy: prof
-      ? { ...profilePolicy(prof, { found: allowedExecutors(exList, capsInForce(meta)), cost: o.cost }), cadence: { auto_resume_handoff: true, auto_resume_max: 2, trigger_on_exit: false, checkin_interval_min: prof.scheduler.interval_min } }
+      ? { ...profilePolicy(prof, { found: allowedExecutors(exList, capsInForce(meta)), cost: o.cost, floor: floorOf(capsInForce(meta)) }), cadence: { auto_resume_handoff: true, auto_resume_max: 2, trigger_on_exit: false, checkin_interval_min: prof.scheduler.interval_min } }
       : { ...starterPolicy(exList, capsInForce(meta)), cadence: { auto_resume_handoff: true, auto_resume_max: 2, trigger_on_exit: false } },
   };
   const errs = validate(PROJECT_SCHEMA, draft);
@@ -541,7 +542,7 @@ export function setup({ force = false, nonInteractive = false, projects = [], as
   // META-OOTB F-3 / F-6: caps before the scheduler - a machine with no budget gets the profile's caps (default try-it); an existing
   // budget.json is touched only when the human names --profile / --cost (the profile keys merged in, a .pre-profile backup kept)
   const bf = path.join(meta, 'local', 'budget.json'), found = ['claude', ...(d.codex ? CODEX_EXECUTORS : [])];
-  const pb = profileBudget(prof, { found, cost }), named = `profile ${prof.name}, cost ${cost ?? 'balanced'}`;
+  const pb = profileBudget(prof, { found, cost, floor: floorOf(capsInForce(meta)) }), named = `profile ${prof.name}, cost ${cost ?? 'balanced'}`;
   let applied = true;
   if (!exists(bf)) {
     fs.writeFileSync(bf, JSON.stringify(pb, null, 2) + '\n', { flag: 'wx' });

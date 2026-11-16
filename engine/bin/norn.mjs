@@ -36,7 +36,7 @@ import { weekStart, parseReset } from '../lib/cost.mjs';
 import { digest, tryDigest } from '../lib/digest.mjs';
 import { renderDigest } from '../lib/views.mjs';
 import { tick, quietFlag } from '../lib/tick.mjs';
-import { POLICY_DEFAULTS, withDefaults, applySettings, merged, split, writeBudget, capsMissing, slopOn } from '../lib/policy.mjs';
+import { POLICY_DEFAULTS, withDefaults, applySettings, floorChanges, merged, split, writeBudget, capsMissing, slopOn } from '../lib/policy.mjs';
 import { CLASS_LABELS } from '../lib/workclass.mjs';
 import { adapterFor, schedState, liveName, oldTasks, schedApply } from '../lib/sched/index.mjs';
 import { serve, refusal } from '../lib/mcp.mjs';
@@ -797,7 +797,7 @@ function calibCmd(argv, env, out, err) {
       changes.cacheR_per_pct = Math.round(sinceWeek / pct);
     }
     let updated;
-    try { updated = applySettings(merged(m.budget, {}), changes); } catch (e) { if (e.status === 400) throw new Usage(e.message, null); throw e; }   // the policy rows, as the dash Settings save
+    try { updated = applySettings(merged(m.budget, {}), floorChanges(merged(m.budget, {}), changes).changes); } catch (e) { if (e.status === 400) throw new Usage(e.message, null); throw e; }   // the policy rows, as the dash Settings save
     writeBudget(m.budgetFile, m.budget, updated);
     const B = { ...m.budget, ...split(updated).budget }, n0 = x => Number(x).toLocaleString('en-US');
     const est = weeklyEstimate({ ...o, budget: B }, new Date(now));
