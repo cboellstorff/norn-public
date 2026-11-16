@@ -175,6 +175,7 @@ export function pruneCache(c, { mainSha, keepBases = [], tips = [] }) {
   for (const k of Object.keys(c.work || {})) if (k.split(':')[1] !== mainSha) delete c.work[k];   // META-DLV-LANDED workOnMain answers
   const live = new Set(tips);
   for (const k of Object.keys(c.native || {})) if (!live.has(k)) delete c.native[k];
+  for (const k of Object.keys(c.hist || {})) if (!live.has(k.split(':')[0])) delete c.hist[k];   // workOnMain answers against deliverables.history lines
   for (const k of Object.keys(c.anc || {})) if (!keep.has(k.split(':')[1])) delete c.anc[k];
   return c;
 }
