@@ -646,7 +646,21 @@ export function createDashboard(o) {
     const crossed = await crossingsAsync(p.state, guardRows({ ins, tests, advice, holds, refusals: refused, docs: docsList(p) }));
     if (!Number.isFinite(at) && !ig.pending) { at = Date.now(); try { await fs.promises.mkdir(path.dirname(bf), { recursive: true }); await fs.promises.writeFile(bf, JSON.stringify({ at: new Date(at).toISOString() })); forget(bf); } catch { /* read-only state: no baseline */ } }
     const rows = crossed.map(r => (r.new && !(Number.isFinite(at) && Date.parse(r.first_seen) > at) ? { ...r, new: false } : r));   // no baseline yet (the scan is pending): nothing is new
-    return { project: p.name, ...guardView(rows, { rules: ins?.rules?.counts ?? null, slop }), pending: ig.pending, slop, voice: pol.voice, errors };
+    const v = guardView(rows, { rules: ins?.rules?.counts ?? null, slop }), sent = fixSent(p, v.rows || []);
+    return { project: p.name, ...v, rows: sent.rows, sent: sent.sent, pending: ig.pending, slop, voice: pol.voice, errors };
+  }
+  // Fix all sent and not done yet: every ACTIVE directive a Send wrote (data.fixall) holds its findings. Those rows are marked sent
+  // (sent: DEC-n) - Fix all no longer offers them, the page says they are with the fixer - until the directive is closed or the findings
+  // are fixed. Without this a sent sheet came back whole once the tab was left (the sent state lived only in the page).
+  function fixSent(p, rows) {
+    const live = Object.values(st(p).items).filter(i => i.kind === 'directive' && i.state === 'active' && i.data?.fixall && Array.isArray(i.data.findings));
+    if (!live.length) return { rows, sent: [] };
+    const by = new Map();
+    for (const d of live) for (const id of d.data.findings) if (!by.has(id)) by.set(id, d.data.fixall);
+    const out = rows.map(r => (by.has(r.id) ? { ...r, sent: by.get(r.id) } : r));
+    const sent = live.map(d => ({ id: d.data.fixall, directive: d.id, n: d.data.findings.length, open: out.filter(r => r.sent === d.data.fixall).length, at: d.created ?? null }))
+      .filter(x => x.open > 0);
+    return { rows: out, sent };
   }
   // META-UX-BUILD S2: ?part=summary (no list) or one sub-view's part (&limit= rows, SUB_CAP by default); no part = the full view (chips)
   async function guardAt(p, url) {

@@ -15,7 +15,7 @@ export const KIND_ORDER = ['ready', 'drafts', 'call', 'count'];
 export const GUARD_SUBS = [['fix', 'To fix'], ['types', 'Per type'], ['rules', 'Rules'], ['growing', 'Is it growing?']];
 const WARN = s => s === 'high' || s === 'medium';
 // FNV-1a over what a part shows: a row that comes, goes or turns old, the scan landing, the ledger
-const sig = g => fnv(JSON.stringify([g.pending, g.slop, g.ledger, (g.rows || []).map(r => `${r.id}:${r.new ? 1 : 0}:${r.severity}`)]));
+const sig = g => fnv(JSON.stringify([g.pending, g.slop, g.ledger, (g.rows || []).map(r => `${r.id}:${r.new ? 1 : 0}:${r.severity}${r.sent ? ':' + r.sent : ''}`)]));
 function fnv(s) {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
@@ -49,7 +49,7 @@ export const chipView = g => ({ ...g, rows: (g.rows || []).filter(r => !/^[HT]-/
 export function guardSummary(g) {
   const rows = g.rows || [];
   return { project: g.project, pending: g.pending, slop: g.slop, voice: g.voice, errors: g.errors || [], total: g.total ?? rows.length, new: g.new ?? 0,
-    warn: rows.filter(r => WARN(r.severity)).length, kinds: kindsOf(rows), fixable: rows.filter(TICK).length, batches: batchesOf(rows).filter(b => b.kind !== 'count').length, ledger: g.ledger ?? null, top: rows.slice(0, 1),
+    warn: rows.filter(r => WARN(r.severity)).length, kinds: kindsOf(rows), fixable: rows.filter(TICK).length, offer: rows.filter(OFFER).length, sent: g.sent || [], batches: batchesOf(rows).filter(b => b.kind !== 'count').length, ledger: g.ledger ?? null, top: rows.slice(0, 1),
     labels: Object.fromEntries((g.types || []).map(t => [t.type, t.label])),
     counts: { fix: rows.length, types: (g.types || []).filter(t => t.open).length, rules: ruleRows(g).length, growing: null }, sig: sig(g) };
 }
@@ -59,12 +59,14 @@ export function guardSummary(g) {
 // ready / to-draft batch on the owner's own files are their own item (`<batch>|own`), offered and never ticked (stale paragraphs are
 // your call already, TIGHTEN_FIX). The send names the item keys + the picked ways; fixPick turns them into the finding ids of the SAME
 // view (the sig the sheet was drawn from), so the record carries ids, not a guess.
-const TICK = r => (r.kind === 'ready' || r.kind === 'drafts') && !r.owner_file;
+// a row already sent to the fixer (r.sent = the Fix all decision, server.mjs fixSent) is not offered again
+const OFFER = r => !r.sent && (r.kind ?? 'drafts') !== 'count';
+const TICK = r => (r.kind === 'ready' || r.kind === 'drafts') && !r.owner_file && !r.sent;
 const OWN = '|own';
 const where = rows => rows.filter(r => r.path).slice(0, 3).map(r => `${String(r.path).replace(/\\/g, '/').split('/').slice(-2).join('/')}${r.line ? ':' + r.line : ''}`);
 function sheetItems(g) {
   const out = [];
-  for (const b of batchesOf(g.rows || []).filter(x => x.kind !== 'count')) {
+  for (const b of batchesOf((g.rows || []).filter(OFFER))) {
     const item = (key, rows, tick) => ({ key, title: b.title, kind: b.kind, ...(b.ways ? { ways: b.ways } : {}), action: b.action, severity: b.severity, n: rows.length,
       new: rows.filter(r => r.new).length, paths: where(rows), tick, ...(key.endsWith(OWN) ? { own: true } : {}), rows });
     if (b.kind === 'call') { out.push(item(b.key, b.rows, false)); continue; }
@@ -77,7 +79,7 @@ function sheetItems(g) {
 /** the sheet: { items [{ key, title, kind, ways?, action, severity, n, new, paths, tick, own? }], kinds (= the summary's), ticked, sig } */
 export function fixSheet(g) {
   const items = sheetItems(g).map(({ rows, ...i }) => i);
-  return { items, kinds: kindsOf(g.rows || []), ticked: items.filter(i => i.tick).reduce((n, i) => n + i.n, 0), sig: sig(g) };
+  return { items, kinds: kindsOf((g.rows || []).filter(r => !r.sent)), sent: g.sent || [], ticked: items.filter(i => i.tick).reduce((n, i) => n + i.n, 0), sig: sig(g) };
 }
 const bad = m => Object.assign(new Error(m), { status: 400 });
 /** { keys (ticked items), picks { <call batch key>: way } } -> { ids (sorted), picks [{ key, way, ids }], batches, set (a hash of ids + ways) } */
