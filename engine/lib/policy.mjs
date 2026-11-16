@@ -6,6 +6,7 @@
 // allowed work classes (policy.allowed_classes.<name>, the rank) and a class -> executor pairing it does not allow is refused (400).
 import { PROVIDER_CLASSES, PROVIDER_CAP_DEFAULT, capKey, BUILTIN } from './executors.mjs';
 import { ADAPTERS } from './harness/index.mjs';
+import { FLOOR_MODELS, floorOf, floorText, modelBelow, effortBelow, claudeRank } from './floor.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -165,6 +166,9 @@ export const SETTINGS=[
   S('cadence','chat_hold_min','Lane hold length (min)',int(5,240),'A controller act on a lane holds it this long (check-ins skip a held lane, exit 5); each act extends it.','30','Longer = check-ins stay off a lane the chat touched for longer.',['norn mcp (chat / controller profiles)']),
   S('cadence','chat_raw_shell','Chat raw shell and file edits',en(['off','ask','on']),'Shell (Bash / PowerShell) and file-edit tools in the chat: off = refused; ask = an approval card each time; on = allowed.','off','On lets the chat change files and run commands with no tap - off by default (SPEC sec. 3 tier 3).',['dashboard Home chat','norn mcp (chat profile)']),
   S('agents','claude_model','Claude worker model (default)',en(MODELS),'Worker default when the check-in passes no model.','claude-opus-5-5','Opus costs ~5x Sonnet.',['worker.ps1 (default)']),
+  // the worker floor (floor.mjs): no worker run below it; a worker setting below it is refused, raising it raises the ones below
+  S('agents','worker_min_model','Minimum worker model',en(['',...FLOOR_MODELS]),'The lowest Claude model any worker run may use (merges, helpers and reviews included; check-ins and the chat keep their own model). A run asked for less is raised to it; a worker model setting below it is refused, and raising it raises the settings below it in the same save. Blank = no minimum.','(blank)','A stronger minimum costs more per run (Opus ~5x Sonnet).',['norn run / the queue fill (raises the run)','Settings save (refuses / raises)',CHECKIN]),
+  S('agents','worker_min_effort','Minimum worker effort',en(['',...EFFORTS]),'The lowest effort any Claude worker run may use; same rules as the minimum model. Blank = no minimum.','(blank)','Each effort step roughly doubles thinking tokens.',['norn run / the queue fill (raises the run)','Settings save (refuses / raises)',CHECKIN]),
   S('agents','claude_effort','Claude worker effort (default)',en(EFFORTS),'Worker default when the check-in passes no effort.','medium','Each step up roughly doubles thinking.',['worker.ps1 (default)']),
   S('agents','codex_astra_effort','codex-astra effort (default)',en(EFFORTS),'Default effort of codex-astra runs.','xhigh','xhigh is slow; medium misses hard cases.',['codex-impl.sh (default)']),
   S('agents','codex_sol_effort','codex-sol effort (default)',en(EFFORTS),'Default effort of codex-sol runs.','medium','—',[CHECKIN]),
@@ -185,6 +189,7 @@ export const SECTIONS=[
     {id:'routing',label:'Work-class routing',help:'One line per work class: executor, model, effort (blank = the executor default).',inline:true,
       subs:Object.entries(WORK_CLASSES).map(([id,label])=>({id,label}))},
     {id:'defaults',label:'Default model & effort',help:'Launcher defaults when the check-in passes none.'},
+    {id:'floor',label:'Minimum for workers',help:'No worker run below this model and effort: lower settings are refused, lower runs are raised.'},
     {id:'critical',label:'Critical path',help:'Lanes blocking the next release get the critical effort.'},
     {id:'fallbacks',label:'Fallbacks',help:'Who takes the work when an executor is unavailable or over its guard.'}]},
   {id:'agents',label:'Agents & context',help:'Context hand-off limits per agent role, rounds and escalation.',subs:[
@@ -220,6 +225,7 @@ export const SECTION_RULES=[
   [/^(max_[a-z0-9_-]+|policy\.delegate\.max_per_parent|policy\.ask\.max_per_day)$/,'workers/helpers'],
   [/^policy\.executors\.([a-z_]+)\.(executor|model|effort)$/,'executors/routing/$1'],
   [/^(claude_model|claude_effort|codex_astra_effort|codex_sol_effort)$/,'executors/defaults'],
+  [/^worker_min_(model|effort)$/,'executors/floor'],
   [/^policy\.critical_(lanes|effort)$/,'executors/critical'],
   [/^policy\.fallbacks\./,'executors/fallbacks'],
   [/^policy\.context\.([a-z]+)\.[a-z_]+$/,'agents/context/$1'],
@@ -311,7 +317,9 @@ export function settingsView(b,extra={}){const f=withDefaults(b),pv=extra.provid
       :isCapRow(s.key,pv)?(getPath(f,s.key)??capOf(extra.caps,s.key.slice(4)))
       :s.key==='rules.quiet_gpu'?(extra.quietRule??'(see file)'):getPath(f,s.key);
     const m=s.key.match(/^policy\.executors\.([a-z_]+)\.executor$/);
-    const opts=m?{options:s.options.filter(o=>o===value||allowedClasses(f.policy,o,pv).includes(m[1]))}:{};
+    const fl=floorOf(f),wk=fl&&workerKind(s.key);   // the worker floor: options below it are not offered (the value in force stays shown)
+    const opts=m?{options:s.options.filter(o=>o===value||allowedClasses(f.policy,o,pv).includes(m[1]))}
+      :wk?{options:s.options.filter(o=>o===value||!(wk==='model'?modelBelow(o,fl.model):effortBelow(o,fl.effort)))}:{};
     const dv=dflt[s.key],modified=dv!==undefined&&value!==undefined&&JSON.stringify(dv)!==JSON.stringify(value);
     return {...s,...opts,scope,value,section:sectionOf(s),default:dv,modified,basic:BASIC_KEYS.includes(s.key),
     home:scope==='file'?(extra.quietFile??'(rules file)'):scope==='project'?'project.json '+s.key:'machine budget.json '+s.key};});}
@@ -331,7 +339,13 @@ export function onlyChanged(b,changes,updated){const f=withDefaults(b),out={...s
   for(const k of Object.keys(changes)){const v=getPath(updated,k);if(JSON.stringify(getPath(f,k))===JSON.stringify(v))continue;setPath(out,k,v);}
   return out;}
 // Returns the new merged {...budget, policy} object (input untouched); 400 on unknown key, bad value or broken cross-field rule.
-export function applySettings(b,changes,extra={}){const all=settingsFor(extra),pv=extra.providers||[];
+// The worker floor: a worker setting this save sets below the floor in force after it is refused (the keys it leaves alone are raised by
+// floorChanges, which every save path runs first; a key left below by a caller that did not is raised at launch anyway).
+export function applySettings(b,changes,extra={}){const out=applySettingsRaw(b,changes,extra);
+  const low=belowFloor(out).filter(r=>Object.hasOwn(changes,r.key));
+  if(low.length)throw fail(`${low.map(r=>`${r.key} = ${r.value}`).join(', ')}: below the worker minimum (${floorText(floorOf(out))}) - pick ${low.length>1?'values':'a value'} at or above it, or lower worker_min_model / worker_min_effort first`);
+  return out;}
+function applySettingsRaw(b,changes,extra={}){const all=settingsFor(extra),pv=extra.providers||[];
   if(changes===null||typeof changes!=='object'||Array.isArray(changes)||!Object.keys(changes).length)throw fail('changes must be a non-empty object');
   const out=structuredClone(b);out.policy=merge(POLICY_DEFAULTS,foldSlop(out.policy));
   for(const [k,v] of Object.entries(changes)){const s=all.find(x=>x.key===k);if(!s)throw fail('Unknown setting '+k);check(s,v);setPath(out,k,v);}
@@ -341,6 +355,31 @@ export function applySettings(b,changes,extra={}){const all=settingsFor(extra),p
   for(const [a,c] of Object.entries(out.policy.context))if(!(c.no_new_step_k<=c.handoff_k&&c.handoff_k<=c.hard_max_k))throw fail(`context.${a}: no-new-step <= hand-off <= hard max`);
   return out;
 }
+// ---------- the worker floor (floor.mjs) in Settings ----------
+const WORKER_MODEL_KEYS=/^(claude_model|policy\.checkin\.merge_model|policy\.executors\.[a-z_]+\.model)$/;
+const WORKER_EFFORT_KEYS=/^(claude_effort|policy\.checkin\.merge_effort|policy\.executors\.[a-z_]+\.effort|policy\.critical_effort|policy\.iteration\.escalation_effort)$/;
+/** 'model' | 'effort' when setting `key` chooses a worker model / effort the floor binds, else null */
+export const workerKind=key=>WORKER_MODEL_KEYS.test(key)?'model':WORKER_EFFORT_KEYS.test(key)?'effort':null;
+/** the worker settings of merged view `m` (withDefaults applied) below its floor: [{ key, kind, value, to }] */
+export function belowFloor(m){const f=floorOf(m);if(!f)return [];const v=withDefaults(m),out=[],p=v.policy;
+  const model=(key,val)=>{if(f.model&&modelBelow(val,f.model))out.push({key,kind:'model',value:val,to:f.model});};
+  // an effort counts only where the model is a Claude one (or blank on a Claude-side executor): a codex effort is not Claude's scale
+  const effort=(key,val,mod,exr)=>{const claude=mod?!!claudeRank(mod):!exr||CLAUDE_SIDE.has(exr)||!/^codex-|^gpt/.test(String(exr));
+    if(claude&&f.effort&&effortBelow(val,f.effort))out.push({key,kind:'effort',value:val,to:f.effort});};
+  model('claude_model',v.claude_model);effort('claude_effort',v.claude_effort,v.claude_model);
+  model('policy.checkin.merge_model',p.checkin.merge_model);effort('policy.checkin.merge_effort',p.checkin.merge_effort,p.checkin.merge_model);
+  for(const [k,e] of Object.entries(p.executors)){model(`policy.executors.${k}.model`,e.model);effort(`policy.executors.${k}.effort`,e.effort,e.model,e.executor);}
+  effort('policy.critical_effort',p.critical_effort);effort('policy.iteration.escalation_effort',p.iteration.escalation_effort);
+  return out;}
+/**
+ * The changes of a Settings save with the floor's raises added: every worker setting the save leaves below the floor in force after it
+ * (a new or raised floor) is raised to the floor, unless the save sets that key itself (then applySettings refuses it, naming it).
+ * -> { changes (the input + the raises), raised: [{ key, from, to }] }
+ */
+export function floorChanges(b,changes,extra={}){
+  let trial;try{trial=applySettingsRaw(b,changes,extra);}catch{return {changes,raised:[]};}   // a bad change: applySettings says why
+  const raised=belowFloor(trial).filter(r=>!Object.hasOwn(changes,r.key)).map(r=>({key:r.key,from:r.value,to:r.to}));
+  return {changes:{...changes,...Object.fromEntries(raised.map(r=>[r.key,r.to]))},raised};}
 
 const onoff=v=>v?'on':'OFF';
 export function generatedLines(b,extra={}){const f=withDefaults(b),p=f.policy,c=p.context,it=p.iteration,pv=extra.providers||[];
@@ -354,7 +393,7 @@ export function generatedLines(b,extra={}){const f=withDefaults(b),p=f.policy,c=
     'context.controller':`Controller hand-off: start no new step past ~${c.controller.no_new_step_k}k; hand off at ~${c.controller.handoff_k}k; never past ~${c.controller.hard_max_k}k.`,
     'iteration':`D. Controller: a stage past ~${it.escalation_multiplier}x its round estimate is escalated (first: ${it.escalation_action}${it.escalation_action==='raise effort'?` to ${it.escalation_effort}`:''}; Opus xhigh / Fable) or re-scoped, never left to grind.`,
     'speed_mode':`SPEED MODE switches (dashboard Settings): A ${onoff(p.speed_mode.A)}, B ${onoff(p.speed_mode.B)}, C ${onoff(p.speed_mode.C)}, D ${onoff(p.speed_mode.D)} - an OFF item does not apply.`,
-    'executors':`POLICY (dashboard Settings, project policy.executors; wins over the table): ${exs}. Critical lanes [${p.critical_lanes.join(', ')}] at ${p.critical_effort}. Own-account executors on: ${(extra.enabled||[]).join(', ')||'none'}.${ranks}`,
+    'executors':`POLICY (dashboard Settings, project policy.executors; wins over the table): ${exs}. Critical lanes [${p.critical_lanes.join(', ')}] at ${p.critical_effort}. Own-account executors on: ${(extra.enabled||[]).join(', ')||'none'}.${ranks}${floorOf(f)?` Worker minimum: ${floorText(floorOf(f))} (lower routes are raised at launch).`:''}`,
     'checkin':`POLICY (generated from the machine budget + project policy on Save): caps ${capText(f.max_claude_workers)} Claude / ${capText(f.max_codex)} Codex (${capText(f.max_astra)} Astra, ${capText(f.max_sol)} Sol), 1 writer per lane; weekly guard ${capText(f.weekly_stop_pct)} %, reserve ${f.reserve_pct_for_doors} % for doors, desired burn ${f.desired_burn_pct_per_h} %/h (cap ${capText(f.usage_rate_cap_pct_per_h)}); default round estimate ${it.round_estimate_default}, escalate past ${it.escalation_multiplier}x (${it.escalation_action}); stop runs at ${it.wall_time_multiplier}x their time budget; critical lanes [${p.critical_lanes.join(', ')}] at ${p.critical_effort}; fallbacks: Claude over guard -> ${p.fallbacks.claude_over_guard}, Codex down -> ${p.fallbacks.codex_down}, Fable unavailable -> ${p.fallbacks.fable_unavailable}; own-account executors on: ${(extra.enabled||[]).join(", ")||"none"}; SPEED MODE A ${onoff(p.speed_mode.A)} B ${onoff(p.speed_mode.B)} C ${onoff(p.speed_mode.C)} D ${onoff(p.speed_mode.D)}.`};
 }
 const MARK=/<!-- policy:([a-z_.]+) -->\s*$/;

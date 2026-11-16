@@ -7,6 +7,7 @@ import path from 'node:path';
 import { loadProject } from './config.mjs';
 import { withDefaults, merged } from './policy.mjs';
 import { isTyped } from './executors.mjs';
+import { FLOOR_KEYS } from './floor.mjs';
 
 // ---------- lean launch profiles (policy.launch: { roles: { worker | merge | checkin | chat: name }, profiles: { name: overrides } }) ----------
 // harness-agnostic switches; each adapter maps them to its flags (profileArgs) or states a gap (profileGap)
@@ -102,8 +103,10 @@ export function resolveAtFill(spec) {
   const p = launchParts({ project, budget, executor: spec.executor, lane: spec.lane, explicit: r.explicit || {}, claudeDir: r.claude_dir, worktree: spec.worktree });
   const { provider, ...parts } = p;
   if (spec.provider && !provider) throw new Error(`executor ${spec.executor} is no longer a typed executor in ${project.file}`);
+  // the worker floor in force NOW (floor.mjs): startRun raises the refilled model / effort to it, so the fill reads it from the current budget
+  const floorKeys = r.budget_file && fs.existsSync(r.budget_file) ? Object.fromEntries(FLOOR_KEYS.map(k => [k, budget[k]])) : {};
   return {
-    spec: { ...spec, ...parts, ...(spec.provider ? { provider } : {}) },
+    spec: { ...spec, ...parts, ...(spec.provider ? { provider } : {}), budget: { ...(spec.budget || {}), ...floorKeys } },
     at_fill: { from: [project.file, ...(r.budget_file && fs.existsSync(r.budget_file) ? [r.budget_file.replace(/\\/g, '/')] : [])], parts: FILL_PARTS,
       explicit: Object.keys(EXPLICIT).filter(k => r.explicit?.[k] !== undefined) },
   };

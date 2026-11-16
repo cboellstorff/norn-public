@@ -15,6 +15,7 @@ import { runSteps, runStepsAsync } from './steps.mjs';
 import { writeBudget, writeBudgetAsync, withDefaults } from './policy.mjs';
 import { startRun } from './runs.mjs';
 import { normSubdir, subdirOf } from './monorepo.mjs';
+import { floorOf } from './floor.mjs';
 
 export class AdoptError extends Error { constructor(msg, code = 2) { super(msg); this.code = code; } }
 // META-DASH-ASYNC R1 (option a): the review's writes (decide / close / rule / apply) are yielded effects (lib/steps.mjs): the CLI and the
@@ -654,7 +655,7 @@ function* applySteps(stateDir, { project, by, dryRun, metaRoot, profiles, extra 
       let cur = {};
       try { cur = JSON.parse(fs.readFileSync(bf, 'utf8').replace(/^﻿/, '')); } catch { /* none yet */ }
       say('profile', `caps of ${prof.id} -> ${fwd(bf)} (the scheduler is never installed by apply)`);
-      if (!dryRun) { yield ['mkdir', path.dirname(bf)]; yield ['budget', bf, cur, { ...cur, ...profiles.profileBudget(profiles.getProfile(prof.id)) }]; }
+      if (!dryRun) { yield ['mkdir', path.dirname(bf)]; yield ['budget', bf, cur, { ...cur, ...profiles.profileBudget(profiles.getProfile(prof.id), { floor: floorOf(cur) }) }]; }
     } else say('profile', 'caps not written: the profile data is not installed (the pick is recorded; the starter caps stay in force)');
     if (!dryRun) yield ['record', stateDir, { kind: 'decision', ev: 'create', by, data: { lane: 'adopt', question: `${p.id} caps profile`, choice: prof.id, why: `picked in ${p.id} (norn adopt)` } }, project.views ? { views: project.views } : {}];
   }
