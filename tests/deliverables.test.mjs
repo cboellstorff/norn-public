@@ -103,6 +103,25 @@ test('a deliverable whose branch is gone falls back to its recorded tip', () => 
   assert.equal(deliverablesView({ stateDir: state, project: p, now: NOW }).rows[0].state, 'merged');
 });
 
+test('history: after main restarts on a new root, a branch merged on the EARLIER line is merged once deliverables.history names it', () => {
+  const { repo, a } = fixture();
+  const state = tmp('state');
+  mkDlv(state, { repo, branch: 'feat/a', tip: a, delivers: 'native a', done_utc: at(-30).toISOString() });
+  g(repo, 'merge', '-q', '--no-ff', '-m', 'merge a', 'feat/a');
+  g(repo, 'tag', 'old-main');
+  // main restarts: a new root commit with the same files and none of the old history (a repo moved without its history)
+  g(repo, 'checkout', '-q', '--orphan', 'fresh'); g(repo, 'commit', '-q', '-m', 'fresh root');
+  g(repo, 'branch', '-q', '-f', 'main', 'fresh'); g(repo, 'checkout', '-q', 'main'); g(repo, 'branch', '-q', '-D', 'fresh');
+  const without = deliverablesView({ stateDir: state, project: { ...project(repo, tmp('doors')), state }, now: NOW }).rows[0];
+  assert.equal(without.state, 'done', 'not on the new main');
+  const p = { ...project(repo, tmp('doors'), { history: ['old-main'] }), state };
+  const r = deliverablesView({ stateDir: state, project: p, now: NOW }).rows[0];
+  assert.equal(r.state, 'merged'); assert.equal(r.ahead, 0);
+  // an unknown history entry is skipped, not an error
+  const p2 = { ...project(repo, tmp('doors'), { history: ['no-such-ref', 'old-main'] }), state };
+  assert.equal(deliverablesView({ stateDir: state, project: p2, now: NOW }).rows[0].state, 'merged');
+});
+
 test('git cost: a warm scan of every feat/* + fix/* ref is ONE git call; a main move re-checks with batched calls', () => {
   const { repo } = fixture();
   for (let i = 0; i < 6; i++) { g(repo, 'checkout', '-q', '-b', `feat/n${i}`, 'main'); const s = commit(repo, `n${i}.txt`, String(i), `n${i}`); g(repo, 'update-ref', `refs/remotes/origin/feat/n${i}`, s); }

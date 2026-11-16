@@ -40,7 +40,7 @@
       "repo": { "type": "string" }, "main": { "type": "string" }, "remote": { "type": "string" },
       "branches": { "type": "array", "items": { "type": "string" } }, "native": { "type": "array", "items": { "type": "string" } },
       "receipts": { "type": "array", "items": { "type": "string" } }, "receipt_keys": { "type": "array", "items": { "type": "string" } },
-      "receipt_re": { "type": "string" }, "target": { "enum": ["main", "install"] },
+      "receipt_re": { "type": "string" }, "target": { "enum": ["main", "install"] }, "history": { "type": "array", "items": { "type": "string" } },
       "ask_after_h": { "type": "number", "minimum": 0 }, "park_days": { "type": "number", "minimum": 0 } } },
     "merge": { "type": "object", "additionalProperties": false, "properties": {
       "gate": { "type": "object", "additionalProperties": false, "required": ["cmd"], "properties": {

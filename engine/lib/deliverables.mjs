@@ -81,12 +81,12 @@ export function repoScanner({ cfg, cache, git, install }) {
       const own = sameRepo(repo, cfg.repo);
       const c = cache[key] ||= {};
       let s = null;
-      try { s = scanRepo(repo, { main: own ? cfg.main : 'main', remote: cfg.remote, cache: c, git, native: own ? cfg.native : null, installed: own && install ? install.commits : [] }); } catch { s = null; }
+      try { s = scanRepo(repo, { main: own ? cfg.main : 'main', remote: cfg.remote, cache: c, git, native: own ? cfg.native : null, installed: own && install ? install.commits : [], history: own ? cfg.history || [] : [] }); } catch { s = null; }
       scans.set(key, { s, c, tips: [], want: [] });
     }
     return scans.get(key);
   };
-  const finish = () => { for (const { s, c, tips } of scans.values()) if (s) pruneCache(c, { mainSha: s.mainSha, keepBases: s.installed, tips: [...tips, ...[...s.refs.values()].map(r => r.sha)] }); };
+  const finish = () => { for (const { s, c, tips } of scans.values()) if (s) pruneCache(c, { mainSha: s.mainSha, keepBases: [...s.installed, ...s.history], tips: [...tips, ...[...s.refs.values()].map(r => r.sha)] }); };
   return { get, finish, scans: () => scans.values() };
 }
 
