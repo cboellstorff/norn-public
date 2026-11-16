@@ -97,6 +97,8 @@ Around the dashboard:
 
 - **Adopting a repo** (`norn init`): drafts a roadmap, project rules, the test command and a first task from your repository;
   you approve each part.
+- **Monorepos** (`norn init <repo>/<folder>`): each folder can be its own project, with its own rules, roadmap, merge gate and
+  lanes, and work stays inside the folder. See [SETUP.md](SETUP.md#a-monorepo-one-project-per-folder).
 - **Done checks** (per project): see [Done checks](#done-checks) below.
 - **Notifications** and **phone access**: see [On your phone](#on-your-phone) below.
 - **MCP server** (`norn mcp`): agents in Claude Code or Codex can use Norn's commands; `norn harness install` adds it.

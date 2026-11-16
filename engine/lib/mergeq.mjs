@@ -15,6 +15,7 @@ import { renderBatchBrief, suiteMode } from './mergebrief.mjs';
 import { spawnOutside } from './jobguard.mjs';
 import { openBlocks } from './slop/host.mjs';
 import { slopOn } from './policy.mjs';
+import { subdirOf, inDir, gateText } from './monorepo.mjs';
 
 const H = 3600e3;
 const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
@@ -23,9 +24,11 @@ export const MQ_DEFAULTS = { batch_max: 4 };
 export const PRIO_RANK = { P0: 0, P1: 1, P2: 2, P3: 3 };
 
 /** project.json `merge` over the defaults: { gate {cmd, timeout_min, fast} | null, batch_max, scratch (the batch worktree), ui (path globs) } */
+// a monorepo project (project.subdir): the gate runs from that folder (gate.dir, unless set) and the scratch is the project's own
 export function mergeConfig(project = {}) {
-  const m = project.merge || {}, d = deliverableConfig(project);
-  return { ...MQ_DEFAULTS, ...m, gate: m.gate || null, ui: m.ui || [], scratch: fwd(m.scratch || `${d.repo}-mq`), repo: d.repo, main: d.main, remote: d.remote, native: d.native };
+  const m = project.merge || {}, d = deliverableConfig(project), sub = subdirOf(project);
+  const gate = m.gate ? { ...m.gate, ...(m.gate.dir === undefined && sub ? { dir: sub } : {}) } : null;
+  return { ...MQ_DEFAULTS, ...m, gate, ui: m.ui || [], scratch: fwd(m.scratch || (sub ? `${d.repo}-mq-${project.name}` : `${d.repo}-mq`)), repo: d.repo, main: d.main, remote: d.remote, native: d.native };
 }
 /** the gate kind of a queue row: door (native: the install path, the door flow), batch (a FAST gate is declared: batched + bisected),
  *  stage (one MERGE stage per branch) */
@@ -200,8 +203,9 @@ export const batchFile = (stateDir, n) => path.join(mqDir(stateDir), `batch-${n}
 export const loadBatch = (stateDir, n) => readJ(batchFile(stateDir, n), null);
 export const UNPIN_LIMIT = 2;   // the kill criterion: a red batch bisect cannot pin, twice in a row = the gate is not deterministic
 
-/** run the gate cmd in cwd (shell), its output to log; the env drops VIRTUAL_ENV and every META_* (a suite must not see live state) */
+/** run the gate cmd in cwd (shell; in cwd/<gate.dir> when the gate has a dir), its output to log; the env drops VIRTUAL_ENV and every META_* (a suite must not see live state) */
 export function runGate(gate, { cwd, log }) {
+  cwd = inDir(cwd, gate.dir);
   return new Promise(resolve => {
     const t0 = Date.now();
     fs.mkdirSync(path.dirname(log), { recursive: true });
@@ -306,12 +310,12 @@ function fixAsk(stateDir, rec, res, { cfg, git }) {
   const logs = res.runs.filter(r => r.prefix === k || r.prefix === k - 1).map(r => `prefix ${r.prefix} ${r.ok ? 'green' : 'red'}: ${fwd(r.log)}`);
   fs.writeFileSync(brief, [
     `# task FIX ${c.id} - ${c.branch} turns the merge-queue gate red (mq batch-${rec.n} bisect)`, '',
-    `The merge gate \`${cfg.gate.cmd}\` is RED on ${rec.into} ${rec.base.slice(0, 7)} + ${rec.members.slice(0, k).map(m => m.branch).join(' + ')} and GREEN without ${c.branch}`,
+    `The merge gate \`${gateText(cfg.gate)}\` is RED on ${rec.into} ${rec.base.slice(0, 7)} + ${rec.members.slice(0, k).map(m => m.branch).join(' + ')} and GREEN without ${c.branch}`,
     `(bisect over the batch's merge commits; logs: ${logs.join('; ')}).`,
     `Branch ${c.branch} at ${sha7}, lane ${c.lane ?? '-'}. YOUR worktree: ${wtPath || `a worktree with ${c.branch} checked out (none exists: \`git -C ${cfg.repo} worktree add <path> ${c.branch}\`)`} (one writer).`, '',
     'Do:',
     `1. \`git fetch ${cfg.remote}\`; bring the worktree to the pushed tip (\`git merge --ff-only ${cfg.remote}/${c.branch}\`), then \`git merge ${cfg.remote}/${rec.into}\` - a merge, never a rebase.`,
-    `2. Run the gate \`${cfg.gate.cmd}\` and reproduce the red; fix its CAUSE in the branch, red-first (never loosen a test, never a skip by name).`,
+    `2. Run the gate \`${gateText(cfg.gate)}\` and reproduce the red; fix its CAUSE in the branch, red-first (never loosen a test, never a skip by name).`,
     `   ${k > 1 ? `The red may be an interaction with ${rec.members.slice(0, k - 1).map(m => m.branch).join(', ')} (merged before it in the batch): merge those too to reproduce.` : 'It is red on the target with this branch alone.'}`,
     `3. Commit, push \`${cfg.remote} ${c.branch}\` - no force-push. Do not merge to ${rec.into}; the merge queue re-batches the new tip.`,
     `NOTES ${notes}: the red, its cause, the fix, the gate result; last line \`## DONE\`, \`## STOPPED: <why>\` or \`## HANDOFF\`.`, ''].join('\n'));
@@ -421,7 +425,7 @@ async function mergeqPass({ stateDir, project = {}, locksDir, git = makeGit(), n
       const n = mq.n + 1;
       writeJ(mqStateFile(stateDir), { ...mq, n });
       const b = buildBatch(n, pick, { cfg, git });
-      const rec = { n, branch: `mq/batch-${n}`, into: b.into, base: b.base, tip: b.tip, members: b.members, dropped: b.dropped, gate: cfg.gate.cmd,
+      const rec = { n, branch: `mq/batch-${n}`, into: b.into, base: b.base, tip: b.tip, members: b.members, dropped: b.dropped, gate: gateText(cfg.gate),
         built: new Date(now).toISOString(), status: 'gating' };
       const fx = b.members.filter(m => fixers.includes(m.id)).map(m => m.id);
       if (fx.length) rec.fixes_main = fx;   // MQ-STARVE: put first because their diff touches main's failing test files

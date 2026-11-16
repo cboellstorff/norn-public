@@ -8,6 +8,7 @@
     "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$" },
     "title": { "type": "string" },
     "root": { "type": "string" },
+    "subdir": { "type": "string", "pattern": "^[^/:\\\\][^:\\\\]*$" },
     "vars": { "type": "object", "additionalProperties": { "type": "string" } },
     "ledger": { "type": "string" },
     "gpu_lock_file": { "type": "string", "$comment": "META-GTP-MAIL: the GPU lock file (gpu_lock.ps1 GPU.lock); a mail nudge waits while it exists" },
@@ -43,7 +44,7 @@
       "ask_after_h": { "type": "number", "minimum": 0 }, "park_days": { "type": "number", "minimum": 0 } } },
     "merge": { "type": "object", "additionalProperties": false, "properties": {
       "gate": { "type": "object", "additionalProperties": false, "required": ["cmd"], "properties": {
-        "cmd": { "type": "string" }, "timeout_min": { "type": "number", "minimum": 0 }, "fast": { "type": "boolean" } } },
+        "cmd": { "type": "string" }, "dir": { "type": "string" }, "timeout_min": { "type": "number", "minimum": 0 }, "fast": { "type": "boolean" } } },
       "batch_max": { "type": "integer", "minimum": 1 }, "scratch": { "type": "string" }, "ui": { "type": "array", "items": { "type": "string" } } } },
     "policy": { "type": "object" }
   }

@@ -22,7 +22,7 @@ import { briefMarker } from './mergebrief.mjs';
 import { openEpic, joinEpic, EpicError } from './epics.mjs';
 import { PRIORITIES } from './records.mjs';
 import { hookCommand } from './mail.mjs';
-import { scopeHookOf, scopeSettings, scopeOn } from './scope.mjs';
+import { scopeHookOf, scopeSettings, scopeOnFor } from './scope.mjs';
 import { specPolicy } from './ctxlimit.mjs';
 import { unserved, osLabel, fedOf, fetchClaims, claimKey, claimRun, releaseClaim, leaseExpired, writeOffers, importForeign, importNotes } from './fed.mjs';
 import { workClass, isFable } from './workclass.mjs';
@@ -74,7 +74,7 @@ export function mailHookOf(o) {
 // ROUND 2: only for a project whose CURRENT policy.dod.scope is on (default off), read at each launch (a resume too)
 export function scopeOfLaunch(o) {
   const h = mailHookOf(o) && scopeHookOf(o);
-  return h && scopeOn(specPolicy({ ctx_from: policySource(o) })) ? scopeSettings(o, h) : undefined;
+  return h && scopeOnFor(specPolicy({ ctx_from: policySource(o) }), o) ? scopeSettings(o, h) : undefined;
 }
 /** the project.json whose CURRENT policy binds a run (policy.context, policy.dod.scope) */
 const policySource = o => o.ctx_from ?? o.refill?.project_file ?? o.env?.META_PROJECT;

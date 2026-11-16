@@ -19,6 +19,7 @@ import { formatPlan } from './plan.mjs';
 import { checkMail, sendMail, ackMail, formatMail, mailRole } from './mail.mjs';
 import { tierOf, promptTier, cliPlan, ownerSaid, emit, requestApproval, showRoots, insideRoots, ActError, APPROVAL_MS, CLI_ALLOWED, HOLD_MIN } from './chatact.mjs';
 import { readThread } from './chat.mjs';
+import { splitRepo, projectHome } from './monorepo.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const META_CLI = path.join(HERE, '..', 'bin', 'norn.mjs');
@@ -422,8 +423,9 @@ function setupStatus(a, ctx) {
 }
 function adoptScanTool({ root }, ctx) {
   let f;
-  try { f = scan(root); } catch (e) { if (e instanceof AdoptError) bad(e.message); throw e; }
-  const qs = interviewOf(f), x = machineOf(ctx)?.projects.find(y => y.p && dirKey(y.p.root) === dirKey(root));
+  const sp = splitRepo(root);   // a folder of a monorepo: its own scan (project new makes it a project of that folder)
+  try { f = scan(sp?.root || root, { subdir: sp?.subdir }); } catch (e) { if (e instanceof AdoptError) bad(e.message); throw e; }
+  const qs = interviewOf(f), x = machineOf(ctx)?.projects.find(y => y.p && dirKey(projectHome(y.p)) === dirKey(root));
   const lines = [`${f.root}: ${f.path} (${f.path_why})`,
     `commands: ${f.commands.map(c => `${c.id} ${c.cmd} [${c.source}${c.ci ? '; CI ' + c.ci : ''}]`).join('; ') || 'none found'}`,
     `plans: ${f.plans.map(p => `${p.file} (${p.items} items)`).join(', ') || 'none'}; agent files: ${f.agent_files.map(a => a.file).join(', ') || 'none'}; branches in flight: ${f.branches.filter(b => !b.merged).length}`,
@@ -432,12 +434,12 @@ function adoptScanTool({ root }, ctx) {
   return { text: lines.join('\n'), data: { facts: f, questions: qs, project: x?.name ?? null } };
 }
 async function adoptStartTool(a, ctx) {
-  let x = needMachine(ctx).projects.find(y => y.p && dirKey(y.p.root) === dirKey(a.root));
+  let x = needMachine(ctx).projects.find(y => y.p && dirKey(projectHome(y.p)) === dirKey(a.root));
   const wrote = [];
   if (!x) {
     const err = [];
     try { if (projectNew({ root: a.root, nonInteractive: true, env: ctx.env, out: s => wrote.push(s), err: s => err.push(s) })) bad(err.join('\n') || wrote.join('\n')); } catch (e) { if (e instanceof SetupError) bad(e.message); throw e; }
-    x = needMachine(ctx).projects.find(y => y.p && dirKey(y.p.root) === dirKey(a.root)) || bad(`registered, but no project has the root ${fwd(a.root)}`);
+    x = needMachine(ctx).projects.find(y => y.p && dirKey(projectHome(y.p)) === dirKey(a.root)) || bad(`registered, but no project has the root ${fwd(a.root)}`);
   }
   const p = x.p, args = ['adopt', 'draft', '--project', p.file, '--as', ctx.writer];
   for (const [k, v] of Object.entries(a.answers || {})) args.push('--answer', `${k}=${v}`);

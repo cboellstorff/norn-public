@@ -51,7 +51,8 @@ import { delegateStart, delegateWait, ASK_MAX_S } from '../lib/delegate.mjs';
 import { askStart, askWait } from '../lib/ask.mjs';
 import { loadDeliverables, deliverablesView, backfillPlan, applyBackfill, formatBackfill, formatDeliverable, askDeliverable, resolveDeliverable, createResolveWorktree, liveResolve } from '../lib/deliverables.mjs';
 import { makeGit } from '../lib/dlvgit.mjs';
-import { mergeQueue, formatMq, updatePass, mergeqRun, mqSummary, setBatching } from '../lib/mergeq.mjs';
+import { mergeQueue, formatMq, updatePass, mergeqRun, mqSummary, setBatching, mergeConfig } from '../lib/mergeq.mjs';
+import { subdirOf, splitRepo, projectHome } from '../lib/monorepo.mjs';
 import { evalCmd, EVAL_USAGE } from '../lib/eval/cli.mjs';
 import { ledgerConfig, ledgerStatus, ledgerLog, ledgerRestore } from '../lib/ledger.mjs';
 import { cv, cvPart, renderWindow, renderCv, writeCvView, CV_BY } from '../lib/cv.mjs';
@@ -231,7 +232,7 @@ function migrateCmd(argv, env, out, err) {
 const SETUP_USAGE = {
   setup: 'norn setup [--non-interactive] [--project <project.json>]... [--no-scheduler] [--profile try-it|solo|heavy] [--cost cheap|balanced|quality] [--notify ntfy|toast|desktop|pushover|none [--ntfy-server URL] [--no-test-ping]] [--force (write the launchers even from a linked git worktree)]    (engine root: env META_ROOT, default this repo)',
   doctor: 'norn doctor | norn doctor --probe <executor> [--project <project.json>]',
-  project: 'norn project add <project.json> | norn project list [--json] | norn project remove <name> [--purge-state] [--dry-run] | norn project new [--root <repo>] [--name n] [--title t] [--branch b] [--ci owner/repo|none] [--executors a,b] [--profile p] [--cost c] [--dir D] [--notify ntfy|toast|desktop|pushover|none [--ntfy-server URL] [--no-test-ping]] [--non-interactive] [--no-register] [--print]',
+  project: 'norn project add <project.json> | norn project list [--json] | norn project remove <name> [--purge-state] [--dry-run] | norn project new [--root <repo | a folder of it>] [--subdir <folder>] [--name n] [--title t] [--branch b] [--ci owner/repo|none] [--executors a,b] [--profile p] [--cost c] [--dir D] [--notify ntfy|toast|desktop|pushover|none [--ntfy-server URL] [--no-test-ping]] [--non-interactive] [--no-register] [--print]',
   gen: 'norn gen [--check] [--project <project.json>]    (regenerate / drift-check every harness target)',
 };
 // metaexec X1: one minimal request through <name>'s command line; the entry comes from --project or the first machine project naming it
@@ -276,7 +277,7 @@ function setupCmd(argv, env, out, err) {
     }
     if (cmd === 'doctor') { if (rest.length) throw new SetupError('unexpected ' + rest[0]); return doctor({ env, out }); }
     if (rest[0] === 'new') {
-      const NEW = ['root', 'name', 'title', 'branch', 'ci', 'executors', 'dir', 'profile', 'cost', 'notify', 'ntfy-server'], o = { nonInteractive: false, register: true, print: false };
+      const NEW = ['root', 'subdir', 'name', 'title', 'branch', 'ci', 'executors', 'dir', 'profile', 'cost', 'notify', 'ntfy-server'], o = { nonInteractive: false, register: true, print: false };
       for (let i = 1; i < rest.length; i++) {
         const a = rest[i], k = a.replace(/^--/, '');
         if (a === '--non-interactive') o.nonInteractive = true;
@@ -401,6 +402,7 @@ function runSpec(flags, env, { project, state, locks }) {
   const cadence = project?.policy?.cadence || {};
   const o = {
     state, locksDir: locks, executor: ex, lane: flags.lane, brief: callerPath(flags.brief), project: project?.name,
+    ...(project && subdirOf(project) ? { subdir: subdirOf(project) } : {}),   // a monorepo project: the scope guard keeps a run without Scope: inside it
     main_checkout: project ? (project.deliverables?.repo || project.root) : undefined,   // META-MERGELOCK: a MERGE run's main checkout lock (runs.writeTrees) when its brief has no marker
     worktree: flags.worktree || late(project?.lane_defaults?.worktree), notes: briefNotes(flags, callerPath(flags.brief)) || callerPath(flags.notes) || late(project?.lane_defaults?.notes),
     after: afterOf(flags.after), inputs: afterOf(flags.inputs, parseInputs), epic: flags.epic, priority: flags.priority,
@@ -459,7 +461,7 @@ function runCmd(argv, env, out, err) {
       return 2;
     }
     // META-DOD 1 (DIR-68): the Definition of Ready - a brief without Scope: / Tests: / Done: is refused (exit 6) or warned per policy.dod.ready
-    const rg = readyGate({ brief: o.brief, policy: project?.policy, stage: o.stage, gate: project?.merge?.gate });
+    const rg = readyGate({ brief: o.brief, policy: project?.policy, stage: o.stage, gate: project ? mergeConfig(project).gate : null });
     if (rg.refused) throw new RunRefused(rg.refused, 6);
     if (rg.dod) o.dod = { ...rg.dod, ...(o.notes ? { notes: o.notes } : {}) };
     if (flags.item) openItem(state, flags.item);   // META-ROADMAP S3: refuse before any run is recorded
@@ -1912,9 +1914,10 @@ async function adoptCmd(argv, env, out, err) {
     if (more.length) throw new RunError(`unexpected ${more[0]}`);
     if (sub === 'scan') {
       if (part) throw new RunError(`unexpected ${part}`);
-      const root = flags.root || (flags.project || env.META_PROJECT ? where(flags, env).project?.root : null);
+      const sp = flags.root ? splitRepo(flags.root) : null, pr = !flags.root && (flags.project || env.META_PROJECT) ? where(flags, env).project : null;
+      const root = sp?.root || flags.root || pr?.root;
       if (!root) throw new RunError('scan needs --root <repo> or --project P');
-      const f = scan(root);
+      const f = scan(root, { subdir: sp ? sp.subdir : subdirOf(pr) });
       if (flags.json) { out(JSON.stringify(f, null, 1)); return 0; }
       printFacts(f, out);
       for (const q of interviewOf(f)) out(`question ${q.id}: ${q.text} (--answer ${q.id}=...; ${q.why})`);
@@ -2006,9 +2009,10 @@ function printFacts(f, out) {
   out(`plans: ${f.plans.map(x => `${x.file} (${x.items} items)`).join(', ') || 'none'}; agent files: ${f.agent_files.map(x => x.file).join(', ') || 'none'}; branches in flight: ${f.branches.filter(b => !b.merged).length}`);
 }
 /** the registered project whose root is this repo -> { name, config } | null */
+// the project of a folder: its root (+ subdir for a monorepo project) is that folder
 function projectAtRoot(root, env) {
-  const want = fwd(path.resolve(root)), same = (a, b) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
-  for (const p of registeredProjects(env)) { try { if (same(fwd(path.resolve(loadProject(p.config).root)), want)) return p; } catch { /* a broken project: not this one */ } }
+  const want = fwd(path.resolve(root)).replace(/\/+$/, ''), same = (a, b) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
+  for (const p of registeredProjects(env)) { try { if (same(projectHome(loadProject(p.config)).replace(/\/+$/, ''), want)) return p; } catch { /* a broken project: not this one */ } }
   return null;
 }
 const guidedInteractive = (flags, env) => !flags['non-interactive'] && (!!process.stdin.isTTY || env.META_INTERACTIVE === '1');
@@ -2021,7 +2025,7 @@ async function adoptGuided(pf, flags, env, out, err, { ask = readLineSync } = {}
   const interactive = guidedInteractive(flags, env), by = flags.as || env.META_ROLE || 'owner';
   const verb = args => adoptCmd([...args, '--project', pf, '--as', by], env, out, err);
   const project = loadProject(pf), state = project.state;
-  const facts = scan(project.root);
+  const facts = scan(project.root, { subdir: subdirOf(project) });
   printFacts(facts, out);
   let P = fs.existsSync(state) ? proposalOf(state) : null;
   if (P?.state === 'open' && P.draft) out(`${P.id} is open: resuming its review (norn adopt close --project ${fwd(pf)} --why "..." drops it)`);

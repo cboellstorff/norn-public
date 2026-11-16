@@ -9,10 +9,12 @@ import { spawnSync, execFile } from 'node:child_process';
 import { expandLate } from './config.mjs';
 import { record, recordAsync, loadState } from './records.mjs';
 import { runSteps, runStepsAsync } from './steps.mjs';
+import { subdirOf } from './monorepo.mjs';
 
 export class LaneError extends Error { constructor(msg, code = 2) { super(msg); this.code = code; } }
 export const LANE_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
-export const laneBranch = name => `norn/${name}`;
+// a project that is one folder of a monorepo (project.subdir) branches as norn/<project>/<lane>: projects sharing a repo never share a branch
+export const laneBranch = (name, p) => (p && subdirOf(p) ? `norn/${p.name}/${name}` : `norn/${name}`);
 const fwd = p => String(p).replace(/\\/g, '/');
 
 function git(cwd, args) {
@@ -33,7 +35,7 @@ export function lanePaths(p, name) {
   const late = s => (s ? path.resolve(expandLate(s, { lane: name })) : null);
   const worktree = late(p.lane_defaults?.worktree);
   if (!worktree) throw new LaneError(`${p.name} has no lane_defaults.worktree in its project.json: add one (e.g. "\${state}/wt/\${lane}")`);
-  return { worktree, notes: late(p.lane_defaults?.notes), branch: laneBranch(name), brief: path.join(path.resolve(p.briefs_dir || path.join(p.state, 'briefs')), `${name}.md`) };
+  return { worktree, notes: late(p.lane_defaults?.notes), branch: laneBranch(name, p), brief: path.join(path.resolve(p.briefs_dir || path.join(p.state, 'briefs')), `${name}.md`) };
 }
 
 /**

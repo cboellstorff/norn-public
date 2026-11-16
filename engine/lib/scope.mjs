@@ -35,6 +35,8 @@ export function scopeHookOf(o) {
 
 /** ROUND 2: the project switch policy.dod.scope (off | on, default off) - off = a run gets no scope part at all */
 export const scopeOn = policy => policy?.dod?.scope === 'on';
+/** scopeOn for one run: a monorepo project's run (o.subdir) is guarded unless policy.dod.scope says off */
+export const scopeOnFor = (policy, o = {}) => scopeOn(policy) || (!!o.subdir && policy?.dod?.scope !== 'off');
 
 const RULES = ['git push --force*', 'git push -f*', 'git push * --force*', 'git push * -f*', 'git push --mirror*', 'git push * --mirror*', 'gh repo edit*', 'gh repo delete*'];
 const MAIN_RULES = ['git push * main', 'git push * master', 'git push * main *', 'git push * master *', 'git push *:main*', 'git push *:master*', 'git push *refs/heads/main*', 'git push *refs/heads/master*'];
@@ -52,7 +54,9 @@ export function scopeOf(spec) {
   let text = null;
   try { text = spec.brief && spec.brief !== '-' ? fs.readFileSync(spec.brief, 'utf8') : null; } catch { text = null; }
   const free = [...(spec.addDirs || []), ...(notesDir(spec) ? [notesDir(spec)] : [])].map(norm);
-  return { worktree: norm(spec.worktree), free, scope: parseReady(text).scope, pushMain: mayPushMain(spec), shown: [spec.worktree, ...(spec.addDirs || []), ...(notesDir(spec) ? [notesDir(spec)] : [])].map(fwd) };
+  // a monorepo project's run (spec.subdir) whose brief names no Scope: stays inside the project's folder
+  const scope = parseReady(text).scope, own = scope.length ? scope : spec.subdir ? [spec.subdir] : [];
+  return { worktree: norm(spec.worktree), free, scope: own, pushMain: mayPushMain(spec), shown: [spec.worktree, ...(spec.addDirs || []), ...(notesDir(spec) ? [notesDir(spec)] : [])].map(fwd) };
 }
 
 // ---------- paths ----------

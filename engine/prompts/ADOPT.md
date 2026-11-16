@@ -7,7 +7,7 @@ Inputs
 - FACTS: the engine's scan (below). Trust it for commands, branches, files and counts. Do not re-derive what it states.
 - The repository at {{root}} (read-only), default branch {{branch}}. Read it with your file tools by absolute path under that root;
   you have no shell.
-- ANSWERS: what the owner already said in the interview (may be empty). An answer outranks what a file says.
+- ANSWERS: what the owner already said in the interview (may be empty). An answer outranks what a file says.{{focus}}
 
 Read only tracked files, in this order, and stop when you can write the draft: the README; CONTRIBUTING; the agent files FACTS
 names; the planning files FACTS names; the top 60 lines of the changelog; the first 80 lines of at most 12 design docs; the CI
