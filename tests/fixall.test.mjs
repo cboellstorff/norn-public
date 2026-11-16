@@ -81,6 +81,25 @@ test('the Slop page: Fix all (n) beside his line; the sheet: ticks, two buttons 
   assert.match(sent, /data-act="fixall-send"[^>]* disabled/);
 });
 
+test('after a Send: the sent findings are not offered again, the summary and the page say they are with the fixer', () => {
+  const g0 = view(), ids = g0.rows.filter(r => r.batch === 'instr-c16|drafts' && !r.owner_file).map(r => r.id);
+  const g = { ...g0, rows: g0.rows.map(r => (ids.includes(r.id) ? { ...r, sent: 'DEC-9' } : r)), sent: [{ id: 'DEC-9', directive: 'DIR-4', n: ids.length, open: ids.length }] };
+  const sh = fixSheet(g), s = guardSummary(g);
+  assert.ok(!sh.items.some(i => i.key === 'instr-c16|drafts'), 'the sent batch is not on the sheet');
+  assert.ok(sh.items.some(i => i.key === 'instr-c16|drafts|own'), 'the rest of the batch still is');
+  assert.equal(sh.ticked, 1); assert.equal(s.fixable, 1);
+  assert.notEqual(sh.sig, fixSheet(g0).sig, 'a send changes the sheet sig');
+  assert.throws(() => fixPick(g, { keys: ['instr-c16|drafts'], picks: {} }), /no batch/, 'a sent batch cannot be sent again');
+  const page = renderTab('slop', { ...s, limit: 40, sub: 'fix', fix: { batches: [], nb: 0, n: 0 }, parts_loading: false }, { project: 'kestrel' });
+  assert.match(page, /id="slop-sent"[^]*DEC-9 \+ DIR-4: 2 finding/);
+  assert.match(page, /Fix all \(1\)/);
+  // everything sent: no Fix all button, the line says so
+  const all = g0.rows.map(r => ({ ...r, sent: 'DEC-9' })), ga = { ...g0, rows: all, sent: [{ id: 'DEC-9', directive: 'DIR-4', n: all.length, open: all.length }] };
+  const pa = renderTab('slop', { ...guardSummary(ga), limit: 40, sub: 'fix', fix: { batches: [], nb: 0, n: 0 }, parts_loading: false }, { project: 'kestrel' });
+  assert.doesNotMatch(pa, /data-act="fixall-open"/);
+  assert.match(pa, /Nothing else to send/);
+});
+
 test('loadTab(slop) with the sheet open asks for part=sheet', async () => {
   const asked = [];
   const d = await loadTab('slop', 'kestrel', async u => { asked.push(u); return u.includes('part=sheet') ? { sheet: { items: [] } } : { sig: 'x' }; }, { sub: 'fix', fixall: {} });
@@ -117,7 +136,11 @@ test('POST /api/fixall: ONE decision + ONE directive with the ids, the picked wa
     assert.match(dir.data.text, /edits nothing/);
     assert.match(dir.data.text, /start ONE fixer run \(docs work: runner, claude-sonnet-5-5 medium\)/); assert.doesNotMatch(dir.data.text, /One fixer run/, 'the usage is said once');
     const again = await f.post('/api/fixall', body);
-    assert.deepEqual([again.status, again.data.id, again.data.directive, again.data.again], [200, dec.id, dir.id, true], 'the same open set: no second pair');
+    assert.equal(again.status, 409, 'the sheet it was drawn from changed: its findings are with the fixer now');
+    // the server remembers the send: the summary + a fresh sheet leave the sent findings out (leaving the tab no longer loses it)
+    const s2 = (await f.get('/api/guard?project=kestrel&part=summary')).data, sh2 = (await f.get('/api/guard?project=kestrel&part=sheet')).data.sheet;
+    assert.deepEqual(s2.sent.map(x => [x.id, x.directive, x.open]), [[dec.id, dir.id, n]]);
+    assert.ok(!sh2.items.some(i => keys.includes(i.key) || i.key === call.key), 'the sent batches are not offered again');
     const last = (await f.get('/api/records?project=kestrel')).data;
     assert.equal(last.decisions.length + last.directives.length, after.decisions.length + after.directives.length);
     const rec = renderTab('records', last, { project: 'kestrel' });
