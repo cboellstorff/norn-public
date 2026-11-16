@@ -1,0 +1,56 @@
+// META-CI-FIX CI-RED-ADFF31D R2 (DEC-364): a slow / timed-out pg.go() or pg.until() names what the BROWSER did in the gap - a CDP
+// trace (devtools.timeline + netlog) started with the page, summarised on the slow path only. Toys: a page script that busy-loops
+// in a named function, and a fetch the server answers late; the report must name each.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import { openPage, skipWhy } from './helpers/cdp.mjs';
+
+const PAGE = {
+  '/busy': `<!doctype html><body><script>function stallHere() { const t = Date.now(); while (Date.now() - t < 2500) { /* the stall */ } document.body.dataset.ready = 'busy'; }
+setTimeout(stallHere, 50);</script></body>`,
+  '/quick': `<!doctype html><body><script>document.body.dataset.ready = 'quick';</script></body>`,
+  '/late': `<!doctype html><body><script>fetch('/api/late-one').then(r => r.text()).then(() => { document.body.dataset.ready = 'late'; });</script></body>`,
+};
+
+async function serve() {
+  const s = http.createServer((q, r) => {
+    if (q.url === '/api/late-one') return setTimeout(() => r.end('ok'), 2500);
+    if (PAGE[q.url]) { r.setHeader('content-type', 'text/html'); return r.end(PAGE[q.url]); }
+    r.statusCode = 404; r.end();
+  });
+  await new Promise(res => s.listen(0, '127.0.0.1', res));
+  return { url: `http://127.0.0.1:${s.address().port}`, close: () => new Promise(res => { s.closeAllConnections(); s.close(res); }) };
+}
+
+test('a slow go() report carries the browser trace of the gap: a page busy-loop is named as a long renderer task with its function', { skip: skipWhy, timeout: 120000 }, async () => {
+  const srv = await serve(), pg = await openPage([800, 600]);
+  try {
+    assert.equal(await pg.go(`${srv.url}/busy`), 'busy');
+    assert.match(pg.slow ?? '', /slow go\(/, 'the step was slow, so it reported');
+    assert.match(pg.slow, /trace: renderer tasks: \d+ ms/, pg.slow);
+    const ms = Number(pg.slow.match(/trace: renderer tasks: (\d+) ms/)[1]);
+    assert.ok(ms >= 2000, `the longest renderer task covers the 2.5 s busy loop (${ms} ms)\n${pg.slow}`);
+    assert.match(pg.slow, /trace: renderer tasks: \d+ ms [^\n]*stallHere/, 'the task is named by its JS function');
+  } finally { await pg.close(); await srv.close(); }
+});
+
+test('a slow go() whose page waits on a late fetch: the trace names the request in flight, the renderer idle', { skip: skipWhy, timeout: 120000 }, async () => {
+  const srv = await serve(), pg = await openPage([800, 600]);
+  try {
+    assert.equal(await pg.go(`${srv.url}/late`), 'late');
+    assert.match(pg.slow ?? '', /slow go\(/);
+    assert.match(pg.slow, /trace: network: [^\n]*\/api\/late-one \d+ ms/, pg.slow);
+    const ms = Number(pg.slow.match(/\/api\/late-one (\d+) ms/)[1]);
+    assert.ok(ms >= 2000, `the request spans the server's 2.5 s (${ms} ms)\n${pg.slow}`);
+  } finally { await pg.close(); await srv.close(); }
+});
+
+test('an until() timeout carries the trace too; a quick go() reports nothing', { skip: skipWhy, timeout: 120000 }, async () => {
+  const srv = await serve(), pg = await openPage([800, 600]);
+  try {
+    await assert.rejects(pg.until(`(() => { const t = Date.now(); while (Date.now() - t < 1200) {} return false; })()`, 1500),
+      e => /still falsy/.test(e.message) && /trace: renderer tasks: \d+ ms/.test(e.message));
+    assert.equal(await pg.go(`${srv.url}/quick`), 'quick'); assert.equal(pg.slow, null, 'a quick step: no report, no trace');
+  } finally { await pg.close(); await srv.close(); }
+});

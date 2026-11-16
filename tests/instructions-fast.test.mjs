@@ -6,7 +6,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHook } from 'node:async_hooks';
+import wt from 'node:worker_threads';
+import { syncBuiltinESMExports } from 'node:module';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { createDashboard } from '../engine/dash/server.mjs';
 import { INS_PARTS, INS_CAPS, insSummary, insPart, contextParts } from '../engine/dash/insparts.mjs';
@@ -128,17 +129,21 @@ test('a stale view is served at once while ONE rebuild runs; the rebuild ends wi
   } finally { await f.done(); }
 });
 
-// CI-HANG-B7F6833 R2: close() ends every worker the server started - the instructions worker too, not only the account refresh
+// CI-HANG-B7F6833 R2: close() ends every worker the server started - the instructions worker too, not only the account refresh.
+// CI-RED-ADFF31D: a thread has ended at its 'exit' (the thread is joined); an async_hooks destroy comes a loop turn or more
+// later (Node's deferred destroy queue), so it is not the oracle. Every Worker the server constructs is tracked through the
+// worker_threads export (syncBuiltinESMExports: the server's live import binding sees the subclass).
 test('close() ends a running instructions worker: no worker thread is left alive after close', { timeout: 60000 }, async () => {
-  const live = new Set();
-  const hook = createHook({ init: (id, type) => { if (type === 'WORKER') live.add(id); }, destroy: id => live.delete(id) }).enable();
+  const Real = wt.Worker, started = [];
+  wt.Worker = class extends Real { constructor(...a) { super(...a); const t = { exited: false }; started.push(t); this.once('exit', () => { t.exited = true; }); } };
+  syncBuiltinESMExports();
   const f = await fixture({ dash: { insTtlMs: 60000, accountRefresh: false } });
   try {
     fs.writeFileSync(path.join(f.pa.root, 'CLAUDE.md'), '# Rules\n');
     assert.equal((await f.get('/api/instructions?project=kestrel')).data.pending, true, 'a scan is running');
-    assert.ok(live.size >= 1, 'the scan runs in a worker thread');
+    assert.ok(started.length >= 1, 'the scan runs in a worker thread');
     await f.app.close();
-    await new Promise(r => setImmediate(r));
-    assert.equal(live.size, 0, `${live.size} worker thread(s) still alive after close()`);
-  } finally { hook.disable(); await f.done(); }
+    const alive = started.filter(t => !t.exited).length;
+    assert.equal(alive, 0, `${alive} worker thread(s) still alive after close()`);
+  } finally { wt.Worker = Real; syncBuiltinESMExports(); await f.done(); }
 });
