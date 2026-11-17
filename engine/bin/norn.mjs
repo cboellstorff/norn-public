@@ -14,7 +14,7 @@ import { ConfigError, loadProject, loadMachine, metaRoot, expandLate, MOVED_SLOT
 import { loadPlan, formatPlan } from '../lib/plan.mjs';
 import { instructionsView, formatInstructions, formatSuggest, paragraphs, applySuggestion, discover } from '../lib/instructions.mjs';
 import { auditScope, auditPrompt, auditStamp, writeStamp, auditsDir, auditsView, AUDIT_MODEL, AUDIT_EFFORT } from '../lib/audit.mjs';
-import { FIX_LANE, fixBatch, fixPlan, fixerBrief, fixerDir, findingsFile, readRunBrief } from '../lib/fixer.mjs';
+import { FIX_LANE, fixBatch, fixPlan, fixerBrief, fixerPrompt, fixerDir, findingsFile, readRunBrief } from '../lib/fixer.mjs';
 import { openCards } from '../lib/rules.mjs';
 import os from 'node:os';
 import { readyGate } from '../lib/dod.mjs';
@@ -1682,7 +1682,7 @@ function fixCmd(argv, env, out, err) {
     fs.mkdirSync(fixerDir(state), { recursive: true });
     fs.writeFileSync(brief, text);
     const o = runSpec({ executor: pick.executor, agent: pick.agent, model: pick.model, effort: pick.effort, lane: FIX_LANE, stage: 'fixer', class: 'docs', brief, worktree: project.root, notes, machine: flags.machine, budget: flags.budget, as: flags.as }, env, w);
-    const r = startRun({ ...o, kind: 'audit', readonly: true, promptText: text, ...(flags.queue ? { queue: true } : {}) });
+    const r = startRun({ ...o, kind: 'audit', readonly: true, promptText: fixerPrompt(brief), ...(flags.queue ? { queue: true } : {}) });
     const msg = { run: r.run, queued: !!r.queued, directive: id, batch: rows.length, left: plan.left.length - rows.length, brief: brief.replace(/\\/g, '/') };
     out(flags.json ? JSON.stringify(msg) : `${r.queued ? 'QUEUED' : 'STARTED'} ${r.run} fixer of ${id}: ${rows.length} finding(s), read-only, docs class (${[o.executor, o.agent, o.model, o.effort].filter(Boolean).join(' ')}); ${msg.left} left after it; answer -> ${notes.replace(/\\/g, '/')}`);
     return 0;

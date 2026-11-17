@@ -60,8 +60,13 @@ const linesNow = (text, line, pad = 4) => {
   const ls = plain(text)?.replace(/\n$/, '').split('\n');
   if (!ls || !line) return null;
   const a = Math.max(1, line - pad), b = Math.min(ls.length, line + pad);
-  return a > b ? null : ls.slice(a - 1, b).map((l, i) => `    ${a + i}| ${l}`).join('\n');
+  return a > b ? null : ls.slice(a - 1, b).map((l, i) => `    ${a + i}| ${cut(l)}`).join('\n');
 };
+// a long line is cut (memory files hold 2000-char lines: 40 findings x 9 whole lines made a 329 kB brief) and says so
+const LINE_MAX = 300;
+const cut = l => (l.length > LINE_MAX ? `${l.slice(0, LINE_MAX)}… [cut: ${l.length - LINE_MAX} more chars; read the whole line in the file before you quote it]` : l);
+/** the fixer run's prompt: a pointer to its brief file (a Windows command line holds ~32k chars; the brief can be far longer) */
+export const fixerPrompt = brief => `Read ${fwd(brief)} (your brief: the findings, their lines now and the answer format) and do exactly that. You are READ-ONLY; your FINAL message is the answer.`;
 
 /** the generated brief of one fixer run: the findings (id, file:line, fix sentence, patch, picked way, the exact lines now) and the answer format */
 export function fixerBrief({ project, dir, dec, rows, picks = [], root = '', readFile = readOrNull }) {
@@ -190,6 +195,12 @@ export function fixCards(items, { batch = 40, readNotes = readText, readBrief = 
   }
   return out.sort((a, b) => String(b.created).localeCompare(String(a.created)));
 }
+
+/** a verdict's ids: { ids (resolved by it), open (back to the rest: a later batch) }; a failed card resolves nothing */
+export const verdictIds = card => {
+  const open = card.state === 'failed' ? [...card.ids] : card.open || [];
+  return { ids: card.ids.filter(x => !open.includes(x)), open };
+};
 
 /** the text of a verdict's directive (the audit accept path: the check-in applies the hunks; Norn edits nothing), or null */
 export function verdictText(card, { choice, skip = [], close = null }) {

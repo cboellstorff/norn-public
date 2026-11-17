@@ -55,7 +55,7 @@ import { docsList as docsListOf } from './docparts.mjs';
 import { paragraphs } from '../lib/instructions.mjs';
 import { openCardsAsync } from '../lib/rules.mjs';
 import { auditsView, acceptText, auditFiles } from '../lib/audit.mjs';
-import { keepFindings, fixPlan, fixBatch, runsFor, fixCards, verdictText, readRunBrief, FIX_LANE } from '../lib/fixer.mjs';
+import { keepFindings, fixPlan, fixBatch, runsFor, fixCards, verdictText, verdictIds, readRunBrief, FIX_LANE } from '../lib/fixer.mjs';
 import { paraMarks } from '../lib/readev.mjs';
 import { testsView, testsFiles } from '../lib/testscli.mjs';
 import { guardChips } from '../lib/guard.mjs';
@@ -1226,7 +1226,7 @@ data: ${JSON.stringify(l)}
       if (data.choice === 'apply' && c.state === 'failed') throw fail(409, 'This run drafted no hunk: there is nothing to apply.');
       const skip = (Array.isArray(data.skip) ? data.skip.map(String) : []).filter(x => c.files.some(f => f.file === x));
       const kept = c.files.filter(f => !skip.includes(f.file)).reduce((n, f) => n + f.n, 0), choice = data.choice === 'apply' && kept ? 'apply' : 'discard';
-      const d = items[c.directive], pl = fixPlan(d, items, { batch, readBrief: readRunBrief }), open = c.open || [], took = c.ids.filter(x => !open.includes(x)), done = new Set([...pl.resolved, ...took]);
+      const d = items[c.directive], pl = fixPlan(d, items, { batch, readBrief: readRunBrief }), { ids: took, open } = verdictIds(c), done = new Set([...pl.resolved, ...took]);
       const closes = d.state === 'active' && (d.data.findings || []).every(x => done.has(x));
       const r = await rec(p, { kind: 'decision', ev: 'create', by: 'dashboard', data: { lane: 'fixall-result', directive: c.directive, run: c.run, ids: took, ...(open.length ? { open } : {}), choice, skipped_files: skip,
         question: `Fixer result ${c.run} (${c.directive}): ${c.n} hunk(s) in ${c.files.length} file(s)`, why: choice === 'apply' ? `The owner applies ${kept} hunk(s)${skip.length ? `; skipped: ${skip.join(', ')}` : ''}.` : 'The owner discards the drafts: nothing changes.' } });

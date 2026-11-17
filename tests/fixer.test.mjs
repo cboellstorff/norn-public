@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fixPlan, fixerBrief, fixResult, briefIds, briefRows, fixBatch, runsFor } from '../engine/lib/fixer.mjs';
+import { fixPlan, fixerBrief, fixerPrompt, fixResult, briefIds, briefRows, fixBatch, runsFor } from '../engine/lib/fixer.mjs';
 import { withDefaults } from '../engine/lib/policy.mjs';
 import { main } from '../engine/bin/norn.mjs';
 
@@ -88,7 +88,7 @@ test('rec show: a long id list prints as its first ids + a count; --full prints 
 });
 
 // ---- the start by code: the findings file the dash keeps, the tick's spawn, `norn fix start`; the result card ----
-import { keepFindings, findingsFile, tickFix, fixCards, verdictText } from '../engine/lib/fixer.mjs';
+import { keepFindings, findingsFile, tickFix, fixCards, verdictText, verdictIds } from '../engine/lib/fixer.mjs';
 import { record } from '../engine/lib/records.mjs';
 
 const tmp = p => fs.mkdtempSync(path.join(os.tmpdir(), p));
@@ -202,6 +202,9 @@ test('one hunk applies, one does not: the card counts 1, says why for the other,
   // the verdict records the open id: the plan gives it back to the rest (a later batch)
   w.items['DEC-3'] = { id: 'DEC-3', kind: 'decision', state: 'in-force', created: '2026-11-17T08:00:00Z', data: { lane: 'fixall-result', directive: 'DIR-9', run: 'RUN-1', ids: ['I-c16-000', 'I-c16-002'], open: ['I-c16-001'], choice: 'apply' } };
   assert.deepEqual(fixPlan(w.items['DIR-9'], w.items, { readBrief: () => brief }).left, ['I-c16-001']);
+  assert.deepEqual(verdictIds(c), { ids: ['I-c16-000', 'I-c16-002'], open: ['I-c16-001'] });
+  // a failed card (no hunk parses or applies): Discard resolves nothing, every finding stays open
+  assert.deepEqual(verdictIds({ ...c, state: 'failed' }), { ids: [], open: ['I-c16-000', 'I-c16-001', 'I-c16-002'] });
 });
 
 test('hunkMisfit says why a hunk does not apply: wrong line, wrong counts, a line not as quoted, no file', () => {
@@ -221,6 +224,13 @@ test('the brief quotes the exact lines now around each finding, its path relativ
   assert.doesNotMatch(b, / {4}1\| | {4}11\| /);
   assert.match(b, /EXACT CONTEXT/);
   assert.deepEqual(briefRows(b), [{ id: 'I-1', file: 'docs/CLAUDE.md', line: 6 }]);
+  // a very long line is cut and says so (the real batch: 40 findings in memory files with 2000-char lines made a 329 kB brief)
+  const long = 'w'.repeat(2000), c = fixerBrief({ project: 'k', dir: 'DIR-9', dec: 'DEC-1', rows: [{ id: 'I-2', path: 'C:/r/M.md', line: 1, why: 'w' }], readFile: () => long });
+  assert.match(c, new RegExp(`    1\\| w{300}… \\[cut: 1700 more chars; read the whole line in the file before you quote it\\]`));
+  assert.ok(c.length < 2500, 'the brief stays small');
+  // the run's prompt is a pointer to the brief file, never the brief itself (a Windows command line holds ~32k chars)
+  const pr = fixerPrompt('C:\\s\\fixer\\DIR-9-1.brief.md');
+  assert.match(pr, /^Read C:\/s\/fixer\/DIR-9-1\.brief\.md /); assert.ok(pr.length < 400);
 });
 
 // ---- the dash: Send -> the findings file + "starting"; a fixer run's end -> ONE result card in the Inbox; Apply (a skipped file) = ONE
