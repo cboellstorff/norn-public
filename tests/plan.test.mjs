@@ -143,7 +143,7 @@ test('norn plan: the text and --json from a state dir (read-only), usage errors 
   assert.match(empty.stdout, /^Plan - demo   \(times in UTC\)\n\nUp next\n  nothing is waiting to start\n\nChains\n  no queued run waits for another\n\nLanding next\n  nothing is heading to main/);
   record(state, { kind: 'run', ev: 'queue', by: 'launcher', data: { kind: 'worker', executor: 'fake', lane: 'adopt', stage: 'A1', budget_min: 30, not_before: '2099-01-01T00:00:00Z' } });
   fs.mkdirSync(path.dirname(queueSpecPath(state, 'RUN-1')), { recursive: true });
-  fs.writeFileSync(queueSpecPath(state, 'RUN-1'), JSON.stringify({ state, executor: 'fake', lane: 'adopt', stage: 'A1', worktree: t, budget: {} }));
+  fs.writeFileSync(queueSpecPath(state, 'RUN-1'), JSON.stringify({ state, executor: 'fake', lane: 'adopt', stage: 'A1', worktree: t, budget_file: path.join(t, 'budget.json') }));
   const before = fs.readFileSync(path.join(state, 'runs.jsonl'), 'utf8');
   const txt = meta('plan', '--state', state);
   assert.equal(txt.status, 0, txt.stderr);

@@ -132,7 +132,7 @@ export function argSummary(input) {
   return e ? oneLine(typeof e[1] === 'string' ? e[1] : `${e[0]} ${JSON.stringify(e[1])}`, 80) : '';
 }
 
-/** A plain-text log line -> a text event (a `## DONE` line too: a run's outcome is its result, gap #3); blank lines -> nothing. */
+/** A plain-text log line -> a text event; blank lines -> nothing. */
 export function logLine(text) {
   const t = String(text).trim();
   if (!t) return [];
