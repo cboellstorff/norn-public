@@ -42,7 +42,7 @@ test('C2 homeEvents: the chat thread, check-in ledger lines, run starts / ends, 
   ];
   const runs = [
     { id: 'RUN-5', kind: 'run', created: T(1), state: 'exited', data: { kind: 'worker', lane: 'gen', stage: 'R1', executor: 'claude', model: 'claude-opus-5-5', effort: 'high' },
-      history: [{ ev: 'start', ts: T(1) }, { ev: 'end', ts: T(9) }], end: { outcome: 'done', marker_line: `## DONE shots ${SHOT}` } },
+      history: [{ ev: 'start', ts: T(1) }, { ev: 'end', ts: T(9) }], end: { outcome: 'done', summary: `shots ${SHOT}` } },
     { id: 'RUN-6', kind: 'run', created: T(2), state: 'running', data: { kind: 'checkin', lane: null }, history: [{ ev: 'start', ts: T(2) }] },
     { id: 'RUN-7', kind: 'run', created: T(3), state: 'running', data: { kind: 'worker', role: 'helper', parent: 'RUN-5' }, history: [{ ev: 'start', ts: T(3) }] },
     { id: 'RUN-8', kind: 'run', created: T(4), state: 'exited', data: { kind: 'worker', lane: 'mq', stage: 'MERGE' }, history: [{ ev: 'start', ts: T(4) }, { ev: 'end', ts: T(5) }], end: { outcome: 'done' } },

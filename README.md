@@ -21,9 +21,9 @@ You answer only the questions it cannot decide.
 
 Each agent role has three context limits: start no new step, hand off, and hard stop (90k, 110k and 150k tokens by default for
 most roles; set per role in Settings). Norn measures a run's context after every tool call and tells the agent when it
-crosses a limit. At the hand-off limit the agent writes its notes and ends with `## HANDOFF`; at the hard stop Norn ends the run
-itself. Either way Norn resumes the work in a fresh session that starts from the notes and the records, not from the old
-conversation. Queued steps start as soon as the steps they wait for land, so the work continues while you are away.
+crosses a limit. At the hand-off limit the agent writes its hand-off and ends with `norn done --outcome handoff`; at the hard stop Norn ends the
+run itself and writes the hand-off. Either way Norn resumes the work in a fresh session that starts from the hand-off and the
+records, not from the old conversation. Queued steps start as soon as the steps they wait for land, so the work continues while you are away.
 
 ### Fewer tokens spent
 
@@ -156,9 +156,9 @@ test, which runs on all three systems.
 ## How it works
 
 - **Lanes and runs.** A lane is one line of work with its own worktree and branch. `norn run --executor <name> --lane L --brief F`
-  starts an agent in it. Norn takes the lane's lock, checks the limits and records the run. A supervisor process then reads the
-  result from the last line of the run's notes: `## DONE`, `## STOPPED: <why>` or `## HANDOFF`. A hand-off resumes the work in a
-  fresh session. `--queue` and `--after` queue a run behind others, and `norn stop RUN-n` stops one. `norn executors --caps`
+  starts an agent in it. Norn takes the lane's lock, checks the limits and records the run. The agent ends with `norn done`, which writes the
+  run's own result: done, stopped (with why) or handoff (with its hand-off text); a run that writes none ends no-result. A
+  hand-off resumes the work in a fresh session that reads the hand-off. `--queue` and `--after` queue a run behind others, and `norn stop RUN-n` stops one. `norn executors --caps`
   lists the executors.
 - **Check-ins.** A scheduled `norn tick` runs one short agent turn after each event and on a timer. It reviews finished runs,
   queues merges, starts the next steps and asks you what only you can decide.
@@ -174,7 +174,7 @@ test, which runs on all three systems.
 Each part is set per project in Settings and is off by default.
 
 - **Ready**: `norn run` refuses (or warns about) a brief without the lines `Scope:` (the paths the run may change), `Tests:` (test
-  files or a command) and `Done:` (the end marker).
+  files or a command) and `Done:` (what done means).
 - **Done**: when a run says DONE, Norn checks that the tree is clean and the changes are inside Scope, then runs the Tests and the
   merge gate. A failure sends the run back once with the evidence; a second failure stops it.
 - **Scope guard**: while a Claude run works, it cannot edit files outside its worktree and Scope, force-push, push to main (merge

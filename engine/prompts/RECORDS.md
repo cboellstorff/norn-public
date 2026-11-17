@@ -27,7 +27,7 @@ writer's RUN id from env `META_RUN_ID` (null for the owner). State = fold of eve
 - lane `L:<name>`: worktree, notes, branch, brief_dir, stage, round_estimate, executor_hint. park: {why, q}. done / archive.
 - run `RUN-n` (runs.jsonl): kind (worker | codex | cli | provider | checkin | talk | interactive | fake), project, lane, stage, round,
   executor, agent, model, effort, worktree, brief, notes, log, final, session_id, transcript, pid, supervisor_pid, budget_min,
-  resume_of. end: {exit, outcome done|stopped|handoff|no-marker|crash, outcome_source result (the run's `norn done` file)|marker (its NOTES)|exit|none, marker_line, usage, tokens}. review: {by, refs}.
+  resume_of. end: {exit, outcome done|stopped|handoff|no-result|crash, outcome_source result (its `norn done`)|exit|none, why, summary, handoff (HANDOFF.md), usage, tokens}. review: {by, refs}.
   A queued / started run may carry epic (EP-n) and priority (P0-P3; default: its epic's) - META-GTP-DAG.
 - epic `EP-n` (epics.jsonl, META-GTP-DAG): title, priority P0-P3, members [RUN-n | DLV-n], integration_branch optional.
   add / remove: {members}. close: {why}. DONE is derived (every member run ended DONE via its successors, every member DLV merged).

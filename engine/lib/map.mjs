@@ -23,7 +23,7 @@ export function runWord(r) {
   if (r.state === 'lost') return ['lost', 'lost'];
   if (r.state === 'killed') return ['bad', 'killed'];
   const o = r.end?.outcome;
-  return { done: ['done', 'DONE'], stopped: ['stopped', 'STOPPED'], handoff: ['handoff', 'HANDOFF'], crash: ['bad', 'crash'] }[o] ?? ['no-marker', o ?? 'no-marker'];
+  return { done: ['done', 'DONE'], stopped: ['stopped', 'STOPPED'], handoff: ['handoff', 'HANDOFF'], crash: ['bad', 'crash'] }[o] ?? ['no-result', o ?? 'no-result'];
 }
 const clip = (s, n) => { const t = String(s ?? ''); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
 

@@ -51,16 +51,16 @@ test('adopt without run id (Codex: no lane json) records a legacy RUN start by l
   assert.equal(it.state, 'running'); assert.equal(it.data.kind, 'codex'); assert.equal(it.data.legacy, true); assert.equal(it.history[0].by, 'launcher');
 });
 
-test('legacyOutcome: claude exit 0 + NOTES grammar, exit != 0 -> crash; codex = final file marker', () => {
+test('legacyOutcome: an old-launcher worker writes no result (gap #3): exit 0 -> no-result, exit != 0 -> crash; NOTES are never read', () => {
   const d = tmp(), f = (n, t) => { fs.writeFileSync(path.join(d, n), t); return path.join(d, n); };
   const notes = f('NOTES.md', '## S1\nx\n## HANDOFF\nnext\n');
-  assert.equal(legacyOutcome({ executor: 'claude', notes, lane_file: f('a.json', '{"exit":0}') }).outcome, 'handoff');
-  assert.deepEqual(legacyOutcome({ executor: 'claude', notes, lane_file: f('b.json', '﻿{"exit":1}') }), { exit: 1, outcome: 'crash', marker_line: '## HANDOFF' });
-  assert.equal(legacyOutcome({ executor: 'codex-sol', final: f('fin.md', 'done\n## DONE\n') }).outcome, 'done');
+  assert.deepEqual(legacyOutcome({ executor: 'claude', notes, lane_file: f('a.json', '{"exit":0}') }), { exit: 0, outcome: 'no-result' });
+  assert.deepEqual(legacyOutcome({ executor: 'claude', notes, lane_file: f('b.json', '﻿{"exit":1}') }), { exit: 1, outcome: 'crash' });
+  assert.deepEqual(legacyOutcome({ executor: 'codex-sol', final: f('fin.md', 'done\n## DONE\n') }), { exit: null, outcome: 'no-result' });
   assert.equal(legacyOutcome({ executor: 'codex-sol', final: path.join(d, 'none.md') }).outcome, 'crash');
 });
 
-test('watch: heartbeats while alive, then end (outcome from NOTES) + tick spawned + lock freed; no resume event', async () => {
+test('watch: heartbeats while alive, then end (no-result: an old-launcher worker writes no result) + tick spawned + lock freed; no resume event', async () => {
   const s = tmp(), d = tmp();
   const notes = path.join(d, 'NOTES.md'); fs.writeFileSync(notes, '## S9\n## DONE\n');
   const laneFile = path.join(d, 'gen.json'); fs.writeFileSync(laneFile, JSON.stringify({ exit: null }));
@@ -78,7 +78,7 @@ test('watch: heartbeats while alive, then end (outcome from NOTES) + tick spawne
   await waitFor(() => { try { return JSON.parse(fs.readFileSync(hbPath(s, run), 'utf8')).supervisor_pid === process.pid; } catch { return false; } });   // a watcher beat
   child.stdin.end();
   const outcome = await watching;
-  assert.equal(outcome, 'done');
+  assert.equal(outcome, 'no-result');
   const it = loadState(s).items[run];
   assert.equal(it.state, 'exited'); assert.equal(it.history.at(-1).data.exit, 0); assert.equal(it.resume, undefined);
   assert.equal(fs.existsSync(hbPath(s, run)), false);

@@ -19,17 +19,17 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
   exit 5 (accept it, never work around it). To tell the holder something: `META mail send --to role:controller --subject S --body B`.
 
 ## 2. For each run `META runs --unreviewed` lists (exited / lost / killed; any executor)
-- The run's outcome is already recorded; read its end block for the content: the NOTES section under the last `## ` marker
-  (the run's notes path) / the Codex final. Do not read code, diffs or logs.
-- `## DONE`: the stage is finished. Next stage = the next item in the lane's plan / brief "next" line.
-- `## STOPPED: ...`: rule it when the answer follows from cited data, the engine/industry standard or an earlier owner ruling;
+- The run's outcome is already recorded (its `norn done` result: end.outcome, end.why, end.summary, end.handoff = its HANDOFF.md);
+  for the content read the run's notes (its log) / the Codex final. Do not read code, diffs or logs.
+- done: the stage is finished. Next stage = the next item in the lane's plan / brief "next" line.
+- stopped (end.why): rule it when the answer follows from cited data, the engine/industry standard or an earlier owner ruling;
   record it: `META rec add decision --lane L --question Q --choice C --why W --cost C --source S`. If it is owner-only, record
   `META rec add question --lane L --title T --body-file F --option "a|..|cost" --recommend "<key>|<why>" --class <i-v> --blocks L`
   (the lane is parked by it). Never block, never wait for an answer. A taste / owner pick gets `--owner-only`: no check-in rules it.
-- `## HANDOFF`: the next stage is the HANDOFF's "exact next step" (resume brief = the same brief + "resume from HANDOFF").
+- handoff: the next stage is the hand-off's "exact next step" (end.handoff; resume brief = the same brief + "resume from <end.handoff>").
   The supervisor auto-resumes a clean HANDOFF itself up to the project's auto_resume_max; a HANDOFF listed here was refused or
   reached the max (its run history has the `resume` verdict).
-- crash / no-marker / lost with end `dirty` files or `external_term` (NORN-WATCH S5): never start the stage over. Resume brief =
+- crash / no-result / lost with end `dirty` files or `external_term` (NORN-WATCH S5): never start the stage over. Resume brief =
   the same brief + "resume from the worktree's uncommitted state" (the worker reads `git status` / `git diff` first and keeps
   what is there). A run that left `reap_error` or a `norn doctor` stray line: name it in the ledger.
 - Then: `META runs review RUN-n --refs <DEC/Q/RUN ids>`.
@@ -99,8 +99,8 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
 - Defaults from BUDGET: claude_model / claude_effort, codex_astra_effort, codex_sol_effort; `lanes[<lane>].effort` overrides.
   checkin_model / checkin_effort select the next check-in itself; they are not worker settings.
 - Write the next stage's brief to {{briefs_dir}}/task-<LANE>-<STAGE>-brief.md (lean, line-ranged reading, cites the rules,
-  stop rule, time budget, NOTES end marker `## DONE` / `## STOPPED: <why>` / `## HANDOFF` + the matching `norn done`) and its three Ready lines (DoR, policy.dod.ready):
-  `Scope: <paths / globs the run may change>`, `Tests: <test files, or a command in backticks>`, `Done: <the end marker>`. At the run end Norn
+  stop rule, time budget, the end: `norn done` / `--outcome stopped --why` / `--outcome handoff --handoff-file`) and its three Ready lines (DoR, policy.dod.ready):
+  `Scope: <paths / globs the run may change>`, `Tests: <test files, or a command in backticks>`, `Done: <what done means>`. At the run end Norn
   runs those Tests + the merge gate itself and checks the tree is clean and inside Scope: only that green record makes a DONE count.
 - Launch: `META run --lane <l> --stage <S> --round <n> --executor claude|codex-sol|codex-astra [--agent <a>] --model <m>
   --effort <e> --brief <f> --budget-min <n> [--item RM-n]` (<a> = one of the agents installed here: {{agents}}; no other name - leave --agent out for the default) (refusals: exit 3 writer / 4 cap / 5 held lane - accept, never force; exit 6 = the brief lacks its Ready lines - add them, launch again). `--item RM-n`

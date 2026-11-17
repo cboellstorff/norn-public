@@ -50,14 +50,14 @@
 :root.norn .chip.running::before, :root.norn .chip.active::before, :root.norn .chip.done::before, :root.norn .chip.applied::before,
 :root.norn .chip.in-force::before, :root.norn .chip.ok::before, :root.norn .chip.handoff::before, :root.norn .chip.answered::before,
 :root.norn .chip.warn::before, :root.norn .chip.parked::before, :root.norn .chip.stopped::before, :root.norn .chip.lost::before,
-:root.norn .chip.no-marker::before, :root.norn .chip.bad::before, :root.norn .chip.overruled::before, :root.norn .chip.open::before,
+:root.norn .chip.no-result::before, :root.norn .chip.bad::before, :root.norn .chip.overruled::before, :root.norn .chip.open::before,
 :root.norn .chip.needs::before, :root.norn .chip.superseded::before, :root.norn .chip.archived::before, :root.norn .chip.revoked::before,
 :root.norn .chip.withdrawn::before, :root.norn .chip.idle::before { display: inline-block; }
 :root.norn .chip.running::before { background-image: var(--tk-running); } :root.norn .chip.active::before { background-image: var(--tk-idle); }
 :root.norn .chip.done::before, :root.norn .chip.applied::before, :root.norn .chip.in-force::before, :root.norn .chip.ok::before { background-image: var(--tk-done); }
 :root.norn .chip.handoff::before, :root.norn .chip.answered::before, :root.norn .chip.warn::before { background-image: var(--tk-handoff); }
 :root.norn .chip.parked::before { background-image: var(--tk-parked); }
-:root.norn .chip.stopped::before, :root.norn .chip.lost::before, :root.norn .chip.no-marker::before, :root.norn .chip.bad::before,
+:root.norn .chip.stopped::before, :root.norn .chip.lost::before, :root.norn .chip.no-result::before, :root.norn .chip.bad::before,
 :root.norn .chip.overruled::before { background-image: var(--tk-stopped); }
 :root.norn .chip.open::before, :root.norn .chip.needs::before { background-image: var(--tk-needs); }
 :root.norn .chip.superseded::before, :root.norn .chip.archived::before, :root.norn .chip.revoked::before, :root.norn .chip.withdrawn::before,

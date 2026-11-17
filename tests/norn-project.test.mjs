@@ -116,13 +116,13 @@ test('MERGE brief template: filled from the lane + the project policy merge.shot
   const o = { lane: 'meta-watch', branch: 'feat/norn-watch', worktree: '/h/dev/sdd-codex-watch', notes: '/h/dev/sdd-codex-reviews/meta-watch/MERGE-NOTES.md', ui: true };
   const after = renderMergeBrief(p, o);
   assert.doesNotMatch(after, /\{\{/);
-  for (const s of ['feat/norn-watch', '/h/dev/sdd-codex-watch', 'git -C /h/dev/sdd-codex merge --no-ff', 'norn.mjs" smoke', 'revert -m 1 HEAD', '## DONE', 'MERGE-NOTES.md']) assert.ok(after.includes(s), s);
+  for (const s of ['feat/norn-watch', '/h/dev/sdd-codex-watch', 'git -C /h/dev/sdd-codex merge --no-ff', 'norn.mjs" smoke', 'revert -m 1 HEAD', 'norn.mjs" done', 'MERGE-NOTES.md']) assert.ok(after.includes(s), s);
   assert.match(after, /SHOTS AFTER/);
   // 11-09 VISUAL-B merge: the notice named a local folder (useless on a phone) - the shots ride as ntfy attachments
   assert.match(after, /up to 3 key shots/); assert.doesNotMatch(after, /shot paths in --body/);
   assert.doesNotMatch(after, /SHOTS BEFORE/);
   const before = renderMergeBrief({ ...p, policy: { merge: { shots: 'before' } } }, o);
-  assert.match(before, /SHOTS BEFORE/); assert.match(before, /## STOPPED: shots sent before the merge/);
+  assert.match(before, /SHOTS BEFORE/); assert.match(before, /done --outcome stopped --why "shots sent before the merge/);
   const noUi = renderMergeBrief(p, { ...o, ui: false });
   assert.match(noUi, /no dash \/ UI change: no screenshots/);
   assert.throws(() => renderMergeBrief({ ...p, policy: { merge: { shots: 'sometimes' } } }, o), /merge\.shots must be one of after, before/);
@@ -163,7 +163,7 @@ test('MERGE briefs: policy.merge.suite full (default: the ci-suite step, as befo
     assert.match(skip, k === 'batch' ? /--body "<tip>, gate skipped \(policy merge\.suite = skip\) \+ smoke green/ : /--body "<sha>, suite skipped \(policy merge\.suite = skip\)/, `${k}: the notify body says which ran`);
     if (k !== 'batch') {
       assert.match(skip, /conflicts?.*only the test files of the conflicted areas/s);
-      assert.match(skip, /a red there = .*## STOPPED: red in a conflicted area/s);
+      assert.match(skip, /a red there = .*--outcome stopped --why "red in a conflicted area/s);
       assert.match(skip, /clean .* runs no test/);
       assert.match(skip, /Write NOTES: merge sha, suite skipped \(policy merge\.suite = skip\)/);
     }

@@ -5,10 +5,10 @@ import { P } from './pixel.mjs';
 import { knotCands } from './live.mjs';
 export { weave } from './live.mjs';
 
-export const ST = { running: 'thread', handoff: 'aqua', stopped: 'weird', bad: 'rune', done: 'leaf', 'no-marker': 'frost', idle: 'mist' };
+export const ST = { running: 'thread', handoff: 'aqua', stopped: 'weird', bad: 'rune', done: 'leaf', 'no-result': 'frost', idle: 'mist' };
 export const stCol = cls => P[ST[cls] || 'mist'];
 const LOUD = new Set(['handoff', 'stopped', 'bad']);   // finished but worth a label (A2 RANK 1)
-const WORD = { running: 'running', handoff: 'HANDOFF', stopped: 'STOPPED', bad: 'bad', done: 'DONE', 'no-marker': 'no marker', parked: 'parked', idle: 'idle' };
+const WORD = { running: 'running', handoff: 'HANDOFF', stopped: 'STOPPED', bad: 'bad', done: 'DONE', 'no-result': 'no result', parked: 'parked', idle: 'idle' };
 
 export function knotMat(cls, faded, { flat = false } = {}) {
   const c = new THREE.Color(stCol(cls));

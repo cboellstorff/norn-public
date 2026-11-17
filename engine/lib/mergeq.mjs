@@ -319,7 +319,7 @@ function fixAsk(stateDir, rec, res, { cfg, git }) {
     `2. Run the gate \`${gateText(cfg.gate)}\` and reproduce the red; fix its CAUSE in the branch, red-first (never loosen a test, never a skip by name).`,
     `   ${k > 1 ? `The red may be an interaction with ${rec.members.slice(0, k - 1).map(m => m.branch).join(', ')} (merged before it in the batch): merge those too to reproduce.` : 'It is red on the target with this branch alone.'}`,
     `3. Commit, push \`${cfg.remote} ${c.branch}\` - no force-push. Do not merge to ${rec.into}; the merge queue re-batches the new tip.`,
-    `NOTES ${notes}: the red, its cause, the fix, the gate result; last line \`## DONE\`, \`## STOPPED: <why>\` or \`## HANDOFF\`.`, ''].join('\n'));
+    `NOTES ${notes}: the red, its cause, the fix, the gate result. End with \`norn done\` (or \`--outcome stopped --why "<why>"\` / \`--outcome handoff --handoff-file F\`).`, ''].join('\n'));
   return { id: c.id, branch: c.branch, sha: c.sha, brief, notes, worktree: wtPath,
     run: ['run', '--executor', 'claude', '--lane', c.lane || c.branch.split('/').pop(), '--stage', 'fix-mq', '--brief', brief, '--notes', notes, '--worktree', wtPath || '<the lane worktree>', '--queue'] };
 }

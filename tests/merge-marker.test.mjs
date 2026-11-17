@@ -1,5 +1,5 @@
 // META-MERGE-MARKER R1 (DEC-275 / DEC-285 / DEC-287): a MERGE run launched without --notes read the lane default NOTES while its
-// worker wrote `## DONE` into the file its merge brief names (merge-brief --notes) -> no-marker although the merge landed.
+// worker wrote `## DONE` into the file its merge brief names (merge-brief --notes) -> no-marker although the merge landed (the outcome is the run result now: gap #3).
 // The ONE home of a MERGE brief's notes path is the brief (its meta-merge marker). FAKE executor only, temp dirs only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -38,14 +38,15 @@ test('merge-brief records its notes path in the meta-merge marker', () => {
   assert.equal(briefMarker(fs.readFileSync(d.brief, 'utf8')).notes, fwd(d.x));
 });
 
-test('norn run --stage MERGE without --notes: the run reads the notes file its brief names -> the worker\'s ## DONE is seen', async () => {
+test('norn run --stage MERGE without --notes: the run records the notes file its brief names (its log); its outcome is its result', async () => {
   const d = sandbox();
   const r = d.run();
   assert.equal(r.code, 0, r.err);
   const id = r.out.match(/RUN-\d+/)[0];
   await runEnded(d.state, id);
   assert.equal(fwd(d.item(id).data.notes), fwd(d.x), 'the run\'s notes = the brief\'s');
-  assert.equal(d.item(id).end.outcome, 'done');
+  assert.match(fs.readFileSync(d.x, 'utf8'), /work: done/, 'the worker logged there');
+  assert.equal(d.item(id).end.outcome, 'done'); assert.equal(d.item(id).end.outcome_source, 'result');
 });
 
 test('norn run --stage MERGE --notes Y with a brief naming X refuses (exit 2): one home for the path', async () => {

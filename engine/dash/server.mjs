@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash, randomBytes } from 'node:crypto';
+import { resultPath } from '../lib/result.mjs';
 import { spawn, execFile } from 'node:child_process';
 import { createSessions } from './sessions.mjs';
 import { createFeeds, decodeCursor } from './feed.mjs';
@@ -716,19 +717,12 @@ export function createDashboard(o) {
     }
     return c.val ? { ...c.val, age_min: Math.max(0, Math.round((Date.now() - Date.parse(c.val.at)) / 60000)) } : null;
   }
-  // the run's NOTES end marker - only one written since this run started: a lane's notes file outlives its runs, so a resumed
-  // run would otherwise wear the previous run's `## HANDOFF` chip while it works (META-VISUAL-B S1 feed-header bug)
-  async function notesMarker(f, since) {   // META-DASH-ASYNC R1: fs.promises (the head is built every feed poll)
-    if (!f) return null;
+  // the run's own result (gap #3: `norn done`, <state>/results/RUN-n/result.json) - its outcome chip (DONE / STOPPED / HANDOFF) once
+  // the worker wrote it; never a NOTES line (a lane's notes outlive its runs and are a log, not a control channel)
+  async function resultMarker(state, run) {   // META-DASH-ASYNC R1: fs.promises (the head is built every feed poll)
     try {
-      const fh = await fs.promises.open(f, 'r');
-      try {
-        const fst = await fh.stat();
-        if (Number.isFinite(since) && fst.mtimeMs < since) return null;
-        const size = fst.size, n = Math.min(size, 4096), b = Buffer.alloc(n); await fh.read(b, 0, n, size - n);
-        const last = b.toString('utf8').split(/\r?\n/).map(x => x.trim()).filter(Boolean).at(-1) ?? '';
-        return last.match(/^## (DONE|STOPPED|HANDOFF)\b/)?.[1] ?? null;
-      } finally { await fh.close(); }
+      const j = JSON.parse(await fs.promises.readFile(resultPath(state, run), 'utf8'));
+      return j?.run === run && ['done', 'stopped', 'handoff'].includes(j.outcome) ? j.outcome.toUpperCase() : null;
     } catch { return null; }
   }
   // META-DASH-ASYNC R1 (DEC-338): a feed poll runs on a timer, outside any request - each source call reads on fs.promises in a
@@ -742,7 +736,7 @@ export function createDashboard(o) {
       ended: () => inSnap(async () => (await now())?.state !== 'running'),
       head: ({ ctx, peak, window }) => inSnap(async () => {
         const [r] = await Promise.all([now(), readA(p.file), o.budgetFile ? readA(o.budgetFile, '{}') : null]);
-        const d = r.data || {}, end = r.end || {}, t1 = r.state === 'running' ? Date.now() : Date.parse(r.updated), marker = await notesMarker(d.notes, Date.parse(r.created));
+        const d = r.data || {}, end = r.end || {}, t1 = r.state === 'running' ? Date.now() : Date.parse(r.updated), marker = await resultMarker(p.state, r.id);
         return { run: r.id, name: runName(r), project: p.name, lane: d.lane ?? null, kind: d.kind ?? null, role: d.role ?? null, executor: d.executor ?? null,
           model: end.model ?? d.model ?? null, effort: end.effort ?? d.effort ?? null, state: r.state, outcome: end.outcome ?? null, started: r.created,
           elapsed_min: Math.max(0, Math.round((t1 - Date.parse(r.created)) / 60000)), budget_min: d.budget_min ?? null, ctx, ctx_peak: peak ?? null,
