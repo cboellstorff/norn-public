@@ -52,8 +52,9 @@ test('spend counts Claude runs of every project under the root, never an own-acc
   fs.mkdirSync(other);
   fs.writeFileSync(path.join(other, 'runs.jsonl'), [{ ts: iso(Date.now() - 600e3), id: 'RUN-1', kind: 'run', ev: 'start', data: { kind: 'worker' } },
     { ts: iso(Date.now() - 60e3), id: 'RUN-1', kind: 'run', ev: 'end', data: { cost_usd: 2.25 } }].map(l => JSON.stringify(l)).join('\n'));
-  assert.deepEqual(spendDay(r.stateRoot), { usd: 12.25, runs: 2 });
-  assert.match(billingLine({ billing: 'api' }, r.state), /api spend last 24 h \$12\.25 \(2 runs\); no daily cap/);
+  const s = spendDay(r.stateRoot, Date.now(), { projectsDir: path.join(r.t, 'none') });
+  assert.deepEqual([s.usd, s.runs, s.ended_usd, s.live_usd, s.chat_usd], [12.25, 2, 12.25, 0, 0]);
+  assert.match(billingLine({ billing: 'api' }, r.state, { projectsDir: path.join(r.t, 'none') }), /api spend last 24 h \$12\.25 \(2 runs\) \+ \$0\.00 running = \$12\.25; no daily cap/);
 });
 
 test('caps: an API budget does not need a weekly stop or a rate cap; a plan still does', () => {
@@ -91,7 +92,7 @@ test('STATUS + forecast: API billing says the spend and the cap, asks for no cal
   const r = root([[2, 3.5]]);
   const s = buildStatus({ state: r.state, project: 'demo', stateRoot: r.stateRoot, budget: { billing: 'api', api_usd_per_day: 10, usage_rate_cap_pct_per_h: 0.1, max_claude_workers: 1 },
     projectsDir: path.join(r.t, 'none'), usageJson: {}, cacheFile: path.join(r.t, 'uc.json') });
-  assert.match(s.text, /- billing: API \(pay per token, no weekly limit\); api spend last 24 h \$3\.50 \(1 run\) of the \$10\.00 daily cap/);
+  assert.match(s.text, /- billing: API \(pay per token, no weekly limit\); api spend last 24 h \$3\.50 \(1 run\) \+ \$0\.00 running = \$3\.50 of the \$10\.00 daily cap/);
   assert.doesNotMatch(s.text, /usage not estimated|estimated weekly now/);
   assert.match(s.text, /^RATE_OK=1/m);
   const f = forecastOf({ status: s.text, budget: { billing: 'api' } });
