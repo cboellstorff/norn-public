@@ -24,6 +24,7 @@ import { BUILTIN } from './executors.mjs';
 import { ledgerStep } from './ledger.mjs';
 import { tickMergeq, mqProbe, spawnDetached } from './mergeq.mjs';
 import { tickFix } from './fixer.mjs';
+import { closeLandedQuestions } from './deliverables.mjs';
 import { tickSlop } from './slop/daily.mjs';
 import { checkinCv } from './cv.mjs';
 import { ciProbe } from './ciwatch.mjs';
@@ -189,6 +190,8 @@ function tickPass(o, g = {}) {
     catch (e) { tickLog(state, `${tag}: routine ends failed: ${e.message}`); }
     // GAP-12: the overlap check of the running lanes (fetch origin / gh at most every 10 min; overlap.mjs) before the digest reads it
     if (o.overlap !== false && !o.dry) projectOverlap(p);
+    // a merge / batch / park question whose deliverable landed meanwhile is stale: withdrawn before the digest (never fails the tick)
+    if (!o.dry) try { for (const c of closeLandedQuestions(state, { project: p })) tickLog(state, `${tag}: question ${c.q} withdrawn - ${c.why}`); } catch (e) { tickLog(state, `${tag}: stale questions: ${e.message}`); }
     const start = new Date().toISOString();
     const s = writeStatus({ state, project: p.name, providers: providersOf(p), budget: B, projectsDir: machine.claude?.projects_dir, usageJson: machine.usage || {},
       cacheFile: path.join(state, 'usage-cache.json'), paused, staleMs, ci: p.ci, digest: tryDigest(state, p) });
