@@ -178,7 +178,7 @@ const order = (a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) 
 const title = i => i.data.title ?? i.data.question ?? i.data.text ?? i.data.lane ?? i.data.name ?? i.data.kind ?? '';
 
 function warnViews(v, err) {
-  for (const p of v.refused) err(`warning: hand-edited view ${p} was NOT regenerated - run \`norn rec import-edits\` or revert it`);
+  for (const p of v.refused) err(`warning: hand-edited view ${p} was NOT regenerated - the dashboard Inbox offers "Let Norn take it back" (a .bak keeps your text) or "Keep my version"; or revert it`);
 }
 
 // NORN-WATCH S3: one chat reply -> named Q answers. One answer event per Q (all-or-nothing), mapped_from = the shared owner text,
