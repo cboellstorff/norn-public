@@ -48,8 +48,12 @@ export function fromTemplate(key, build, dest) {
   fs.mkdirSync(dest, { recursive: true });
   fs.cpSync(t.root, dest, { recursive: true, preserveTimestamps: true });
   // the forms a path takes: git config escapes a backslash (\\), a worktree .git file has forward slashes, the data the native form
+  // - and in git's spelling too: git writes a worktree's paths canonical (a Windows 8.3 short TEMP, C:\Users\RUNNER~1\..., comes
+  // back long), so the template root as given would not match them (CI-RED-7E52345)
   const esc = p => p.split('\\').join('\\\\');
-  const pairs = [[esc(t.root), esc(dest)], [t.root, dest], [fwd(t.root), fwd(dest)]].filter(([a], i, all) => all.findIndex(([b]) => b === a) === i);
+  const real = fs.realpathSync.native(t.root), realDest = fs.realpathSync.native(dest);
+  const pairs = [[esc(t.root), esc(dest)], [t.root, dest], [fwd(t.root), fwd(dest)], [esc(real), esc(realDest)], [real, realDest], [fwd(real), fwd(realDest)]]
+    .filter(([a], i, all) => all.findIndex(([b]) => b === a) === i);
   walk(dest, (p, name) => {
     if (!GIT_PATH_FILES.has(name)) return;
     const s = fs.readFileSync(p, 'utf8'), r = swap(s, pairs);
