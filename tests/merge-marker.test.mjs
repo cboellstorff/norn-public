@@ -24,7 +24,10 @@ function sandbox() {
   const d = { t, state: path.join(t, 'state', 'demo'), locks: path.join(t, 'state', 'locks'), main: path.join(t, 'main'), wt: path.join(t, 'wt'), x: path.join(t, 'reviews', 'P2-MERGE-NOTES.md') };
   for (const k of ['state', 'locks', 'main', 'wt']) fs.mkdirSync(d[k], { recursive: true });
   fs.mkdirSync(path.dirname(d.x), { recursive: true });
-  const P = { name: 'demo', root: fwd(d.main), meta: '/h/dev/sdd-codex', deliverables: { main: 'main' }, policy: {} };
+  // GAP-6: the main checkout is a git repo with a main branch - the MERGE run's own merge worktree is made from it under the state dir
+  const genv = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
+  for (const a of [['init', '-q', '-b', 'main'], ['commit', '-q', '--allow-empty', '-m', 'init']]) assert.equal(spawnSync('git', ['-C', d.main, ...a], { env: genv, windowsHide: true }).status, 0);
+  const P = { name: 'demo', root: fwd(d.main), meta: '/h/dev/sdd-codex', state: fwd(d.state), deliverables: { main: 'main' }, policy: {} };
   // the staged merge brief names X; the fake worker writes its NOTES there, as a live merge worker does (`writes:`)
   d.brief = path.join(t, 'merge.md');
   fs.writeFileSync(d.brief, renderMergeBrief(P, { lane: 'tend', branch: 'feat/tend', worktree: fwd(d.wt), notes: fwd(d.x), sha: 'abcdef1' }) + `mode: done\nwrites: ${fwd(d.x)}\n`);

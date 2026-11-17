@@ -27,6 +27,7 @@ import { procStartAsync } from './legacy.mjs';
 import { doneCheck, dodPrompt, testLine } from './dod.mjs';
 import { critiqueOn, findingsCount } from './critique.mjs';
 import { hostWrite } from './slop/host.mjs';
+import { removeMergeWorktree } from './mergewt.mjs';
 import { ctxRole, ctxLimits, ctxLevel, transcriptCtx, specPolicy } from './ctxlimit.mjs';
 import { findTranscript } from './harness/claude.mjs';
 import { resultDir, resultPath, readResult, writeResult, NO_RESULT } from './result.mjs';
@@ -38,12 +39,15 @@ const { run, state } = spec;
 const RESULT_DIR = resultDir(path.resolve(state), run), RESULT = resultPath(path.resolve(state), run);
 const fwdPath = p => String(p).split(path.sep).join('/');
 try { fs.mkdirSync(RESULT_DIR, { recursive: true }); } catch { /* norn done makes it */ }
+// GAP-6: a merge worktree is removed at the run end - nothing but the executor may sit in it (Windows keeps a folder that is a live
+// process's cwd: this process, and the job hold process it starts, would inherit it from the launcher)
+if (spec.merge_wt) { try { process.chdir(path.resolve(state)); } catch { /* the launcher's cwd stays */ } }
 const iso = () => new Date().toISOString();
 const logLine = s => { try { fs.appendFileSync(spec.log, `${iso()} ${s}\n`); } catch { /* log dir gone */ } };
 const read = f => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
 const TAIL = 8192;
 const tail = f => { const t = read(f); return t === null ? '' : t.slice(-TAIL); };
-// META-MERGELOCK: every lock the run holds (runs.writeTrees: a MERGE holds the main checkout's beside its own worktree's)
+// META-MERGELOCK: every lock the run holds (runs.writeTrees + GAP-6: a MERGE holds a merge slot beside its own worktree's)
 const lockFiles = spec.lockFiles ?? (spec.lockFile ? [spec.lockFile] : []);
 let childPid = null;
 let finished = false;
@@ -205,6 +209,7 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
     if (!killedByMeta()) {
       try { fs.unlinkSync(hbPath(state, run)); } catch { /* gone */ }
       for (const lf of lockFiles) releaseLock(lf, run);
+      dropMergeWt(outcome);
       try { for (const f of fillQueue(state)) logLine(`queue: ${f.queued} -> ${f.next}`); } catch (e2) { logLine(`queue fill failed: ${e2.message}`); }
     }
     process.exit(0);
@@ -231,6 +236,7 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   else if (outcome === 'done') resumed = slopEnd();
   else if (data.dod?.ok === false) resumed = dodEnd(data.dod);
   if (outcome === 'done' && !resumed) critiqueEnd();   // a slop resume reviews its own DONE later
+  if (!resumed) dropMergeWt(outcome);
   try { for (const f of fillQueue(state)) logLine(`queue: ${f.queued} -> ${f.next}`); } catch (e) { logLine(`queue fill failed: ${e.message}`); }
   if (!resumed && spec.tick && spec.policy?.trigger_on_exit !== false) {
     // CI-RED-319CAF8: born inside this run's job, the tick died with this exit whenever the supervisor had spawned a console child
@@ -243,6 +249,14 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
     catch (e) { logLine(`tick failed: ${e.message}`); }
   }
   process.exit(0);
+}
+
+// GAP-6: a MERGE run's merge worktree goes with the run (DONE, STOPPED, a crash, a limit re-queue: the next start makes a
+// fresh one); a HANDOFF keeps it for its resume (the start-time sweep collects it after a day). A norn stop leaves it to that sweep.
+function dropMergeWt(outcome) {
+  if (!spec.merge_wt || !spec.merge_repo || outcome === 'handoff') return;
+  try { logLine(`merge worktree ${spec.merge_wt}: ${removeMergeWorktree({ repo: spec.merge_repo, wt: spec.merge_wt }) ? 'removed' : 'NOT removed (the next merge start sweeps it)'}`); }
+  catch (e) { logLine(`merge worktree not removed: ${e.message}`); }
 }
 
 function killedByMeta() {

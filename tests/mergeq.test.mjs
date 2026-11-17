@@ -9,6 +9,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { renderMergeBrief, briefMarker } from '../engine/lib/mergebrief.mjs';
+import { mergeWtPath } from '../engine/lib/mergewt.mjs';
 import { startRun, lockPath, readiness } from '../engine/lib/runs.mjs';
 import { deliverablesView, askDeliverable, resolveDeliverable } from '../engine/lib/deliverables.mjs';
 import { main } from '../engine/bin/norn.mjs';
@@ -37,7 +38,7 @@ function cli(argv, env = {}) {
   const code = main(argv, env, s => o.push(s), s => e.push(s));
   return { code, out: o.join('\n'), err: e.join('\n') };
 }
-const P = { name: 'norn', root: '/h/dev/sdd-codex', meta: '/h/dev/sdd-codex', deliverables: { main: 'main' }, policy: {} };
+const P = { name: 'norn', root: '/h/dev/sdd-codex', meta: '/h/dev/sdd-codex', state: '/h/state/norn', deliverables: { main: 'main' }, policy: {} };
 const O = { lane: 'meta-vis', branch: 'feat/vis', worktree: '/h/dev/sdd-codex-vis', notes: '/h/r/meta-vis/MERGE-NOTES.md' };
 
 // a live run holding worktree wt: a running record + a fresh heartbeat + its lock (what the supervisor keeps)
@@ -51,7 +52,7 @@ function liveRun(state, locks, { lane, worktree, stage = 'S3' }) {
 }
 
 // ---------- piece 0: staged lanes ----------
-test('merge brief --sha: merges THAT commit in the main checkout and never touches the lane worktree; marker says staged', () => {
+test('merge brief --sha: merges THAT commit in its own merge worktree and never touches the lane worktree; marker says staged', () => {
   const sha = '03f9b94'.padEnd(40, 'a');
   const txt = renderMergeBrief(P, { ...O, sha, ui: true });
   assert.doesNotMatch(txt, /\{\{/);
@@ -60,11 +61,15 @@ test('merge brief --sha: merges THAT commit in the main checkout and never touch
   assert.doesNotMatch(txt, /rebase origin|force-with-lease|-C \/h\/dev\/sdd-codex-vis (fetch|rebase|push|merge)/, 'nothing runs in the lane worktree');
   assert.match(txt, /NEVER touch the lane worktree \/h\/dev\/sdd-codex-vis/);
   for (const s of ['git -C /h/dev/sdd-codex revert -m 1', 'norn.mjs" smoke', 'norn.mjs" done', 'MERGE-NOTES.md', 'SHOTS AFTER']) assert.ok(txt.includes(s), s);
-  assert.deepEqual(briefMarker(txt), { mode: 'staged', lane: 'meta-vis', branch: 'feat/vis', worktree: '/h/dev/sdd-codex-vis', sha, main: '/h/dev/sdd-codex', notes: '/h/r/meta-vis/MERGE-NOTES.md' });
+  const land = { repo: '/h/dev/sdd-codex', slots: 2, main_branch: 'main', remote: 'origin' };
+  assert.deepEqual(briefMarker(txt), { mode: 'staged', lane: 'meta-vis', branch: 'feat/vis', worktree: '/h/dev/sdd-codex-vis', sha, merge_wt: mergeWtPath(P.state, 'meta-vis', sha), ...land, notes: '/h/r/meta-vis/MERGE-NOTES.md' });
+  assert.match(txt, new RegExp(`git -C ${mergeWtPath(P.state, 'meta-vis', sha)} merge --no-ff --no-commit ${sha}`), 'the merge is made in the merge worktree');
+  assert.doesNotMatch(txt, /git -C \/h\/dev\/sdd-codex (pull|merge|commit|push)/, 'never in the owner checkout');
   // the rebase brief keeps its text and names the lane worktree it rebases in
   const rb = renderMergeBrief(P, O);
   assert.match(rb, /rebase origin\/main/);
-  assert.deepEqual(briefMarker(rb), { mode: 'rebase', lane: 'meta-vis', branch: 'feat/vis', worktree: '/h/dev/sdd-codex-vis', main: '/h/dev/sdd-codex', notes: '/h/r/meta-vis/MERGE-NOTES.md' });
+  assert.deepEqual(briefMarker(rb), { mode: 'rebase', lane: 'meta-vis', branch: 'feat/vis', worktree: '/h/dev/sdd-codex-vis', merge_wt: mergeWtPath(P.state, 'meta-vis'), ...land, notes: '/h/r/meta-vis/MERGE-NOTES.md' });
+  assert.throws(() => renderMergeBrief({ ...P, state: undefined }, O), /no state dir/);
   assert.equal(briefMarker('# a hand-written brief'), null);
   assert.throws(() => renderMergeBrief(P, { ...O, sha: 'nothex' }), /sha/);
 });
@@ -97,10 +102,12 @@ test('norn run --stage MERGE refuses (exit 3) a rebase brief while the lane work
   const t = tmp('mr');
   const state = path.join(t, 'state', 'norn'), locks = path.join(t, 'state', 'locks'), wt = path.join(t, 'wt-vis'), mainCo = path.join(t, 'main');
   fs.mkdirSync(wt, { recursive: true }); fs.mkdirSync(mainCo, { recursive: true });
+  g(mainCo, 'init', '-q', '-b', 'main'); g(mainCo, 'config', 'commit.gpgsign', 'false'); commit(mainCo, 'README.md', 'r\n', 'init');   // the repo merge worktrees come from
+  const PP = { ...P, root: fwd(mainCo), state: fwd(state) };
   const run = liveRun(state, locks, { lane: 'meta-vis', worktree: wt });
   const rb = path.join(t, 'rebase.md'), st = path.join(t, 'staged.md'), hand = path.join(t, 'hand.md');
-  fs.writeFileSync(rb, renderMergeBrief(P, { ...O, worktree: fwd(wt) }));
-  fs.writeFileSync(st, renderMergeBrief(P, { ...O, worktree: fwd(wt), sha: 'abcdef1' }));
+  fs.writeFileSync(rb, renderMergeBrief(PP, { ...O, worktree: fwd(wt) }));
+  fs.writeFileSync(st, renderMergeBrief(PP, { ...O, worktree: fwd(wt), sha: 'abcdef1' }));
   fs.writeFileSync(hand, '# MERGE by hand\n');
   const o = { state, locksDir: locks, executor: 'fake', lane: 'meta-vis', worktree: mainCo, stage: 'MERGE', tick: null, env: { FAKE_MS: '1' } };
   assert.throws(() => startRun({ ...o, brief: rb }), e => e.code === 3 && new RegExp(`${run}.*--sha`).test(e.message));
@@ -122,6 +129,8 @@ test('norn run --stage MERGE refuses (exit 3) a rebase brief while the lane work
   const item = () => loadState(state).items[s.run];
   waitForSync(() => item()?.state !== 'running', { producer: supervisorAlive(state, item), what: `${s.run} ends` });
   assert.equal(loadState(state).items[s.run].state, 'exited');
+  // the supervisor removes the merge worktree after it records the end: wait for that while it lives
+  waitForSync(() => !fs.existsSync(mergeWtPath(state, 'meta-vis', 'abcdef1')), { producer: supervisorAlive(state, item), what: `${s.run} removes its merge worktree` });
 });
 
 test('deliverable supersede --by DLV-n | merge sha: terminal, never due / asked / resolved / listed again; bad citations refused', () => {

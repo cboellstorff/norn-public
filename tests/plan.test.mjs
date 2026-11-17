@@ -104,10 +104,10 @@ test('chains: a withdrawn chain is broken for 24 h - "chain broken: X stopped, Y
 
 test('landing next: merging now, then the merge queue in its order, plain-words state; CI red on main blocks', () => {
   const runs = [run(1, 'running', { lane: 'road', stage: 'MERGE' }), run(2, 'queued', { lane: 'adopt', stage: 'MERGE' })];
-  const ready = [{ id: 'RUN-2', ready: false, terms: ['worktree held by RUN-1'] }];
+  const ready = [{ id: 'RUN-2', ready: false, terms: ['merge slots full: 2 merge(s) running in /r (RUN-1, RUN-9; policy.merge.parallel 2)'] }];
   const merges = { rows: [{ id: 'DLV-7', lane: 'cv', branch: 'feat/cv', word: 'clean', delivers: 'cv view' }, { id: 'DLV-3', lane: 'adopt', branch: 'feat/adopt', word: 'conflict: a.mjs' }] };
   const p = buildPlan({ runs, ready, merges, now: NOW, status: STATUS('0.62') });
-  assert.deepEqual(p.landing.map(l => [l.id, l.word]), [['RUN-1', 'merging now'], ['DLV-7', 'ready to merge'], ['DLV-3', 'waits for the main checkout']]);
+  assert.deepEqual(p.landing.map(l => [l.id, l.word]), [['RUN-1', 'merging now'], ['DLV-7', 'ready to merge'], ['DLV-3', 'waits for a merge slot (2 merges running)']]);
   const red = buildPlan({ runs: [], ready: [], merges, now: NOW, status: STATUS('0.62').replace('CI main: success', 'CI main: failure') });
   assert.deepEqual(red.landing.map(l => l.word), ['blocked: CI red on main', 'blocked: CI red on main']);
 });
