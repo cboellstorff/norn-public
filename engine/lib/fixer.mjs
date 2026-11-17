@@ -100,7 +100,7 @@ export function hunkMisfit(patch, text) {
   const isOld = l => l === '' || l[0] === ' ' || l[0] === '-', isNew = l => l === '' || l[0] === ' ' || l[0] === '+';
   const old = body.filter(isOld).map(l => l.slice(1)), nw = body.filter(isNew).length, ctx = body.filter(l => l === '' || l[0] === ' ').length;
   const n = h[2] === undefined ? 1 : Number(h[2]), m = h[3] === undefined ? 1 : Number(h[3]), l = Number(h[1]);
-  if (old.length !== n || nw !== m) return `the header says -${l},${n} +${m} but the hunk has ${old.length} old and ${nw} new line(s)`;
+  if (old.length !== n || nw !== m) return `the @@ header counts ${n} old and ${m} new line(s), the hunk has ${old.length} and ${nw}`;
   if (!ctx && n) return 'no context line (git apply refuses a zero-context hunk)';
   const fl = t.replace(/\n$/, '').split('\n'), fits = s => old.every((x, i) => fl[s + i] === x);
   if (!n) return l <= fl.length ? null : `line ${l} is past the end of the file (${fl.length} lines)`;

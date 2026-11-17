@@ -211,7 +211,7 @@ test('hunkMisfit says why a hunk does not apply: wrong line, wrong counts, a lin
   const f = 'a\nb\nc\nd\n', p = (h, ...l) => ['--- a/f', '+++ b/f', h, ...l].join('\n');
   assert.equal(hunkMisfit(p('@@ -2,2 +2,2 @@', ' b', '-c', '+C'), f), null);
   assert.equal(hunkMisfit(p('@@ -1,2 +1,2 @@', ' b', '-c', '+C'), f), 'the old lines are at line 2, not 1');
-  assert.match(hunkMisfit(p('@@ -2,3 +2,2 @@', ' b', '-c', '+C'), f), /^the header says -2,3 \+2 but the hunk has 2 old and 2 new/);
+  assert.match(hunkMisfit(p('@@ -2,3 +2,2 @@', ' b', '-c', '+C'), f), /^the @@ header counts 3 old and 2 new line\(s\), the hunk has 2 and 2$/);
   assert.match(hunkMisfit(p('@@ -2,2 +2,2 @@', ' b', '-cc', '+C'), f), /^line 3 is not as the hunk quotes it/);
   assert.equal(hunkMisfit(p('@@ -2,2 +2,2 @@', ' b', '-c', '+C'), null), 'the file is not there');
 });
