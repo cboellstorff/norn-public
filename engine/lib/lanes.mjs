@@ -29,7 +29,7 @@ function runText(r, { now, hbAge, staleMs, items = {} }) {
   if (o === 'handoff') return 'exited: HANDOFF' + (r.resume?.next ? ` -> ${r.resume.next}` : '');
   if (o === 'crash') return `exited: crash (exit ${end.exit ?? '?'})`;
   if (o === 'auth') return end.auth_class === 'vendor' ? 'exited: auth - a vendor outage (no login needed)' : `exited: auth - run ${loginCommand(d.executor)}`;
-  return `exited: ${o ?? 'no-marker'}`;
+  return `exited: ${o ?? 'no-result'}`;
 }
 
 /**

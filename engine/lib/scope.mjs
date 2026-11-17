@@ -221,7 +221,7 @@ const readSpec = (state, run) => JSON.parse(fs.readFileSync(path.join(state, 'ru
 export function scopeCheck({ state, run, payload, env = process.env }) {
   let why, spec = null;
   try { spec = readSpec(state, run); why = checkTool(payload, scopeOf(spec), env); }
-  catch (e) { why = `Norn's scope hook cannot read this run's spec (${run}: ${e.code || e.message}), so it cannot tell what you may touch: end with ## STOPPED and say so in your NOTES`; }
+  catch (e) { why = `Norn's scope hook cannot read this run's spec (${run}: ${e.code || e.message}), so it cannot tell what you may touch: end with \`norn done --outcome stopped --why "scope hook cannot read the run spec"\``; }
   if (!why) return { deny: null };
   const tool = String(payload?.tool_name ?? '?'), target = oneLine(payload?.tool_input?.file_path ?? payload?.tool_input?.notebook_path ?? payload?.tool_input?.command ?? '', 200);
   fs.mkdirSync(path.dirname(refusalsFile(state)), { recursive: true });

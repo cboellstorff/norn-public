@@ -57,7 +57,7 @@ export function stateOf(text) {
   if (t === 'exited: DONE') return ['done', 'DONE'];
   if (t.startsWith('exited: STOPPED')) return ['stopped', 'STOPPED'];
   if (t.startsWith('exited: HANDOFF')) return ['handoff', 'HANDOFF'];
-  if (t.startsWith('exited: no-marker')) return ['no-marker', 'no-marker'];
+  if (t.startsWith('exited: no-result')) return ['no-result', 'no-result'];
   if (t.startsWith('exited: crash')) return ['bad', 'crash'];
   if (t === 'lost') return ['lost', 'lost'];
   if (t.startsWith('killed')) return ['bad', 'killed'];
@@ -733,7 +733,7 @@ function dlvPill(b, project) {
 const OUTCOME = { done: 'DONE', stopped: 'STOPPED', handoff: 'HANDOFF' };
 const MARK = { DONE: 'done', STOPPED: 'stopped', HANDOFF: 'handoff' };
 export function renderFeedHead(h, now = Date.now()) {
-  const st = h.state === 'exited' ? `exited: ${OUTCOME[h.outcome] ?? h.outcome ?? 'no-marker'}` : h.state;
+  const st = h.state === 'exited' ? `exited: ${OUTCOME[h.outcome] ?? h.outcome ?? 'no-result'}` : h.state;
   const [cls, word] = stateOf(st);
   const over = fin(h.elapsed_min) && fin(h.budget_min) && h.elapsed_min > h.budget_min;
   const c = h.commit;

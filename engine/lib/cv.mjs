@@ -74,7 +74,7 @@ export function cvWindow(parts, o = {}) {
     for (const d of p.dlvs || []) for (const id of d.runs) dlvOf.set(id, d);
     const reverted = new Map();
     for (const m of runs) {
-      if (m.data?.stage !== 'MERGE' || m.state !== 'exited' || m.end?.outcome !== 'stopped' || !REVERTED.test(m.end?.marker_line || '')) continue;
+      if (m.data?.stage !== 'MERGE' || m.state !== 'exited' || m.end?.outcome !== 'stopped' || !REVERTED.test(m.end?.why || '')) continue;
       const t = Date.parse(m.created);
       const last = runs.filter(r => r !== m && r.data?.lane === m.data.lane && r.data?.stage !== 'MERGE' && r.end?.outcome === 'done' && endTs(r) <= t)
         .sort((a, b) => endTs(b) - endTs(a))[0];

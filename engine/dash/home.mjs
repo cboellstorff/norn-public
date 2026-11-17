@@ -123,7 +123,7 @@ export function homeEvents({ thread = [], runs = [], items = null, ledger = [], 
     if (r.state !== 'queued') out.push({ key: `r${r.id}`, ts: startTs(r), cat, kind: 'run-start', ...head, executor: d.executor ?? null, model: d.model ?? null, effort: d.effort ?? null });
     const end = endOf(r), ets = endTs(r);
     if (end && ets) out.push({ key: `e${r.id}`, ts: ets, cat, kind: 'run-end', ...head, outcome: end.outcome ?? r.state, why: end.why ?? null, dod_ready: d.dod_ready ?? null, dod: end.dod ?? null,
-      images: imagePaths(`${end.marker_line ?? ''} ${end.why ?? ''}`) });
+      images: imagePaths(`${end.why ?? ''} ${end.summary ?? ''}`) });
   }
   const checkins = runs.filter(r => r.data?.kind === 'checkin').map(r => ({ id: r.id, start: Date.parse(startTs(r) ?? ''), end: endTs(r) ? Date.parse(endTs(r)) : null }))
     .filter(c => Number.isFinite(c.start)), all = items ?? runs;

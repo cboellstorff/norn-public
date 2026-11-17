@@ -1,4 +1,4 @@
-// Runs (META-GENERAL-DESIGN D6-D9, 3.3 run row, 5): `norn run` launch half, worktree lock, heartbeats, outcome grammar,
+// Runs (META-GENERAL-DESIGN D6-D9, 3.3 run row, 5): `norn run` launch half, worktree lock, heartbeats,
 // usage parsers + executor command lines (re-exported from the harness adapters), lost sweep, stop / kill tree. The detached body is supervisor.mjs. Node built-ins only.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -45,18 +45,6 @@ export const EXECUTORS = BUILTIN;
 const CAP_LABEL = { max_claude_workers: 'claude', max_codex: 'codex', max_sol: 'codex-sol', max_astra: 'codex-astra' };
 const infoOf = o => executorInfo(o.executor, o.provider);
 const unknownExecutor = ex => new RunError(`unknown executor ${JSON.stringify(ex)} (${Object.keys(EXECUTORS).join(' | ')} | a configured typed executor name)`);
-
-// ---------- outcome grammar (D6): the last "## " line of NOTES ----------
-export function parseOutcome(text) {
-  if (text === null || text === undefined) return { outcome: 'no-marker', marker_line: null };
-  const heads = String(text).split(/\r?\n/).filter(l => l.startsWith('## '));
-  const last = heads.length ? heads.at(-1).replace(/\s+$/, '') : null;
-  if (last === '## DONE') return { outcome: 'done', marker_line: last };
-  if (last === '## HANDOFF') return { outcome: 'handoff', marker_line: last };
-  const m = last && last.match(/^## STOPPED: (\S.*)$/);
-  if (m) return { outcome: 'stopped', marker_line: last, why: m[1] };
-  return { outcome: 'no-marker', marker_line: last };
-}
 
 // ---------- usage parsers + executor command lines: the harness adapters (engine/lib/harness/<family>.mjs, H2) ----------
 export { parseClaudeFinal, CLAUDE_RO_NOPE } from './harness/claude.mjs';

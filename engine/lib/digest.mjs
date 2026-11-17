@@ -27,7 +27,7 @@ export const WINDOW_H = 72;
 const NOT_WORK = ['checkin', 'talk', 'interactive', 'fake', 'audit'];
 const isWork = d => !NOT_WORK.includes(d.kind) && d.role !== 'helper' && !d.parent;
 const endOf = r => r.history.find(h => ['end', 'lost', 'kill'].includes(h.ev)) || null;
-const BAD_END = ['crash', 'no-marker'];
+const BAD_END = ['crash', 'no-result'];
 const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
 const isMain = b => !b || b === 'HEAD' || b === 'main' || b === 'master';
 const age = (now, ts) => +((now - Date.parse(ts)) / H).toFixed(1);
