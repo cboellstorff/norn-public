@@ -94,6 +94,12 @@ export function stderrTail(profile, chars = 1500) {
   s = s.trimEnd();
   return s.length <= chars ? s : s.slice(s.indexOf('\n', s.length - chars) + 1 || s.length - chars);
 }
+/** a known cause named from the browser's stderr, '' when none: Chromium's Linux SUID sandbox helper not root-owned mode 4755
+ * (setuid_sandbox_host.cc aborts rather than run unsandboxed; https://chromium.googlesource.com/chromium/src/+/main/docs/linux/suid_sandbox_development.md) */
+export function stderrHint(stderr) {
+  const m = /SUID sandbox helper binary was found, but is not configured correctly[\s\S]*?make sure that (\S+) is owned by root and has mode 4755/.exec(stderr || '');
+  return m ? `SUID sandbox misconfigured: ${m[1]} (must be owned by root, mode 4755)` : '';
+}
 /** wait for the DevTools port the browser writes into its profile; none within ms (or a failing exit first: Edge's Windows launcher
  * hands off and exits 0) = an Error naming the binary, its exit and the tail of its stderr */
 export async function waitDevToolsPort({ browser, profile, child, ms = 30000 }) {
@@ -103,8 +109,8 @@ export async function waitDevToolsPort({ browser, profile, child, ms = 30000 }) 
     const failed = child && child.exitCode !== null && child.exitCode !== 0;
     if (failed || Date.now() > end) {
       const how = failed ? `exit ${child.exitCode}` : `no exit, ${Math.round(ms / 1000)} s`;
-      const tail = stderrTail(profile);
-      throw new Error(`no DevTools port from ${browser.exe} (${how}); its stderr ${tail ? `ends:\n${tail}` : 'is empty'}`);
+      const tail = stderrTail(profile), hint = stderrHint(stderrTail(profile, Infinity));
+      throw new Error(`no DevTools port from ${browser.exe} (${how})${hint ? `: ${hint}` : ''}; its stderr ${tail ? `ends:\n${tail}` : 'is empty'}`);
     }
     await new Promise(r => setTimeout(r, 100));
   }
