@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fixture, ENGINE } from './helpers/dash-fixture.mjs';
 import { TABS as SERVER_TABS } from '../engine/dash/server.mjs';
-import { TABS, loadTab, renderTab, renderNav, pageTitle, needsCount, RM_VIEWS, rmScopeNext, rmHash, rmUrlHash, parseRmHash, rmMatch } from '../engine/dash/ui.mjs';
+import { TABS, NAV, DEST_TAB, destOf, loadTab, renderTab, renderNav, pageTitle, needsCount, RM_VIEWS, rmScopeNext, rmHash, rmUrlHash, parseRmHash, rmMatch } from '../engine/dash/ui.mjs';
 import { decorate } from '../engine/dash/docs.mjs';
 import { ledgerInline } from '../engine/dash/ledger.mjs';
 
@@ -22,6 +22,32 @@ test('the UI tab list is the server tab list (Overview ... Ledger, Settings)', (
   const nav = renderNav('inbox', { inbox: 3 });
   for (const [k] of TABS) assert.ok(nav.includes(`id="tab-${k}"`), k);
   assert.match(nav, /id="tab-inbox"[^>]*aria-selected="true"/); assert.match(nav, /3 need you/);
+});
+
+test('UX review 2: the bar is at most 7 plain destinations (Home, Overview, Inbox first); every page sits in exactly one and stays reachable; ?tab=<destination> lands on its first page', () => {
+  assert.ok(NAV.length <= 7, `${NAV.length} destinations`);
+  assert.deepEqual(NAV.slice(0, 3).map(d => d[0]), ['home', 'overview', 'inbox']);
+  for (const [, label] of NAV) assert.ok(!/Verdandi|Urd|Skuld|Wyrd|Norn/.test(label), `plain name: ${label}`);
+  const pages = NAV.flatMap(d => d[2]);
+  assert.deepEqual([...pages].sort(), [...SERVER_TABS].sort(), 'each page in exactly one destination');
+  const top = html => html.match(/<div class="dests"[^>]*>([^]*?)<\/div>/)[1];
+  for (const [k] of TABS) {
+    const nav = renderNav(k), d = destOf(k);
+    assert.equal((top(nav).match(/<button /g) || []).length, NAV.length, `${k}: one top button per destination`);
+    assert.match(nav, new RegExp(`id="tab-${k}" data-tab="${k}" aria-selected="true"`), `${k}: its own button, selected`);
+    if (d[2].length > 1) {
+      assert.match(top(nav), new RegExp(`id="dest-${d[0]}"[^>]*aria-selected="true"`), `${k}: its destination selected`);
+      assert.match(nav, new RegExp(`<div class="pages" id="pages-${d[0]}"[^]*id="tab-${k}"`), `${k}: on the pages row`);
+      for (const p of d[2]) assert.ok(nav.includes(`id="tab-${p}"`), `${k}: sibling ${p} one tap away`);
+    }
+    // from any other page this page is reachable: its own top button, or its destination's (which opens the first page) then the row
+    const other = renderNav(k === 'inbox' ? 'home' : 'inbox');
+    assert.ok(other.includes(`id="tab-${k}"`) || other.includes(`id="dest-${d[0]}" class="dest" data-tab="${d[2][0]}"`), `${k} reachable`);
+  }
+  assert.deepEqual(DEST_TAB, { work: 'lanes', health: 'usage', history: 'records' });
+  // the Inbox badge is the needs-you count; a destination's badge sums its pages' counts
+  assert.match(renderNav('home', { inbox: 4 }), /id="tab-inbox"[^>]*>Inbox<span class="count" aria-label="4 need you">4<\/span>/);
+  assert.equal(renderNav('records', {}, 'norn'), renderNav('records', {}), 'one bar for both looks');
 });
 
 test('every tab renders with fixture state: ids from records / runs / transcripts, no undefined / NaN', async () => {
@@ -129,10 +155,10 @@ const rmIds = h => [...h.matchAll(/class="rmi[^"]*" id="rm-(RM-\d+)"/g)].map(m =
 const pressed = h => [...h.matchAll(/data-rm-scope="(\w+)" aria-pressed="(true|false)"/g)].map(m => `${m[1]}:${m[2]}`);
 const views = h => [...h.matchAll(/data-rm-view="(\w+)" aria-pressed="(true|false)"/g)].map(m => `${m[1]}:${m[2]}`);
 
-test('roadmap tab: Wyrd frame after Skuld (Norn look), a flat Roadmap tab after Map (classic); one-project tab; the view switch Tree / Board, Tree the default', () => {
+test('roadmap tab: in Work after Map and Plan (UX review 2, both looks); one-project tab; the view switch Tree / Board, Tree the default', () => {
   assert.deepEqual(TABS.map(t => t[0]).slice(5, 7), ['map', 'roadmap']);   // META-CONTROLLER C2: Home is tab 0
-  assert.match(renderNav('roadmap', {}, 'norn'), /ng-skuld[^]*<span class="ng ng-wyrd"[^]*>Wyrd<[^]*>all three<[^]*id="tab-roadmap"[^>]*aria-selected="true"/);
-  assert.match(renderNav('map', {}), /id="tab-map"[^]*id="tab-roadmap"[^]*id="tab-records"/);
+  assert.match(renderNav('roadmap', {}, 'norn'), /id="dest-work"[^>]*aria-selected="true"[^]*id="pages-work"[^]*id="tab-map"[^]*id="tab-plan"[^]*id="tab-roadmap"[^>]*aria-selected="true"/);
+  assert.match(renderNav('map', {}), /id="tab-map"[^]*id="tab-roadmap"/);
   assert.deepEqual(RM_VIEWS.map(v => v[0]), ['tree', 'board']);
   const h = rmRender(); clean(h, 'roadmap');
   assert.ok(h.includes('id="panel-roadmap"')); assert.deepEqual(views(h), ['tree:true', 'board:false'], 'the switch, Tree pressed by default');

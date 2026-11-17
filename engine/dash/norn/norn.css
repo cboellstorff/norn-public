@@ -106,19 +106,14 @@
    header, the hero (night / day by ground) with the three lore lines, the empty-state art. Classic keeps its flat bar + h1. */
 :root.classic header .h1-norn, :root.norn header .h1-classic { display: none; }
 :root.norn header h1 { display: flex; align-items: center; margin: 0; }
-/* the bar (META-NAV R2, owner Q-16: A + C): each Norn's tabs in a frame in its colour, the name + subtitle in the frame's top edge
-   like a fieldset legend; the active tab filled with its Norn's colour in the inverse ink. One colour per Norn per ground
-   (palette.hex). The bar wraps at every width - frames wrap their tabs inside themselves, then stack (no sideways scroll). */
+/* the bar (UX review 2, was META-NAV R2's Norn frames): the 7 plain destinations, then the open destination's pages; the active one
+   filled with the accent in the inverse ink. The bar wraps at every width (no sideways scroll). --nv / --nu / --ns stay the Norn
+   colours (Roadmap time colours, the Home tags). */
 :root.norn[data-ground=dark] { --nv: #eec24a; --nu: #52b8a0; --ns: #93aec6; --ninv: #0b0e1a; }
 :root.norn[data-ground=light] { --nv: #6e430f; --nu: #17504f; --ns: #425a7d; --ninv: #f7f0dc; }
-:root.norn nav { flex-wrap: wrap; overflow-x: visible; gap: calc(4 * var(--px)); row-gap: calc(10 * var(--px)); padding-top: calc(8 * var(--px)); padding-bottom: calc(3 * var(--px)); }
-:root.norn nav .ng-verdandi { --g: var(--nv); } :root.norn nav .ng-urd { --g: var(--nu); } :root.norn nav .ng-skuld { --g: var(--ns); }
-:root.norn nav .ng { position: relative; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 2px; flex: 0 1 auto; max-width: 100%;
-  border: calc(1 * var(--px)) solid var(--g); padding: calc(4 * var(--px)) calc(2 * var(--px)) 0; margin: 0; }
-:root.norn nav .nh { position: absolute; top: -10px; left: calc(4 * var(--px)); display: flex; align-items: baseline; gap: 6px; margin: 0;
-  padding: 0 calc(2 * var(--px)); background: var(--panel); width: max-content; line-height: 1.1; }
-:root.norn nav .nn { font-family: var(--pix); font-size: calc(8 * var(--px)); -webkit-font-smoothing: none; text-transform: uppercase; color: var(--g); }
-:root.norn nav .nh small { color: var(--dim); font-size: 11px; font-style: italic; }
+:root.norn nav { --g: var(--accent); flex-wrap: wrap; overflow-x: visible; gap: calc(2 * var(--px)); padding-top: calc(2 * var(--px)); padding-bottom: 0; }
+:root.norn nav .pages { border-top: calc(1 * var(--px)) solid var(--line); }
+:root.norn nav .pages button { font-size: calc(8 * var(--px)); }
 :root.norn nav button:hover { background: var(--soft); color: var(--ink); }
 :root.norn nav button[aria-selected=true] { background: var(--g); color: var(--ninv); border-bottom: calc(2 * var(--px)) solid var(--g); }
 :root.norn nav button:focus-visible { outline: calc(1 * var(--px)) solid var(--ink); outline-offset: -4px; }
@@ -136,10 +131,6 @@
    running / mute), Norn: one Norn colour each (past = Urd, present = Verdandi, future = Skuld). Palette lock holds: var() only. ---------- */
 :root { --rm-past: var(--ok); --rm-now: var(--run); --rm-fut: var(--mute); --rm-inv: var(--panel); }
 :root.norn { --rm-past: var(--nu); --rm-now: var(--nv); --rm-fut: var(--ns); --rm-inv: var(--ninv); }
-/* the bar: the Roadmap sits in its own frame after Skuld; its border and its active fill carry all three Norn colours */
-:root.norn nav .ng-wyrd { --g: var(--ink); border-color: var(--nu) var(--ns) var(--ns) var(--nu); border-top-color: var(--nv); }
-:root.norn nav .ng-wyrd .nn { color: var(--ink); }
-:root.norn nav .ng-wyrd button[aria-selected=true] { background: linear-gradient(90deg, var(--nu) 0 33.4%, var(--nv) 33.4% 66.7%, var(--ns) 66.7% 100%); color: var(--rm-inv); border-bottom-color: var(--nv); }
 .rmtop { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
 .rmtop .chip { border: 0; cursor: pointer; }
 /* the scope switch: three toggle buttons, the pressed one filled in its time colour */
@@ -270,8 +261,6 @@
 
 /* ---------- META-CONTROLLER C2: the Home tab (Look 3, owner Q-25). The Norn frame (the thread) in the accent colour, first in the
    bar; the section heads, the card words and the bottom bar labels in the pixel font. Layout lives in index.html (both looks). ---------- */
-:root.norn nav .ng-norn { --g: var(--accent); }
-:root.norn nav .ng-norn button { min-width: calc(64 * var(--px)); }   /* the frame as wide as its legend (NORN the thread) */
 :root.norn .hn, :root.norn .hs h4, :root.norn .tag, :root.norn .bbar .bl { font-family: var(--pix); font-weight: 400; -webkit-font-smoothing: none; text-transform: uppercase; }
 :root.norn .hn { font-size: calc(6 * var(--px)); letter-spacing: 3px; }
 :root.norn .hs h4 { font-size: calc(5 * var(--px)); letter-spacing: 3px; color: var(--mute); }

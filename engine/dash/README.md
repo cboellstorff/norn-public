@@ -4,6 +4,13 @@ Start: `norn dash` (serves http://127.0.0.1:8737 - machine.json `dash.port` / `d
 random port, `--no-open` skips the browser, `--project <project.json>` limits it to named projects). Ctrl+C stops it. Node built-ins
 only, bound to 127.0.0.1. Every POST needs the per-start token embedded in the page (a fresh random token each start).
 
+## Where things are (UX review 2: 7 destinations, plain names, both looks)
+The bar is **Home · Overview · Inbox · Work · Health · History · Settings** (`ui.mjs` `NAV`). Work, Health and History open a second row
+with their pages: **Work** = Lanes, Runs (tab id `agents`), Map, Plan, Roadmap; **Health** = Usage, Slop, Tests, Context; **History** =
+Records, Ledger, Docs. Every page keeps its tab id and deep link (`?tab=lanes` lands on Work > Lanes); `?tab=work` / `health` /
+`history` land on the first page; old `?tab=instructions` / `guard` land on Context / Slop. The Inbox button carries the needs-you count.
+On a phone the bottom bar is Home / Inbox / Runs / Plan / More (More opens the full bar).
+
 ## What you see (from records, runs, heartbeats and transcripts - never from an LLM; re-renders on change via `/api/stream`, no timer)
 - Header: project switcher (one project or All projects), status time, check-ins on / paused, theme (light / dark / system),
   Pause / Resume check-ins, Run tick. The tab title shows `(n)` when something needs you.
@@ -23,7 +30,7 @@ only, bound to 127.0.0.1. Every POST needs the per-start token embedded in the p
 - Roadmap (`norn road`): themes and items with a status derived from the linked lanes, runs and records (never typed); a tree
   or a board, filters, and the unplaced work that has no item yet.
 - Lanes: one row per lane record with its latest run (any executor), state and outcome.
-- Agents: every running and recent run as a tree (main session + subagents, Codex runs), tokens and context from the transcripts.
+- Runs (tab id `agents`): every running and recent run as a tree (main session + subagents, Codex runs), tokens and context from the transcripts.
 - Records: directives and decisions with their history; Add / Revoke directive, Overrule decision.
 - Docs: the project's `docs` list rendered as markdown (docs.mjs + pinned vendor/ libs, contents sidebar, record-id chips).
   Ledger: the project ledger, one row per entry, newest first (`ledger.mjs` parses check-in / minor / auto / controller lines into a headline + labelled sub-lines, record ids link to where they live, headings / prose as markdown), search + kind filter, 100 lines then "Show older" (`/api/ledger?count=&offset=`). Settings: categories from the schema (policy.mjs `SECTIONS`) with left nav, search (`@modified`),
@@ -42,11 +49,11 @@ and the project's `project.json` and regenerates the marked policy lines (`<!-- 
 
 ## Look
 Norn (default; `engine/dash/norn/`: pixel kit, 9-slice panels, palette lock to `palette.hex`, integer art scale, state tokens and art behind one asset map `norn/assets.mjs`, drop-in folder `norn/art/`) or classic: the header Look button, `?look=classic`, remembered per browser.
-Norn vocabulary (display labels only; tab ids, routes, record kinds, paths and the CLI are unchanged): the tabs are grouped as
-**Verdandi**, what is (Overview, Map, Agents, Lanes, Usage), **Urd**, what was (Records, Ledger, Docs) and **Skuld**, what shall
-be (Plan, Inbox, Settings), with **Wyrd**, all three (Roadmap), beside them; the title says Norn and the header shows the wordmark; the Overview carries the hero (night / day by ground)
-with the three lore lines; empty lists show the empty-state art. The picked art is vendored in `norn/art/` (source + name map in
-its README). The classic look keeps the flat tab bar, the plain "norn" title and no art.
+Norn vocabulary (display only; tab ids, routes, record kinds, paths and the CLI are unchanged): the bar is the same plain bar as
+classic (the Norn group frames Verdandi / Urd / Skuld / Wyrd left the bar in UX review 2; `NORN_GROUPS` still feeds the lore); the
+title says Norn and the header shows the wordmark; the Overview carries the hero (night / day by ground) with the three lore lines
+(Verdandi what is, Urd what was, Skuld what shall be, Wyrd all three); empty lists show the empty-state art. The picked art is vendored in `norn/art/` (source + name map in
+its README). The classic look keeps the plain "norn" title and no art.
 
 ## Tests
 `node --test tests/dashboard.test.mjs tests/ui.test.mjs tests/norn-look.test.mjs tests/norn-map.test.mjs tests/norn-vocab.test.mjs` (fixture server on a random port, temp state).

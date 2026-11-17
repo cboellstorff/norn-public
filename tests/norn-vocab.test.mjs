@@ -14,9 +14,9 @@ test('Norn nav: every tab id in exactly one Norn group (Norn the thread = Home, 
   assert.deepEqual([...ids].sort(), [...SERVER_TABS].sort(), 'each tab once');
   assert.deepEqual(NORN_GROUPS[2][3], ['records', 'ledger', 'docs']); assert.deepEqual(NORN_GROUPS[1][3].slice(-4), ['usage', 'tests', 'context', 'slop']);   // META-TEND P1-VISUAL (REPORT 5.3): Instructions in Verdandi beside Usage; META-TEND P6: Guard (the open faults now = what is) last in Verdandi assert.ok(NORN_GROUPS[3][3].includes('inbox'));
   assert.ok(['overview', 'map', 'agents', 'lanes'].every(t => NORN_GROUPS[1][3].includes(t)));
+  // UX review 2: the bar no longer carries the Norn names (plain destinations in both looks); the groups feed the Overview hero's lore
   const nav = renderNav('inbox', { inbox: 3 }, 'norn');
-  for (const [k, label] of TABS) { assert.ok(nav.includes(`id="tab-${k}" data-tab="${k}"`), k); assert.ok(nav.includes(`>${label}<`), label); }
-  for (const [k, name, sub] of NORN_GROUPS) assert.match(nav, new RegExp(`ng-${k}[^]*>${name}<[^]*>${sub}<`));
+  for (const [, name] of NORN_GROUPS) assert.ok(!nav.includes(`>${name}<`), `no ${name} in the bar`);
   assert.match(nav, /id="tab-inbox"[^>]*aria-selected="true"/); assert.match(nav, /3 need you/);
-  assert.ok(nav.indexOf('tab-records') > nav.indexOf('>Urd<') && nav.indexOf('tab-inbox') > nav.indexOf('>Skuld<'));
+  for (const [k, label] of TABS) assert.ok(renderNav(k, {}, 'norn').includes(`id="tab-${k}" data-tab="${k}" aria-selected="true">${label}`), k);
 });

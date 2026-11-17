@@ -285,7 +285,7 @@ export function renderHome(d, ctx = {}) {
 }
 
 // ---------- the phone bottom bar (SPEC sec. 10: Talk / Inbox / Agents / Plan / More) ----------
-const BAR = [['home', 'Talk', '✉'], ['inbox', 'Inbox', '⚑'], ['agents', 'Agents', '⚙'], ['plan', 'Plan', '☰']];
+const BAR = [['home', 'Home', '✉'], ['inbox', 'Inbox', '⚑'], ['agents', 'Runs', '⚙'], ['plan', 'Plan', '☰']];
 export function renderBottomBar(tab, counts = {}) {
   return BAR.map(([k, l, g]) => `<button data-tab="${k}"${k === tab ? ' aria-current="page"' : ''}><span class="bg" aria-hidden="true">${g}</span>${counts[k] ? `<span class="count" aria-label="${counts[k]} need you">${counts[k]}</span>` : ''}<span class="bl">${l}</span></button>`).join('')
     + `<button data-act="more" aria-expanded="false"><span class="bg" aria-hidden="true">⋯</span><span class="bl">More</span></button>`;

@@ -72,8 +72,8 @@ const oneProject = tab => panel(tab, `<div class="card"><p class="mute">Choose o
 
 export const needsCount = ov => (ov && fin(ov.needs_you) ? ov.needs_you : 0);
 export const pageTitle = (n, project, look = 'classic') => `${n > 0 ? `(${n}) ` : ''}${look === 'norn' ? 'Norn' : 'norn'} - ${project === 'all' ? 'all projects' : project}`;
-// Norn vocabulary (META-VISUAL-B S3, VISUAL-A2 CONCEPTS): display labels only - the Norn look groups the same tab ids under
-// the three Norns; routes, record kinds and the CLI are unchanged. [key, name, what it shows, tab ids in display order]
+// Norn vocabulary (META-VISUAL-B S3, VISUAL-A2 CONCEPTS): the three Norns and what each holds. Since UX review 2 the bar uses NAV
+// (plain names, both looks); these groups carry the Overview hero's lore lines. [key, name, what it shows, tab ids in display order]
 export const NORN_GROUPS = [
   ['norn', 'Norn', 'the thread', ['home']],   // META-CONTROLLER C2 (Look 3, owner Q-25): the conversation is the home page
   ['verdandi', 'Verdandi', 'what is', ['overview', 'map', 'agents', 'lanes', 'usage', 'tests', 'context', 'slop']],   // META-TEND P6: the Guard overview beside them (REPORT 5.3). META-TEND: Tests (suite time is a cost) and Instructions (steering files load now, REPORT 5.3) beside Usage
@@ -87,11 +87,34 @@ export const NORN_LORE = {
   skuld: 'Skuld - what shall be: the loose ends, the questions, the cloth not yet hung.',
   wyrd: 'Wyrd - all three: one thread from what was through what is to what shall be.',
 };
-const tabButton = (tab, counts) => ([k, l]) => `<button role="tab" id="tab-${k}" data-tab="${k}" aria-selected="${k === tab}">${esc(l)}${counts[k] ? `<span class="count" aria-label="${counts[k]} need you">${counts[k]}</span>` : ''}</button>`;
-export function renderNav(tab, counts = {}, look = 'classic') {
-  if (look !== 'norn') return TABS.map(tabButton(tab, counts)).join('');
-  const label = Object.fromEntries(TABS);
-  return NORN_GROUPS.map(([g, name, sub, ids]) => `<span class="ng ng-${g}" role="presentation"><span class="nh" aria-hidden="true"><span class="nn">${name}</span><small>${sub}</small></span>${ids.map(k => tabButton(tab, counts)([k, label[k]])).join('')}</span>`).join('');
+const tabButton = (tab, counts) => ([k, l]) => `<button role="tab" id="tab-${k}" data-tab="${k}" aria-selected="${k === tab}">${esc(l)}${countBadge(counts[k])}</button>`;
+// UX review 2: the bar is 7 destinations with plain names (both looks); the 16 pages sit under them, each page keeps its tab id, route
+// and deep link (?tab=lanes lands on Work > Lanes). A destination with one page is that page's own button (id tab-<page>); one with
+// more is a dest-<id> button (it opens its first page) and, while open, a second row with its pages. A destination id used as a tab
+// (?tab=work) lands on its first page (DEST_TAB, index.html). [id, label, page tab ids in display order]
+export const NAV = [
+  ['home', 'Home', ['home']],
+  ['overview', 'Overview', ['overview']],
+  ['inbox', 'Inbox', ['inbox']],
+  ['work', 'Work', ['lanes', 'agents', 'map', 'plan', 'roadmap']],
+  ['health', 'Health', ['usage', 'slop', 'tests', 'context']],
+  ['history', 'History', ['records', 'ledger', 'docs']],
+  ['settings', 'Settings', ['settings']],
+];
+/** the destination a page sits in ([id, label, pages]) or null (the setup page) */
+export const destOf = tab => NAV.find(([, , ids]) => ids.includes(tab)) ?? null;
+/** a destination id that is not itself a page -> its first page */
+export const DEST_TAB = Object.fromEntries(NAV.filter(([g, , ids]) => !ids.includes(g)).map(([g, , ids]) => [g, ids[0]]));
+const countBadge = n => (n ? `<span class="count" aria-label="${n} need you">${n}</span>` : '');
+export function renderNav(tab, counts = {}) {
+  const label = Object.fromEntries(TABS), cur = destOf(tab);
+  const top = NAV.map(([g, name, ids]) => {
+    if (ids.length === 1) return tabButton(tab, counts)([ids[0], name]);
+    const on = cur?.[0] === g;
+    return `<button role="tab" id="dest-${g}" class="dest" data-tab="${on ? tab : ids[0]}" aria-selected="${on}" aria-controls="pages-${g}">${esc(name)}${countBadge(ids.reduce((n, k) => n + (counts[k] || 0), 0))}</button>`;
+  }).join('');
+  const pages = cur && cur[2].length > 1 ? `<div class="pages" id="pages-${cur[0]}" role="tablist" aria-label="${esc(cur[1])}">${cur[2].map(k => tabButton(tab, counts)([k, label[k]])).join('')}</div>` : '';
+  return `<div class="dests" role="tablist" aria-label="Sections">${top}</div>${pages}`;
 }
 // a picked art image (the asset map) - Norn look only, and only where the page passes its asset function (none in node)
 const art = (ctx, name, cls = '') => (ctx.look === 'norn' && ctx.art ? ctx.art(name, cls) : '');
