@@ -38,8 +38,14 @@ function sandbox(name = 'demo') {
   d.wt = n => { const w = path.join(t, 'wt' + n); fs.mkdirSync(w, { recursive: true }); return w; };
   d.brief = (body = 'mode: done\n', n = 'brief.md') => { const f = path.join(t, n); fs.writeFileSync(f, body); return f; };
   d.item = id => loadState(d.state).items[id];
-  d.opts = (o = {}) => ({ state: d.state, locksDir: d.locks, executor: 'fake', lane: 'demo', worktree: d.wt(1), brief: d.brief(), notes: d.notes, hbMs: 150, staleMs: 3000,
-    policy: { auto_resume_max: 0 }, budget: { max_claude_workers: 4 }, tick: null, ...o });
+  // GAP-2: a queued run reads its budget FILE at fill (no copy is kept): each launch writes the budget it is given to a file of its own
+  let nb = 0;
+  d.opts = (o = {}) => {
+    const budget = o.budget ?? { max_claude_workers: 4 }, budget_file = path.join(t, `budget-${++nb}.json`);
+    fs.writeFileSync(budget_file, JSON.stringify(budget));
+    return { state: d.state, locksDir: d.locks, executor: 'fake', lane: 'demo', worktree: d.wt(1), brief: d.brief(), notes: d.notes, hbMs: 150, staleMs: 3000,
+      policy: { auto_resume_max: 0 }, tick: null, ...o, budget, budget_file };
+  };
   // progress-based (DEC-84 B): fails when the run's supervisor is gone unsettled, never on a clock
   d.ended = id => runEnded(d.state, id);
   return d;
