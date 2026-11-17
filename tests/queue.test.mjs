@@ -221,7 +221,7 @@ test('limit exit: outcome limit + reset; re-queued, held by the limit gate until
 });
 
 // ---------- dash ----------
-// META-PLAN R1: the queue moved from the Agents tab to the Plan tab (Up next)
+// META-PLAN R1: the queue moved from the Runs page to the Plan tab (Up next)
 test('dash Plan tab: queued runs are listed (position, not before), not in Agents, not tree roots', () => {
   const d = sandbox();
   queueRun(d.opts({ brief: d.brief('mode: done\n'), lane: 'qlane', notBefore: '2026-11-09T18:16:00.000Z' }));

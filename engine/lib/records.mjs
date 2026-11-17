@@ -797,7 +797,7 @@ function recordCtx(stateDir, evIn, opts) {
     if (kind === 'decision' && ev.ev === 'create' && caller !== 'migration') {
       const d = ev.data || {}, g = ownerPickGuard(st.items, d);
       // NORN-WATCH S3 + META-CHECKIN-GUARDS R1 guard B (checkinguards.ownerOnlyRefusal, the grader's too): an open owner_only Q is
-      // ruled by the owner only (DIR-47 covers every other Q) - exit 7, noted on the writer's run (the Agents tab shows it)
+      // ruled by the owner only (DIR-47 covers every other Q) - exit 7, noted on the writer's run (the Runs page shows it)
       const oo = d.answers ? ownerOnlyRefusal(st.items[d.answers], caller) : null;
       if (oo) throw Object.assign(new RecordError(oo, OWNER_ONLY_EXIT), { refusal: { guard: 'owner-only', lane: d.lane ?? null, answers: d.answers } });
       if (g) throw new RecordError(`${g.id} is open on lane ${d.lane} - pass --answers ${g.id} or --not-an-answer`, 3);
@@ -847,7 +847,7 @@ function recordCtx(stateDir, evIn, opts) {
 }
 /**
  * META-CHECKIN-GUARDS R1: a guard's refusal noted on the refused writer's own RUNNING run (env META_RUN_ID, when it belongs to this
- * state: launchedHere) as a run `refuse` event - nothing else happened, the next tick and the Agents tab see it. No run = no note.
+ * state: launchedHere) as a run `refuse` event - nothing else happened, the next tick and the Runs page see it. No run = no note.
  */
 export function noteRefusal(stateDir, why, { guard, ...extra }, env = process.env) {
   const id = env.META_RUN_ID;
