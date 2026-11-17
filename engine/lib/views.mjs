@@ -255,5 +255,8 @@ export function renderDigest(d, { level = 2 } = {}) {
   if (s.advice) sec('10 Model advice', s.advice, r => '- ' + r.line);   // META-TEND P4: one tap on the Inbox card applies or keeps each
   // META-DOD 3: read the findings, then review the review run (it releases the build it holds) or withdraw / requeue the build
   if (s.critique) sec('11 Plan reviews to read', s.critique, r => `- ${r.id} review of ${r.of} (${r.plan}): ${r.outcome === 'done' ? '' : r.outcome + ', '}${r.findings ?? '?'} finding${r.findings === 1 ? '' : 's'} in ${r.file}; holds ${r.holds.length ? r.holds.join(', ') : 'no queued run'}`);
+  // gap #5: one active directive restating another; the check-in folds the pair (CHECKIN.md 2b), the row leaves when one is not active
+  if (s.dupdirs) sec('12 Possible duplicate directives', s.dupdirs, r => `- possible duplicate directives: ${r.older} ~ ${r.newer} (${r.why}): fold them, `
+    + `e.g. META rec supersede ${r.older} --by ${r.newer} --why "restated by ${r.newer}"`);
   return L.join('\n') + '\n';
 }

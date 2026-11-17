@@ -969,7 +969,12 @@ document.addEventListener('click', e => {
   if (d.act === 'overrule') { const t = prompt(`Overrule ${d.id}: what instead?`); if (t) act(() => post('/api/decision/overrule', { project: p, id: d.id, text: t })); }
   if (d.act === 'first-task') { const t = $('#first-task-text').value.trim(); if (t) act(() => post('/api/first-task', { project: d.project || p, text: t })); }
   if (d.act === 'adv-approve' && confirm('Approve: a directive asks the check-in for a task brief that adds this enforcement. Norn installs nothing itself.')) act(() => post('/api/directive', { project: d.project || p, text: d.text }));   // META-TEND P3
-  if (d.act === 'directive') { const t = prompt('New directive (binds the check-in):'); if (t) act(() => post('/api/directive', { project: p, text: t })); }
+  if (d.act === 'directive') {   // gap #5: a restatement of an active directive is refused (409); the owner may create it anyway
+    const t = prompt('New directive (binds the check-in):');
+    if (t) act(async () => { try { await post('/api/directive', { project: p, text: t }); } catch (e) {
+      if (!/looks like a duplicate of DIR-/.test(e.message) || !confirm(`${e.message.replace(/ \(a directive has no edit.*$/, '')}\n\nCreate it anyway?`)) throw e;
+      await post('/api/directive', { project: p, text: t, new: true }); } });
+  }
   if (d.act === 'settings-review') {   // META-PROFILE-BUG R1: each change in plain words + a flag on a recorded ruling / a retired executor
     const changes = {};
     for (const el of document.querySelectorAll('[data-key]:not([disabled])')) if (changed(el)) changes[el.dataset.key] = valueOf(el);

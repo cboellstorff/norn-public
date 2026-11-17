@@ -56,6 +56,7 @@ import { docsList as docsListOf } from './docparts.mjs';
 import { paragraphs } from '../lib/instructions.mjs';
 import { openCardsAsync } from '../lib/rules.mjs';
 import { auditsView, acceptText, auditFiles } from '../lib/audit.mjs';
+import { dupOf, dupMessage } from '../lib/dupdirs.mjs';
 import { keepFindings, fixPlan, fixBatch, runsFor, fixCards, verdictText, verdictIds, readRunBrief, FIX_LANE } from '../lib/fixer.mjs';
 import { paraMarks } from '../lib/readev.mjs';
 import { testsView, testsFiles } from '../lib/testscli.mjs';
@@ -1189,7 +1190,11 @@ data: ${JSON.stringify(l)}
       try { const r = await newLaneAsync(p, { name: data.lane === undefined ? FIRST_LANE : String(data.lane), task: text, by: 'dashboard' }); await viewsA(p); return { ok: true, ...r }; }
       catch (e) { if (e instanceof LaneError) throw fail(e.code === 1 ? 500 : 400, e.message); if (e instanceof RecordError) throw fail(409, e.message); throw e; }
     }
-    if (route === '/api/directive') return rec(p, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text: str(data.text, 'Directive', 4000), via: 'dashboard' } });
+    if (route === '/api/directive') {   // gap #5: a restatement of an active directive = 409 unless new: true (the page asks, then sends new: true)
+      const text = str(data.text, 'Directive', 4000), dup = dupOf(st(p).items, text);
+      if (dup && data.new !== true) throw fail(409, dupMessage(dup, 'new: true'));
+      return rec(p, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text, via: 'dashboard', ...(dup ? { distinct_from: [dup.id] } : {}) } });
+    }
     if (route === '/api/directive/revoke') return rec(p, { kind: 'directive', ev: 'revoke', id: String(data.id), by: 'dashboard', data: {} });
     if (route === '/api/decision/overrule') return rec(p, { kind: 'decision', ev: 'overrule', id: String(data.id), by: 'dashboard', data: { text: str(data.text, 'Overrule text', 4000), ...(data.rework_lane ? { rework_lane: String(data.rework_lane) } : {}) } });
     if (route === '/api/lane/archive') return rec(p, { kind: 'lane', ev: data.unarchive === true ? 'unarchive' : 'archive', id: 'L:' + String(data.lane), by: 'dashboard', data: {} });

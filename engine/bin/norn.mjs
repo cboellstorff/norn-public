@@ -70,12 +70,13 @@ import { slopCmd } from '../lib/slop/cli.mjs';
 import { testsCmd } from '../lib/testscli.mjs';
 import { openBlocks, findingLine } from '../lib/slop/host.mjs';
 import { scopeCheck, denyJson } from '../lib/scope.mjs';
+import { dupOf, dupMessage } from '../lib/dupdirs.mjs';
 import { BILLING_MODES, BILLING_NAMES, billingChanges, billingLine, refreshQueued, isApi, usdCap } from '../lib/billing.mjs';
 
 const USAGE = {
   'add question': 'norn rec add question --lane L --title T [--body TEXT | --body-file F] [--option "key|text|cost"]... [--recommend "key|why"] [--class i..v] [--blocks a,b] [--source S] [--owner-only]',
   'add decision': 'norn rec add decision --lane L --question Q --choice C --why W [--cost C] [--source S] [--answers Q-n --owner-words "<owner words, verbatim>" | --not-an-answer] [--notify] [--on-runs RUN-1,RUN-2]    (exit 3 = an owner pick on a lane with an open Q: name it with --answers, or --not-an-answer)',
-  'add directive': 'norn rec add directive --text T --via dashboard|talk|chat [--scope a,b] [--expires UTC]    (owner contexts only)',
+  'add directive': 'norn rec add directive --text T --via dashboard|talk|chat [--scope a,b] [--expires UTC] [--new]    (owner contexts only; exit 3 = it restates an active DIR: supersede that one, or --new to create anyway)',
   'add waiver': 'norn rec add waiver --rule K2 --scope <fingerprint | path glob> --why W [--until ISO]    (owner / controller: a slop finding that may stay)',
   'add lane': 'norn rec add lane --name N [--worktree W] [--notes F] [--branch B] [--brief-dir D] [--stage S] [--round-estimate R] [--executor-hint E] [--item RM-n (links lane:N to the roadmap item)]',
   answer: 'norn rec answer Q-n --text "<owner words>" --via dashboard|chat [--choice key]  |  norn rec answer Q-n --from DEC-m (the owner words the DEC recorded; + apply)  |  norn rec answer --each "Q-50=a,Q-51=b" --text "<owner words>" --via chat',
@@ -99,7 +100,7 @@ const COMMON = ['state', 'project', 'as'];
 const FLAGS = {
   'add question': ['lane', 'title', 'body', 'body-file', 'option*', 'recommend', 'class', 'blocks', 'source', 'owner-only!'],
   'add decision': ['lane', 'question', 'choice', 'why', 'cost', 'source', 'answers', 'owner-words', 'not-an-answer!', 'notify!', 'on-runs'],
-  'add directive': ['text', 'via', 'scope', 'expires'],
+  'add directive': ['text', 'via', 'scope', 'expires', 'new!'],
   'add waiver': ['rule', 'scope', 'why', 'until'],
   'add lane': ['name', 'worktree', 'notes', 'branch', 'brief-dir', 'stage', 'round-estimate', 'executor-hint', 'item'],
   answer: ['text', 'via', 'choice', 'each', 'from'], apply: ['refs'], 'not-an-answer': ['q', 'why'], supersede: ['by', 'why'], withdraw: ['why'], reopen: [],
@@ -1427,6 +1428,11 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
     if (flags.item) {   // META-ROADMAP S3: --item RM-n (add lane only) - checked before the lane exists
       try { openItem(state, flags.item); } catch (x) { throw new Usage(x.message, cmd); }
       if (!KINDS.item.events.link.roles.includes(by)) throw new Usage(`role ${by} may not link roadmap items`, cmd);
+    }
+    if (cmd === 'add directive') {   // gap #5: a restatement of an active directive is refused (exit 3) unless --new; --new keeps the pair out of the digest
+      const dup = dupOf(st().items, ev.data.text ?? '');
+      if (dup && !flags.new) { err('error: ' + dupMessage(dup)); return 3; }
+      if (dup) ev.data.distinct_from = [dup.id];
     }
     let views = { refused: [] };
     const e = record(state, ev, { views: vpaths, onViews: v => { views = v; } });

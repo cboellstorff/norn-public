@@ -19,6 +19,7 @@ import { digestRow } from './slop/daily.mjs';
 import { slopOn } from './policy.mjs';
 import { adviceDigestRow } from './advice.mjs';
 import { critiqueRows } from './critique.mjs';
+import { dupPairs } from './dupdirs.mjs';
 
 const H = 3600e3;
 export const WINDOW_H = 72;
@@ -191,6 +192,9 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   // META-DOD 3: the plan reviews with findings (or no clean end) the check-in has not reviewed yet - the builds they hold wait for it
   const cr = critiqueRows(st.items);
   if (cr.length) sections.critique = cr;
+  // gap #5: two active directives where the newer restates the older - the check-in folds them (supersede the older by the newer)
+  const dd = dupPairs(st.items);
+  if (dd.length) sections.dupdirs = dd;
   const counts = Object.fromEntries(Object.entries(sections).map(([k, v]) => [k, v.length]));
   return { project: project?.name ?? null, at: new Date(now).toISOString(), window_h: WINDOW_H, sections, counts };
 }
