@@ -42,6 +42,7 @@ test('makeResult / readResult: outcomes, the why of a stop, the text of a hand-o
   assert.throws(() => makeResult({ run: 'RUN-3', outcome: 'done', why: 'x' }), /--why is for --outcome stopped/);
   assert.throws(() => makeResult({ run: 'RUN-3', outcome: 'finished' }), /--outcome must be/);
   assert.throws(() => makeResult({ run: 'x' }), /RUN-n/);
+  assert.equal(makeResult({ run: 'RUN-wsl-3' }).record.run, 'RUN-wsl-3', 'a node run (federation) ends itself too');
   const t = mkTmp('meta-run-result-'), dir = resultDir(t, 'RUN-4');
   assert.equal(readResult(dir, { run: 'RUN-4' }), null, 'absent');
   writeResult(dir, { run: 'RUN-4', outcome: 'stopped', why: ' the gate\n is red ', summary: 'tried twice' });
