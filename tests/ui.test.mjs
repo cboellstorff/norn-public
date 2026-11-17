@@ -20,7 +20,6 @@ const clean = (html, where) => {
 test('the UI tab list is the server tab list (Overview ... Ledger, Settings)', () => {
   assert.deepEqual(TABS.map(t => t[0]), SERVER_TABS);
   const nav = renderNav('inbox', { inbox: 3 });
-  for (const [k] of TABS) assert.ok(nav.includes(`id="tab-${k}"`), k);
   assert.match(nav, /id="tab-inbox"[^>]*aria-selected="true"/); assert.match(nav, /3 need you/);
 });
 

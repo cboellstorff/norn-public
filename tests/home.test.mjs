@@ -138,7 +138,7 @@ test('C2 /api/home on the fixture state: the thread file, runs, needs, the side 
     assert.equal(r.status, 200);
     const d = r.data, kinds = d.events.map(e => e.kind);
     assert.ok(kinds.includes('you') && kinds.includes('controller') && kinds.includes('question') && kinds.includes('run-end') && kinds.includes('checkin'), kinds.join());
-    assert.equal(d.needs_you, d.events.filter(e => e.cat === 'needs').length);
+    assert.equal(d.needs_you, d.events.filter(e => e.cat === 'needs' && e.kind !== 'approval').length); assert.equal(d.approvals, 0);   // UX review 4: the Inbox's count (terms.mjs needsYou); approvals beside it
     const un = d.events.find(e => e.kind === 'unreviewed' && e.id === 'RUN-1');
     assert.ok(un && Date.parse(un.ts) > 0, 'an unreviewed run sits in the thread at its end, not at the top');
     assert.equal(d.status.running, false); assert.equal(d.status.ctx, 62000); assert.equal(d.status.handoff_k, 110); assert.equal(d.status.executor, 'claude');

@@ -37,6 +37,28 @@ On a phone the bottom bar is Home / Inbox / Runs / Plan / More (More opens the f
   per-row file tag (machine `local/budget.json` | project `project.json` `policy`), modified marker + reset; Review changes shows
   a diff, Save writes atomically and refuses a stale version (409).
 
+## Words (UX review 4: one name per thing, one count per thing)
+The dashboard says these words and only these; a count of the same thing comes from one function, so every place agrees.
+- **Lane** (`L:<name>`): one line of work with its own branch and worktree (a LANE record). Not "thread", not "task".
+- **Run** (`RUN-n`): one session of an agent on a lane, from start to end. The Runs page lists them; the Overview's "Running" counts
+  runs in flight against the caps. **Worker** appears only in the cap names (`max_claude_workers`): the most runs at once.
+- **Needs you**: an Inbox row that waits for you - an open question, a fixer result to apply, an approval card, a login or setup to do,
+  a parked lane, an unreviewed run. Answered questions (waiting for the next check-in) and model advice are listed in the Inbox for
+  information but are not counted. ONE count: `terms.mjs` `needsYou` - the Overview card, the Inbox head, the Inbox badge, the page
+  title, the Home filter and the project picker all show it (`tests/dash-counts.test.mjs`). Pending chat approvals in the Home thread
+  are counted beside it by name ("+ n to approve").
+- **Finding**: one open problem a check reports (instruction files, memory, rules, docs, tests, models, code checks). The **Slop** page
+  lists every open finding; "slop" names the page, never a count. A **new finding** is one at warn level (medium or high) first seen
+  since the last baseline - the Slop count, SloppaChoppa's line and his badge all say "new finding".
+- **Hunk**: one proposed edit to one file, shown as a diff (a fixer result or an audit card). A finding can need several hunks; Apply
+  counts hunks, the Slop counts count findings.
+- **Directive / Decision / Question** (`DIR-n` / `DEC-n` / `Q-n`): the record kinds; the Records page lists the first two.
+
+## Status colours (UX review 3)
+ok = green, warn = amber, bad = red, run (in progress) = blue, accent = needs you (cyan; Norn look: teal / mint). The accent is never the
+bad colour, so an error never reads as a highlight; every chip's text is WCAG AA on its background in both looks and grounds
+(`tests/dash-colours.test.mjs`). The Norn look picks the nearest palette.hex entries (palette lock).
+
 ## Writes
 Every button writes through the records library (`engine/lib/records.mjs`, rules in `engine/prompts/RECORDS.md`): answers,
 directives, overrules and stops become events; the generated views are re-rendered. Talk to the controller (prompt
@@ -56,4 +78,4 @@ title says Norn and the header shows the wordmark; the Overview carries the hero
 its README). The classic look keeps the plain "norn" title and no art.
 
 ## Tests
-`node --test tests/dashboard.test.mjs tests/ui.test.mjs tests/norn-look.test.mjs tests/norn-map.test.mjs tests/norn-vocab.test.mjs` (fixture server on a random port, temp state).
+`node --test tests/dashboard.test.mjs tests/ui.test.mjs tests/dash-counts.test.mjs tests/dash-colours.test.mjs tests/norn-look.test.mjs tests/norn-map.test.mjs tests/norn-vocab.test.mjs` (fixture server on a random port, temp state).

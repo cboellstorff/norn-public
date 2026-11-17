@@ -12,7 +12,8 @@ import { INS_CAPS, LADDER_ORDER, LADDER_STATES, CONTEXT_SUBS, contextParts, cont
 import { SUB_CAP, pickSub, subviewPage, subMore } from './subviews.mjs';
 import { GUARD_SUBS } from './guardparts.mjs';
 import { firstDoc, placeFindings, findingsByLine } from './docparts.mjs';
-export const TABS = [['home', 'Home'], ['overview', 'Overview'], ['inbox', 'Inbox'], ['lanes', 'Lanes'], ['agents', 'Agents'], ['map', 'Map'], ['roadmap', 'Roadmap'], ['plan', 'Plan'], ['records', 'Records'],
+import { needsYou } from './terms.mjs';
+export const TABS = [['home', 'Home'], ['overview', 'Overview'], ['inbox', 'Inbox'], ['lanes', 'Lanes'], ['agents', 'Runs'], ['map', 'Map'], ['roadmap', 'Roadmap'], ['plan', 'Plan'], ['records', 'Records'],
   ['usage', 'Usage'], ['tests', 'Tests'],
   ['docs', 'Docs'], ['context', 'Context'], ['slop', 'Slop'], ['ledger', 'Ledger'], ['settings', 'Settings']];
 export const ONE_PROJECT = ['home', 'map', 'roadmap', 'records', 'docs', 'context', 'slop', 'ledger', 'settings', 'tests'];
@@ -404,7 +405,8 @@ function inbox(d, ctx) {
   ].join('');
   const adv = items.filter(i => i.type === 'advice');
   const advCard = adv.length ? `<section class="card" id="inbox-advice" style="margin-bottom:12px"><h2>Model advice <span class="mute small">${plural(adv.length, 'card')} · vendor guidance over what each kind of work cost (Usage tab) · nothing changes until you tap</span></h2>${adv.map(i => adviceRow(i, ctx)).join('')}</section>` : '';
-  return `<div class="legend small mute">States: ${['open', 'answered', 'applied', 'superseded', 'withdrawn'].map(s => chip(s)).join(' ')} - set by explicit events only; this page never guesses.</div>${qs}${fxCard}${enfCard}${audCard}${dlvCard}${advCard}
+  const nNeeds = d.needs_you ?? needsYou(items), nInfo = items.length - needsYou(items);   // UX review 4: the one needs-you count (terms.mjs)
+  return `<h2 class="pagehead" id="inbox-needs">Needs you <b>${int(nNeeds)}</b>${nInfo ? ` <span class="mute small">+ ${int(nInfo)} for information (answered, waiting for the next check-in; model advice)</span>` : ''}</h2><div class="legend small mute">States: ${['open', 'answered', 'applied', 'superseded', 'withdrawn'].map(s => chip(s)).join(' ')} - set by explicit events only; this page never guesses.</div>${qs}${fxCard}${enfCard}${audCard}${dlvCard}${advCard}
    <div class="tablecard"><h3>Also needs a look <span class="mute small">parked lanes · unreviewed runs · answered, not yet applied</span></h3><table><thead><tr><th>id</th><th>state</th><th>what</th></tr></thead><tbody>${other || '<tr><td colspan="3" class="mute">nothing</td></tr>'}</tbody></table></div>`;
 }
 
@@ -459,7 +461,7 @@ export function guardChip(rows, go = null) {
 /** a link to where a finding is fixed: data-go (the tab) + the tab's own target (a file + line, a doc, an element id) */
 export const goAttrs = go => [`data-go="${esc(go.tab)}"`, go.sub ? `data-gosub="${esc(go.sub)}"` : '', go.ins ? `data-goins="${esc(go.ins)}"` : '', go.line ? `data-goline="${esc(go.line)}"` : '',
   go.doc !== undefined ? `data-godoc="${esc(go.doc)}"` : '', go.jump ? `data-gojump="${esc(go.jump)}"` : ''].filter(Boolean).join(' ');
-const G_TAB = { context: 'Context', tests: 'Tests', usage: 'Usage', agents: 'Agents', docs: 'Docs', slop: 'Slop' };
+const G_TAB = { context: 'Context', tests: 'Tests', usage: 'Usage', agents: 'Runs', docs: 'Docs', slop: 'Slop' };
 const G_SEV = { high: 'bad', medium: 'warn', low: 'idle', count: 'idle' };
 const shortPath = p => String(p).replace(/\\/g, '/').split('/').slice(-2).join('/');
 const guardRow = (r, labels) => `<li class="grow" id="slop-${esc(r.id)}"><div>${chip(G_SEV[r.severity] ?? 'idle', r.severity)} ${chip('idle', labels[r.type] ?? r.type)}${r.new ? ' ' + chip('needs', 'new') : ''}

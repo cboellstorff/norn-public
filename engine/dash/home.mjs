@@ -252,7 +252,8 @@ export function slashMenu(text, st = {}) {
 export const chatState = (st = {}) => (st.handing_off ? 'handing off ...' : st.busy ? 'thinking ...' : st.running ? 'session open' : 'idle');
 /** The Home tab body. d: GET /api/home; ctx: { project, homeFilter, now } */
 export function renderHome(d, ctx = {}) {
-  const st = d.status || {}, filter = ctx.homeFilter ?? 'all', needs = d.needs_you ?? (d.events || []).filter(e => e.cat === 'needs').length;
+  const st = d.status || {}, filter = ctx.homeFilter ?? 'all', needs = d.needs_you ?? (d.events || []).filter(e => e.cat === 'needs' && e.kind !== 'approval').length;
+  const approvals = d.approvals ?? (d.events || []).filter(e => e.kind === 'approval' && e.state === 'pending').length;   // UX review 4: counted by name, beside needs you
   const harness = `${HARNESS[st.executor] ?? esc(st.executor ?? 'claude')}${st.model ? ` · ${esc(SHORT(st.model))}` : ''}${st.effort ? `<span class="heff"> · ${esc(st.effort)}</span>` : ''}`;
   const lim = fin(st.handoff_k) ? st.handoff_k * 1000 : null;
   const amber = fin(st.ctx) && fin(st.no_new_step_k) && st.ctx >= st.no_new_step_k * 1000;
@@ -273,7 +274,7 @@ export function renderHome(d, ctx = {}) {
   // C5 cost line: tokens are counted (per turn), the weekly % is an estimate (~); API-equivalent $ only in the hover (not money on a plan)
   const c = st.cost, costLine = c ? `<div class="hcost small mute"${fin(c.usd) && c.turns ? ` title="~${c.usd.toFixed(2)} API-equivalent (the CLI's figure; on a subscription it is plan share, not money)"` : ''}>${c.turns
     ? `chat today ${c.tokens >= 1e6 ? (c.tokens / 1e6).toFixed(2) + 'M' : (c.tokens / 1000).toFixed(1) + 'k'} tokens${fin(c.weekly_pct) ? ` · ~${c.weekly_pct.toFixed(2)} % of the week` : ''} · ${c.turns} turn${c.turns === 1 ? '' : 's'}` : 'chat today: no turns'}</div>` : '';
-  const filters = HOME_FILTERS.map(([k, l]) => `<button class="hf" data-act="home-filter" data-filter="${k}" aria-pressed="${k === filter}">${esc(l)}${k === 'needs' ? ` <b>${needs}</b>` : ''}</button>`).join('');
+  const filters = HOME_FILTERS.map(([k, l]) => `<button class="hf" data-act="home-filter" data-filter="${k}" aria-pressed="${k === filter}">${esc(l)}${k === 'needs' ? ` <b id="home-needs">${needs}</b>${approvals ? ` <span class="small">+ ${approvals} to approve</span>` : ''}` : ''}</button>`).join('');
   return `<div class="home">${left(d.side || {}, ctx)}<section class="home-c">
     <div class="htop"><div class="hhead"><span class="hn">Norn</span>${picker}${ctxBar}<button type="button" class="hnote" data-act="open-setting" data-setting="chat_raw_shell" title="${esc(sl.long)}">${esc(sl.short)}</button><span class="spacer"></span><span class="mute small" id="chat-state">${state}</span></div>
     <div class="hfilters" role="toolbar" aria-label="Show">${filters}</div></div>

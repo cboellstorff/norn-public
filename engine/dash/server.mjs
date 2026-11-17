@@ -52,6 +52,7 @@ import { insViewFile } from '../lib/guard-scan.mjs';
 import { insSummary, insPart } from './insparts.mjs';
 import { guardSummary, guardPart, chipView, fixSheet, fixPick } from './guardparts.mjs';
 import { SUB_CAP } from './subviews.mjs';
+import { isNeed, needsYou } from './terms.mjs';
 import { docsList as docsListOf } from './docparts.mjs';
 import { paragraphs } from '../lib/instructions.mjs';
 import { openCardsAsync } from '../lib/rules.mjs';
@@ -321,9 +322,9 @@ export function createDashboard(o) {
 
   // ---------- tab data ----------
   // META-HOME-POLISH R1: what needs you in one project (the Home opens on the first that has some); a broken project counts 0
-  // META-TEND P4: what NEEDS you = every Inbox row but answered Qs and model advice (advisory: it blocks nothing, it waits for a tap)
-  const isNeed = i => i.type !== 'answered' && i.type !== 'advice';
-  const needsOf = async p => { try { return (await inbox(p)).filter(isNeed).length; } catch { return 0; } };
+  // META-TEND P4: what NEEDS you = every Inbox row but answered Qs and model advice (advisory: it blocks nothing, it waits for a tap).
+  // UX review 4: the one count is terms.mjs needsYou - Overview, Inbox, Home and the project picker all use it.
+  const needsOf = async p => { try { return needsYou(await inbox(p)); } catch { return 0; } };
   async function inbox(p) {
     const s = await stAsync(p), items = Object.values(s.items), out = [];
     // META-ADOPT A3: ONE needs-you row while a drafted setup has parts to review (not one per missing thing)
@@ -472,7 +473,7 @@ export function createDashboard(o) {
     const burners = tree.flatMap(n => [n, ...(n.children || [])]).filter(n => n.burn30 > 0)
       .map(n => ({ id: n.id, project: n.project, lane: n.lane ?? null, burn30: n.burn30, pct_per_h: perPct ? Math.round((n.burn30 * 2 / perPct) * 100) / 100 : null }))
       .sort((a, b) => b.burn30 - a.burn30).slice(0, 5);
-    return { now: iso(), projects: ps.map(p => p.name), needs_you: needs.length, needs,
+    return { now: iso(), projects: ps.map(p => p.name), needs_you: needsYou(needs), needs,
       running: { claude: { n: claude, cap: m.max_claude_workers ?? null }, codex: { n: codex, cap: m.max_codex ?? null }, lanes: running },
       burn: { usage: usage(ps[0], m), top: burners, executors: providerUsage(ps) },
       paused: ps.some(p => pausedFiles(p).some(existsS)), checkin_locked: ps.some(p => lockFresh(p)),
@@ -899,7 +900,7 @@ export function createDashboard(o) {
       ruled: items.filter(i => i.kind === 'decision' && new Date(i.created).toDateString() === today).sort(byNew).slice(0, 6)
         .map(d => ({ id: d.id, text: d.data.question ? `${d.data.question}: ${d.data.choice ?? ''}` : d.data.choice ?? d.data.text ?? '', created: d.created, state: d.state })),
       orders: items.filter(i => i.kind === 'directive' && i.state === 'active').sort(byNew).slice(0, 8).map(d => ({ id: d.id, text: d.data.text ?? '', created: d.created })) };
-    return { project: p.name, now: iso(), events, needs_you: events.filter(e => e.cat === 'needs').length, status, side };
+    return { project: p.name, now: iso(), events, needs_you: needsYou(needs), approvals: events.filter(e => e.kind === 'approval' && e.state === 'pending').length, status, side };
   }
   // GET /api/file?project=&path=: an image the thread shows inline, served only from the allow-listed roots - the project root, its
   // state dir, and the worktree + NOTES folder of each of its runs (shots live beside the work that made them). Real paths are compared
@@ -1351,7 +1352,7 @@ data: ${JSON.stringify(l)}
         }
         if (route === '/') return send(200, (await readA(path.join(DASH, 'index.html'))).replace('__TOKEN__', JSON.stringify(token)).replace('__REMOTE__', JSON.stringify(who.device ? { device: who.device.id, name: who.device.name } : null)), 'text/html; charset=utf-8');
         if (route === '/api/remote' && remote) return send(200, remoteView(who));
-        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
+        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/terms.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
         const vm = route.match(/^\/vendor\/([a-z0-9.-]+)$/);   // pinned browser libraries + font (vendor/VENDOR.md), allowlist only
         if (vm && VENDOR.includes(vm[1])) return send(200, await fs.promises.readFile(path.join(DASH, 'vendor', vm[1])), typeOf(vm[1]));
         const nm = route.match(/^\/norn\/([a-z.]+)$/);   // the Norn look's modules + stylesheet, allowlist only
@@ -1363,7 +1364,7 @@ data: ${JSON.stringify(l)}
         if (route === '/api/adopt/repos') return send(200, { repos: await reposNear() });
         if (route === '/api/adopt') return send(200, await adoptView(one(url)));
         if (route === '/api/overview') return send(200, await overview(pick(url, { all: true })));
-        if (route === '/api/inbox') return send(200, { items: (await Promise.all(pick(url, { all: true }).map(inbox))).flat() });
+        if (route === '/api/inbox') { const items = (await Promise.all(pick(url, { all: true }).map(inbox))).flat(); return send(200, { items, needs_you: needsYou(items) }); }
         if (route === '/api/lanes') { const all = url.searchParams.get('all') === '1'; return send(200, { lanes: pick(url, { all: true }).flatMap(p => lanes(p, all)) }); }
         if (route === '/api/agents') { const ps = pick(url, { all: true }); return send(200, { tree: (await Promise.all(ps.map(agents))).flat(), queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) }); }
         if (route === '/api/map') return send(200, await map(one(url), url));
