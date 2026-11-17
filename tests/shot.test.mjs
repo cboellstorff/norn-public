@@ -206,3 +206,17 @@ test('waitDevToolsPort: a browser that dies before DevTools comes up - the error
   });
   assert.match(fs.readFileSync(path.join(profile, 'browser-stderr.log'), 'utf8'), /early noise[\s\S]*No usable sandbox/);
 });
+
+test('waitDevToolsPort: a Linux SUID sandbox helper not root/4755 (CI-RED-7D65D2D) - the error names the case and the helper path', async () => {
+  const profile = mkTmp('meta-shot-');
+  const fixture = path.join(HERE, 'fixtures', 'edge-suid-sandbox-stderr.txt');
+  const die = `process.stderr.write(require("fs").readFileSync(${JSON.stringify(fixture)}, "utf8")); process.exit(1)`;
+  const browser = { kind: 'edge', exe: process.execPath, prefix: ['-e', die, '--'] };
+  const child = launchBrowser({ browser, profile, size: [800, 600], platform: process.platform });
+  await assert.rejects(waitDevToolsPort({ browser, profile, child }), e => {
+    assert.match(e.message, /^no DevTools port/);
+    assert.match(e.message, /SUID sandbox misconfigured: \/opt\/microsoft\/msedge\/msedge-sandbox \(must be owned by root, mode 4755\)/);
+    assert.match(e.message, /setuid_sandbox_host\.cc/, 'the stderr tail still follows');
+    return true;
+  });
+});
