@@ -10,10 +10,11 @@ import { spawnSync } from 'node:child_process';
 import { gitRun } from './check.mjs';
 import { mainRef } from './loc.mjs';
 import { loadState } from '../records.mjs';
+import { pathKey } from '../config.mjs';
 
 export const IDLE_DAYS = 7;
 const D = 86400e3;
-const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+const fwd = pathKey;   // a worktree's identity in any spelling (8.3 short name, link, case): run records vs git's list (CI-RED-7E52345)
 
 /** one branch against main: { kind: merged | empty | real, conflicts } */
 export function classify(repo, main, mainTree, tip) {

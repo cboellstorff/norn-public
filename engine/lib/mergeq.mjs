@@ -10,6 +10,7 @@ import { deliverablesView, deliverableConfig, rehearsalWord } from './deliverabl
 import { loadEpics, epicMembers } from './epics.mjs';
 import { spawn } from 'node:child_process';
 import { makeGit, globToRe } from './dlvgit.mjs';
+import { pathKey } from './config.mjs';
 import { acquireLock, laneWriter, killTree } from './runs.mjs';
 import { renderBatchBrief, suiteMode } from './mergebrief.mjs';
 import { spawnOutside } from './jobguard.mjs';
@@ -97,7 +98,7 @@ export function branchWorktree(repo, branch, git = makeGit()) {
   let cur = null;
   for (const l of out.split(/\r?\n/)) {
     if (l.startsWith('worktree ')) cur = fwd(l.slice(9));
-    else if (l === 'branch refs/heads/' + branch && cur) return cur.toLowerCase() === fwd(repo).toLowerCase() ? { inMain: true } : { path: cur };
+    else if (l === 'branch refs/heads/' + branch && cur) return pathKey(cur) === pathKey(repo) ? { inMain: true } : { path: cur };
   }
   return null;
 }
@@ -153,7 +154,7 @@ export function autoUpdate(row, { cfg, locksDir, git = makeGit(), acquire = acqu
     // ENGINE-GIT (DEC-88): the pushed tip and main (mainShaOf's names) in one for-each-ref. wt shares row.repo's refs when it is the
     // branch's worktree or the scratch of the same repo; a scratch of another repo asks row.repo for main as before.
     const mainNames = [`refs/heads/${cfg.main}`, `refs/remotes/${R}/${cfg.main}`];
-    const shared = !!where || fwd(path.resolve(cfg.repo)).toLowerCase() === fwd(path.resolve(row.repo)).toLowerCase();
+    const shared = !!where || pathKey(cfg.repo) === pathKey(row.repo);
     const at = refsOf(wt, [`refs/remotes/${R}/${B}`, ...(shared ? mainNames : [])], git);
     const remoteTip = at.get(`refs/remotes/${R}/${B}`) || '';
     if (!remoteTip) return res('skip', `${R}/${B} does not exist (not pushed)`);

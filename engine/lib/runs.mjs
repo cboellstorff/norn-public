@@ -28,6 +28,7 @@ import { unserved, osLabel, fedOf, fetchClaims, claimKey, claimRun, releaseClaim
 import { workClass, isFable } from './workclass.mjs';
 import { resolveAtFill } from './launchpolicy.mjs';
 import { floorOf, raiseToFloor, floorBinds } from './floor.mjs';
+import { pathKey } from './config.mjs';
 
 const fwd = p => String(p).replace(/\\/g, '/');
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -87,7 +88,7 @@ export function buildCommand(o) {
 }
 
 // ---------- worktree lock: state/locks/<sha1(worktree)>.json {run, pid, ts} ----------
-export const normWt = wt => { let a = path.resolve(wt).replace(/\\/g, '/').replace(/\/+$/, ''); return process.platform === 'win32' ? a.toLowerCase() : a; };
+export const normWt = pathKey;   // a worktree's identity in any spelling (8.3 short name, link, case): lock files key on it
 export const lockPath = (locksDir, wt) => path.join(locksDir, crypto.createHash('sha1').update(normWt(wt)).digest('hex') + '.json');
 const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 // Windows: rename over a file another process has open fails EPERM / EACCES for a moment - retry (graceful-fs's rename practice)
