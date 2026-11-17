@@ -90,7 +90,7 @@ const USAGE = {
   archive: 'norn rec archive L:name',
   unarchive: 'norn rec unarchive L:name',
   list: 'norn rec list [--open] [--kind Q|DEC|DIR|L|RUN] [--lane x] [--json]',
-  show: 'norn rec show ID [--json]',
+  show: 'norn rec show ID [--json] [--full]    (a long id list prints as its first ids + a count; --full prints all)',
   views: 'norn rec views',
 };
 const COMMON = ['state', 'project', 'as'];
@@ -102,13 +102,22 @@ const FLAGS = {
   'add lane': ['name', 'worktree', 'notes', 'branch', 'brief-dir', 'stage', 'round-estimate', 'executor-hint', 'item'],
   answer: ['text', 'via', 'choice', 'each', 'from'], apply: ['refs'], 'not-an-answer': ['q', 'why'], supersede: ['by', 'why'], withdraw: ['why'], reopen: [],
   overrule: ['text', 'rework-lane'], done: ['refs'], revoke: [], park: ['why', 'q'], unpark: [], archive: [], unarchive: [],
-  list: ['open!', 'kind', 'lane', 'json!'], show: ['json!'], views: [],
+  list: ['open!', 'kind', 'lane', 'json!'], show: ['json!', 'full!'], views: [],
 };
 const KIND_ALIAS = { Q: 'question', DEC: 'decision', DIR: 'directive', L: 'lane', RUN: 'run' };
 const ALL_USAGE = 'usage: norn rec <add question|add decision|add directive|add lane|add waiver|answer|apply|not-an-answer|supersede|withdraw|reopen|overrule|done|revoke|park|unpark|archive|unarchive|list|show|views> ...';
 
 class Usage extends Error { constructor(msg, cmd) { super(msg); this.cmd = cmd; } }
 
+// META-UX-BUILD S7: `rec show` without --full - a long id list (a Fix all directive holds hundreds) = its first ids + a count, a long
+// text = its head + a count; a check-in reads what the record is, never the whole list
+const SHOW_IDS = 5, SHOW_CHARS = 400;
+export function shortData(d) {
+  const one = v => (Array.isArray(v) && v.length > SHOW_IDS * 2 ? [...v.slice(0, SHOW_IDS).map(one), `+${v.length - SHOW_IDS} more (--full prints all)`]
+    : typeof v === 'string' && v.length > SHOW_CHARS ? `${v.slice(0, SHOW_CHARS)}... (+${v.length - SHOW_CHARS} chars, --full prints all)`
+      : v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, one(x)])) : v);
+  return one(d);
+}
 function parse(cmd, argv) {
   const spec = [...FLAGS[cmd], ...COMMON];
   const flags = {}, pos = [];
@@ -1345,7 +1354,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
       if (flags.json) out(JSON.stringify(it, null, 1));
       else {
         out(`${it.id} ${it.kind} ${it.state}: ${title(it)}`);
-        for (const h of it.history) out(`  #${h.seq} ${h.ts} ${h.ev} by ${h.by}${h.run ? ' (' + h.run + ')' : ''} ${JSON.stringify(h.data)}`);
+        for (const h of it.history) out(`  #${h.seq} ${h.ts} ${h.ev} by ${h.by}${h.run ? ' (' + h.run + ')' : ''} ${JSON.stringify(flags.full ? h.data : shortData(h.data))}`);
       }
       return 0;
     }
