@@ -6,16 +6,18 @@
 <title>norn</title>
 <!-- Engine dashboard UI (META-GENERAL-DESIGN 7, 12-S7). Look = the Norn project's design/mock/index.html; renderers in /ui.mjs. -->
 <style>
+/* Status colours (UX review 3; tests/dash-colours.test.mjs): ok green, warn amber, bad red, run blue (in progress), accent = needs you
+   (cyan; never the bad red, so an error never reads as a highlight). Each X on X-bg is WCAG AA (>= 4.5:1) for chip text, light and dark. */
 :root{--bg:#f6f7f9;--panel:#fff;--ink:#1b1f24;--mute:#5d6672;--line:#e3e6ea;--soft:#eef1f4;
-  --accent:#c2410c;--accent-bg:#fff1e8;--ok:#15803d;--ok-bg:#e8f6ed;--run:#1d4ed8;--run-bg:#e8efff;--warn:#a16207;--warn-bg:#fdf5dc;
+  --accent:#0e7490;--accent-bg:#e0f5f9;--ok:#166534;--ok-bg:#e8f6ed;--run:#1d4ed8;--run-bg:#e8efff;--warn:#854d0e;--warn-bg:#fdf5dc;
   --bad:#b91c1c;--bad-bg:#fdecec;--codex:#6d28d9;--codex-bg:#f1eafe;--bar:#d5dae0;--on-accent:#fff;--shadow:rgba(0,0,0,.14);--zebra:color-mix(in srgb,var(--soft) 45%,transparent)}
 @media (prefers-color-scheme:dark){:root{--bg:#121417;--panel:#1a1d21;--ink:#e6e8eb;--mute:#9aa3ad;--line:#2b3036;--soft:#22262b;
-  --accent:#fb923c;--accent-bg:#3a2316;--ok:#4ade80;--ok-bg:#16301f;--run:#7aa2ff;--run-bg:#1b2747;--warn:#facc15;--warn-bg:#3a3214;
-  --bad:#f87171;--bad-bg:#3d1c1c;--codex:#b794f6;--codex-bg:#2d2145;--bar:#3a4048;--on-accent:#fff;--shadow:rgba(0,0,0,.14);--zebra:color-mix(in srgb,var(--soft) 45%,transparent)}}
-:root.light{--bg:#f6f7f9;--panel:#fff;--ink:#1b1f24;--mute:#5d6672;--line:#e3e6ea;--soft:#eef1f4;--accent:#c2410c;--accent-bg:#fff1e8;
-  --ok:#15803d;--ok-bg:#e8f6ed;--run:#1d4ed8;--run-bg:#e8efff;--warn:#a16207;--warn-bg:#fdf5dc;--bad:#b91c1c;--bad-bg:#fdecec;--codex:#6d28d9;--codex-bg:#f1eafe;--bar:#d5dae0;--on-accent:#fff;--shadow:rgba(0,0,0,.14);--zebra:color-mix(in srgb,var(--soft) 45%,transparent)}
-:root.dark{--bg:#121417;--panel:#1a1d21;--ink:#e6e8eb;--mute:#9aa3ad;--line:#2b3036;--soft:#22262b;--accent:#fb923c;--accent-bg:#3a2316;
-  --ok:#4ade80;--ok-bg:#16301f;--run:#7aa2ff;--run-bg:#1b2747;--warn:#facc15;--warn-bg:#3a3214;--bad:#f87171;--bad-bg:#3d1c1c;--codex:#b794f6;--codex-bg:#2d2145;--bar:#3a4048;--on-accent:#fff;--shadow:rgba(0,0,0,.14);--zebra:color-mix(in srgb,var(--soft) 45%,transparent)}
+  --accent:#22d3ee;--accent-bg:#13303a;--ok:#4ade80;--ok-bg:#16301f;--run:#7aa2ff;--run-bg:#1b2747;--warn:#facc15;--warn-bg:#3a3214;
+  --bad:#f87171;--bad-bg:#3d1c1c;--codex:#b794f6;--codex-bg:#2d2145;--bar:#3a4048;--on-accent:#121417;--shadow:rgba(0,0,0,.14);--zebra:color-mix(in srgb,var(--soft) 45%,transparent)}}
+:root.light{--bg:#f6f7f9;--panel:#fff;--ink:#1b1f24;--mute:#5d6672;--line:#e3e6ea;--soft:#eef1f4;--accent:#0e7490;--accent-bg:#e0f5f9;
+  --ok:#166534;--ok-bg:#e8f6ed;--run:#1d4ed8;--run-bg:#e8efff;--warn:#854d0e;--warn-bg:#fdf5dc;--bad:#b91c1c;--bad-bg:#fdecec;--codex:#6d28d9;--codex-bg:#f1eafe;--bar:#d5dae0;--on-accent:#fff;--shadow:rgba(0,0,0,.14);--zebra:color-mix(in srgb,var(--soft) 45%,transparent)}
+:root.dark{--bg:#121417;--panel:#1a1d21;--ink:#e6e8eb;--mute:#9aa3ad;--line:#2b3036;--soft:#22262b;--accent:#22d3ee;--accent-bg:#13303a;
+  --ok:#4ade80;--ok-bg:#16301f;--run:#7aa2ff;--run-bg:#1b2747;--warn:#facc15;--warn-bg:#3a3214;--bad:#f87171;--bad-bg:#3d1c1c;--codex:#b794f6;--codex-bg:#2d2145;--bar:#3a4048;--on-accent:#121417;--shadow:rgba(0,0,0,.14);--zebra:color-mix(in srgb,var(--soft) 45%,transparent)}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-variant-numeric:tabular-nums}
 header{display:flex;align-items:center;gap:16px;padding:10px 20px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:2}
@@ -81,7 +83,7 @@ main{padding:18px 20px;max-width:1500px;margin:0 auto}
 .chip.open,.chip.needs{background:var(--accent-bg);color:var(--accent)}
 .chip.running,.chip.claude{background:var(--run-bg);color:var(--run)}
 .chip.codex{background:var(--codex-bg);color:var(--codex)}
-.chip.prov{background:var(--warn-bg);color:var(--warn)}
+.chip.prov{background:var(--soft);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line)}
 .chip.done,.chip.applied,.chip.in-force,.chip.active,.chip.ok{background:var(--ok-bg);color:var(--ok)}
 .chip.handoff,.chip.answered,.chip.parked,.chip.warn{background:var(--warn-bg);color:var(--warn)}
 .chip.stopped,.chip.lost,.chip.no-marker,.chip.bad,.chip.overruled{background:var(--bad-bg);color:var(--bad)}
