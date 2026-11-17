@@ -157,3 +157,55 @@ test('the result card: one per ended fixer run without a verdict - files with th
   assert.equal(verdictText(c, { choice: 'discard' }), null, 'a discard that closes nothing: no directive');
   assert.match(verdictText(c, { choice: 'discard', close: 'DEC-3' }), /^Then close DIR-9/);
 });
+
+// ---- the dash: Send -> the findings file + "starting"; a fixer run's end -> ONE result card in the Inbox; Apply (a skipped file) = ONE
+// decision + ONE directive; the rest tap approves the runs the rest needs. The shared dash fixture (temp dirs), no browser.
+import { fixture } from './helpers/dash-fixture.mjs';
+
+test('the dash: Send keeps the findings file; a fixer run\'s end is ONE Inbox card; Apply / Discard and the rest tap write one record each', { timeout: 240000 }, async () => {
+  const f = await fixture();
+  try {
+    let s = (await f.get('/api/guard?project=kestrel&part=summary')).data;
+    for (let i = 0; s.pending && i < 1200; i++) { await new Promise(r => setTimeout(r, 100)); s = (await f.get('/api/guard?project=kestrel&part=summary')).data; }
+    const sh = (await f.get('/api/guard?project=kestrel&part=sheet')).data.sheet, keys = sh.items.filter(i => i.tick).map(i => i.key);
+    assert.equal(sh.usage.batch, 40, 'the sheet gets the batch: it says the real number of runs before the tap');
+    const sent = await f.post('/api/fixall', { project: 'kestrel', sig: sh.sig, keys, picks: {} });
+    assert.equal(sent.status, 200, JSON.stringify(sent.data));
+    const state = f.pa.state, dir = sent.data.directive;
+    const s1 = (await f.get('/api/guard?project=kestrel&part=summary')).data;
+    assert.equal(s1.sent[0].fixer.at, 'starting', 'sent, no run yet: the tick starts it');
+    const kept = JSON.parse(fs.readFileSync(findingsFile(state, dir), 'utf8')).rows;
+    assert.equal(kept.length, sent.data.n, 'the dash kept every sent row for the brief');
+    // a fixer run of ONE finding (a batch of 1), ended with a two-file answer
+    const fx = path.join(state, 'fixer'), brief = path.join(fx, `${dir}-1.brief.md`), notes = path.join(fx, `${dir}-1.md`), first = kept[0].id;
+    fs.writeFileSync(brief, `- id: ${first}\n`);
+    fs.writeFileSync(notes, ['### `CLAUDE.md:3` - medium - rewrite', '```diff', '--- a/CLAUDE.md', '+++ b/CLAUDE.md', '@@ -3,1 +3,1 @@', '-old', '+new', '```',
+      '### `AGENTS.md:9` - medium - remove', '```diff', '--- a/AGENTS.md', '+++ b/AGENTS.md', '@@ -9,1 +8,0 @@', '-gone', '```', '## Findings', `- ${first}: drafted`].join('\n'));
+    const run = record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { lane: 'fixall', kind: 'audit', executor: 'fake', brief, notes } });
+    const s2 = (await f.get('/api/guard?project=kestrel&part=summary')).data;
+    assert.deepEqual([s2.sent[0].fixer.at, s2.sent[0].fixer.run], ['running', run.id]);
+    record(state, { kind: 'run', ev: 'end', id: run.id, by: 'launcher', data: { outcome: 'done', exit: 0 } });
+    const inbox = (await f.get('/api/inbox?project=kestrel')).data.items.filter(x => x.type === 'fixresult');
+    assert.equal(inbox.length, 1, 'ONE card');
+    assert.deepEqual(inbox[0].card.files.map(x => [x.file, x.hunks.length]), [['CLAUDE.md', 1], ['AGENTS.md', 1]]);
+    const g = (await f.get('/api/guard?project=kestrel')).data;
+    assert.equal(g.fixcards.length, 1, 'the same card on the Slop page');
+    const before = (await f.get('/api/records?project=kestrel')).data;
+    const ap = await f.post('/api/fixresult', { project: 'kestrel', run: run.id, choice: 'apply', skip: ['AGENTS.md'] });
+    assert.equal(ap.status, 200, JSON.stringify(ap.data));
+    assert.equal(ap.data.closes, sent.data.n === 1);
+    const after = (await f.get('/api/records?project=kestrel')).data;
+    assert.equal(after.decisions.length, before.decisions.length + 1); assert.equal(after.directives.length, before.directives.length + 1);
+    const v = after.decisions.find(x => x.id === ap.data.id), d = after.directives.find(x => x.id === ap.data.directive);
+    assert.deepEqual([v.data.lane, v.data.choice, v.data.ids, v.data.skipped_files], ['fixall-result', 'apply', [first], ['AGENTS.md']]);
+    assert.match(d.data.text, new RegExp(`Apply the fixer hunks of ${run.id}[^]*1 hunk[^]*CLAUDE.md[^]*leave AGENTS.md as it is`));
+    assert.equal((await f.post('/api/fixresult', { project: 'kestrel', run: run.id, choice: 'discard' })).status, 409, 'decided once');
+    assert.equal((await f.get('/api/inbox?project=kestrel')).data.items.filter(x => x.type === 'fixresult').length, 0, 'the card leaves');
+    if (sent.data.n > 1) {
+      const rest = await f.post('/api/fixall', { project: 'kestrel', rest: dir });
+      assert.equal(rest.status, 200, JSON.stringify(rest.data));
+      assert.deepEqual([rest.data.left, rest.data.runs], [sent.data.n - 1, Math.ceil((sent.data.n - 1) / 40)]);
+      assert.equal((await f.get('/api/guard?project=kestrel&part=summary')).data.sent[0].fixer.at, 'starting', 'the rest tap: the tick starts the next batch');
+    }
+  } finally { await f.done(); }
+});

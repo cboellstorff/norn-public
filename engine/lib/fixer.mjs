@@ -21,7 +21,8 @@ export const fixBatch = pol => Math.max(1, Number(pol?.fixer?.batch) || 40);
 export const runsFor = (n, batch) => Math.max(1, Math.ceil(n / batch));
 
 /** the fixer runs of directive id (oldest first): lane fixall, the brief named <DIR>-<stamp>.brief.md */
-export const fixRuns = (items, id) => Object.values(items).filter(i => i.kind === 'run' && i.data?.lane === FIX_LANE && path.basename(fwd(i.data.brief)).startsWith(`${id}-`)).sort(byCreated);
+// a queued run that the fill started is 'filled' (the started run is its own record) and a withdrawn one never ran: neither counts
+export const fixRuns = (items, id) => Object.values(items).filter(i => i.kind === 'run' && i.data?.lane === FIX_LANE && !['filled', 'withdrawn'].includes(i.state) && path.basename(fwd(i.data.brief)).startsWith(`${id}-`)).sort(byCreated);
 
 /** the decisions on directive id's results (lane fixall-result: apply / skip / discard), oldest first */
 const verdicts = (items, id) => Object.values(items).filter(i => i.kind === 'decision' && i.data?.lane === 'fixall-result' && i.data.directive === id).sort(byCreated);
@@ -38,7 +39,7 @@ export function fixPlan(dir, items, { batch = 40, readBrief = () => '' } = {}) {
   const ids = dir.data.findings || [], dec = items[dir.data.fixall];
   const extra = Object.values(items).filter(i => i.kind === 'decision' && i.data?.lane === FIX_LANE && i.data.rest_of === dir.id && i.state === 'in-force');
   const approved = (Number(dec?.data?.runs) || 1) + extra.reduce((n, d) => n + (Number(d.data.runs) || 1), 0);
-  const runs = fixRuns(items, dir.id), live = runs.find(r => ['queued', 'running', 'starting'].includes(r.state)) ?? null;
+  const runs = fixRuns(items, dir.id), live = runs.find(r => ['queued', 'claimed', 'running'].includes(r.state)) ?? null;
   const took = new Set(runs.filter(r => r.end?.outcome !== 'crash' && r.state !== 'cancelled').flatMap(r => briefIds(readBrief(r))));
   const resolved = new Set(verdicts(items, dir.id).flatMap(v => v.data.ids || []));
   const left = ids.filter(x => !took.has(x) && !resolved.has(x));
