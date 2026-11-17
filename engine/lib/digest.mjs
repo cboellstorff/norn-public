@@ -2,7 +2,8 @@
 // every row comes from STATE on every call (DONE and not merged, a crash with no successor, an open Q, a directive nothing cites)
 // and leaves only when the target state is reached - never because someone reviewed or read it. Read-only: writes no record.
 // Sections: finished (not on main), queued (+ after / inputs, evaluated by S4), questions, ended (no clean successor), directives,
-// ci (META-CIWATCH: the project's main CI is red - the run, its sha, its failing tests; leaves when a LATER main run is green).
+// ci (META-CIWATCH: the project's main CI is red - the run, its sha, its failing tests; leaves when a LATER main run is green),
+// overlap (GAP-12: a running lane's changed files overlap a remote branch or open PR; leaves when the lane stops or the overlap goes).
 import { loadState, readEvents, recordsFile, fold, heldLanes, holdWho } from './records.mjs';
 import { deliverablesView, deliverableConfig } from './deliverables.mjs';
 import { makeGit, isAncestor } from './dlvgit.mjs';
@@ -21,6 +22,7 @@ import { adviceDigestRow } from './advice.mjs';
 import { critiqueRows } from './critique.mjs';
 import { dupPairs } from './dupdirs.mjs';
 import { wholeHold, readHold, holdItem, noticeMin } from './holds.mjs';
+import { overlapRows, overlapOn } from './overlap.mjs';
 
 const H = 3600e3;
 export const WINDOW_H = 72;
@@ -204,6 +206,10 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   // gap #5: two active directives where the newer restates the older - the check-in folds them (supersede the older by the newer)
   const dd = dupPairs(st.items);
   if (dd.length) sections.dupdirs = dd;
+  // GAP-12: a running lane whose changed files overlap a remote branch / open PR (overlap.mjs; the tick and a lane start refresh the
+  // cache, the digest only reads it) - the check-in decides: carry on, rebase onto it, or ask the owner
+  const ov = overlapOn(project?.policy) ? overlapRows(stateDir, st.items) : [];
+  if (ov.length) sections.overlap = ov;
   const counts = Object.fromEntries(Object.entries(sections).map(([k, v]) => [k, v.length]));
   return { project: project?.name ?? null, at: new Date(now).toISOString(), window_h: WINDOW_H, sections, counts };
 }

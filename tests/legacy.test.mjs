@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { adoptLegacy, watch, legacyOutcome, procStart, sameProcess } from '../engine/lib/legacy.mjs';
+import { adoptLegacy, watch, legacyOutcome, procStart, sameProcess, running } from '../engine/lib/legacy.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { hbPath, liveRuns, sweepLost, acquireLock, RunRefused } from '../engine/lib/runs.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
@@ -99,4 +99,18 @@ test('procStart on Linux: /proc starttime ticks + btime, sub-second (two process
   assert.equal(a, btime * 1000 + 1234100, 'btime + starttime / CLK_TCK, in ms');
   assert.equal(b - a, 300, 'started 0.3 s apart in the same second: two processes');
   assert.equal(procStart(999999999, 'linux', { proc, hz }), null, 'no such pid');
+});
+
+// CI ubuntu (green main run 44138764892): `norn run --wait` blocks its loop (Atomics.wait) while it waits for the supervisor it
+// spawned; that exited child stays a zombie (never reaped) and kill(pid, 0) still answers - four OOTB tests waited the whole 120 s
+// net (121 s on ubuntu, 2.5 s on Windows). running() reads /proc/<pid>/stat: state Z = gone.
+test('running(pid): a live pid runs; one whose /proc stat says Z (an unreaped zombie) does not; a gone pid does not', () => {
+  const proc = mkTmp('meta-proc-'), me = String(process.pid);
+  fs.mkdirSync(path.join(proc, me));
+  fs.writeFileSync(path.join(proc, me, 'stat'), `${me} (node (x) y) S 1 2 3\n`);
+  assert.equal(running(process.pid, { proc }), true, 'state S: runs (a ")" in the name is skipped)');
+  fs.writeFileSync(path.join(proc, me, 'stat'), `${me} (node (x) y) Z 1 2 3\n`);
+  assert.equal(running(process.pid, { proc }), false, 'state Z: an exited child nobody reaped');
+  assert.equal(running(process.pid, { proc: path.join(proc, 'none') }), true, 'no /proc (Windows, macOS): kill(pid, 0) decides');
+  assert.equal(running(2 ** 30), false, 'no such pid');
 });

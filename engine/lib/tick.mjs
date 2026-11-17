@@ -27,6 +27,7 @@ import { tickFix } from './fixer.mjs';
 import { tickSlop } from './slop/daily.mjs';
 import { checkinCv } from './cv.mjs';
 import { ciProbe } from './ciwatch.mjs';
+import { projectOverlap } from './overlap.mjs';
 import { guardWatch, guardProbe, guardPolicy } from './guard.mjs';
 import { floorOf, floorText } from './floor.mjs';
 import { isApi, usdCap } from './billing.mjs';
@@ -186,6 +187,8 @@ function tickPass(o, g = {}) {
     // META-CHECKIN-DIET R1: routine ends (policy.checkin.routine) are handled here by code, each a launcher review record - no model
     try { for (const x of handleRoutineEnds(state, p, { metaCmd: META_CMD, cli: o.cli, pushed: o.pushed })) tickLog(state, `${tag}: routine ${x.kind} ${x.id}: ${x.ok ? x.note : 'left for the check-in - ' + x.note}`); }
     catch (e) { tickLog(state, `${tag}: routine ends failed: ${e.message}`); }
+    // GAP-12: the overlap check of the running lanes (fetch origin / gh at most every 10 min; overlap.mjs) before the digest reads it
+    if (o.overlap !== false && !o.dry) projectOverlap(p);
     const start = new Date().toISOString();
     const s = writeStatus({ state, project: p.name, providers: providersOf(p), budget: B, projectsDir: machine.claude?.projects_dir, usageJson: machine.usage || {},
       cacheFile: path.join(state, 'usage-cache.json'), paused, staleMs, ci: p.ci, digest: tryDigest(state, p) });
