@@ -1669,8 +1669,7 @@ function fixCmd(argv, env, out, err) {
     if (!project) throw new RunError('norn fix needs --project (the files the findings name are in its repo)');
     const items = loadState(state).items, d = items[id];
     if (!d || d.kind !== 'directive' || !d.data?.fixall) throw new RunError(`${id} is not a Fix all directive`);
-    const bf = flags.budget || path.join(metaRoot(env), 'local', 'budget.json');
-    const pol = withDefaults(merged(fs.existsSync(bf) ? readJsonFile(bf) : {}, project.policy)).policy, batch = fixBatch(pol);   // the project policy (Settings), as the dash routes the docs class
+    const batch = fixBatch(withDefaults({ policy: project.policy }).policy), pick = classExecutor(project, 'docs');   // the project policy (Settings): the docs route the dash names
     const plan = fixPlan(d, items, { batch, readBrief: readRunBrief });
     if (!plan.next) { out(`${id}: nothing to start (${plan.live ? `fixer run ${plan.live} is ${items[plan.live]?.state}` : d.state !== 'active' ? `the directive is ${d.state}` : plan.left.length ? `${plan.left.length} left: the tap approved ${plan.approved} run(s), all ran` : 'every finding taken'})`); return 0; }
     const ff = findingsFile(state, id);
@@ -1682,11 +1681,10 @@ function fixCmd(argv, env, out, err) {
     const text = fixerBrief({ project: project.name, dir: id, dec: dec?.id ?? d.data.fixall, rows, picks: dec?.data?.picks || [] });
     fs.mkdirSync(fixerDir(state), { recursive: true });
     fs.writeFileSync(brief, text);
-    const ex = pol.executors?.docs?.executor || 'claude';
-    const o = runSpec({ executor: ex, lane: FIX_LANE, stage: 'fixer', class: 'docs', brief, worktree: project.root, notes, machine: flags.machine, budget: flags.budget, as: flags.as }, env, w);
+    const o = runSpec({ executor: pick.executor, agent: pick.agent, model: pick.model, effort: pick.effort, lane: FIX_LANE, stage: 'fixer', class: 'docs', brief, worktree: project.root, notes, machine: flags.machine, budget: flags.budget, as: flags.as }, env, w);
     const r = startRun({ ...o, kind: 'audit', readonly: true, promptText: text, ...(flags.queue ? { queue: true } : {}) });
     const msg = { run: r.run, queued: !!r.queued, directive: id, batch: rows.length, left: plan.left.length - rows.length, brief: brief.replace(/\\/g, '/') };
-    out(flags.json ? JSON.stringify(msg) : `${r.queued ? 'QUEUED' : 'STARTED'} ${r.run} fixer of ${id}: ${rows.length} finding(s), read-only, docs class; ${msg.left} left after it; answer -> ${notes.replace(/\\/g, '/')}`);
+    out(flags.json ? JSON.stringify(msg) : `${r.queued ? 'QUEUED' : 'STARTED'} ${r.run} fixer of ${id}: ${rows.length} finding(s), read-only, docs class (${[o.executor, o.agent, o.model, o.effort].filter(Boolean).join(' ')}); ${msg.left} left after it; answer -> ${notes.replace(/\\/g, '/')}`);
     return 0;
   } catch (e) {
     if (e instanceof RunError || e instanceof ConfigError || e instanceof RecordError || e instanceof RunRefused) { err('error: ' + e.message); err('usage: ' + FIX_USAGE); return 2; }
