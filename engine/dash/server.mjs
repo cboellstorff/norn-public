@@ -15,7 +15,7 @@ import { createChat, readThread, threadFile, threadFlushed, threadState, chatCos
 import { ActError, showRoots, outboxDir } from '../lib/chatact.mjs';
 import { genWhyNot } from '../lib/setup.mjs';
 import { profileChoices, profileChanges, getProfile, loadProfiles, COSTS } from '../lib/profiles.mjs';
-import { billingOf, spendDay, usdCap, billingChoices, refreshQueued, USAGE_KEYS } from '../lib/billing.mjs';
+import { billingOf, spendDay, spendBreakdown, usdCap, billingChoices, refreshQueued, USAGE_KEYS } from '../lib/billing.mjs';
 import { floorOf } from '../lib/floor.mjs';
 import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudgetAsync, atomicWriteAsync as atomicA, onlyChanged, floorChanges, retiredExecutors, capOfExecutor, getPath } from '../lib/policy.mjs';
 import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin } from '../lib/records.mjs';
@@ -356,6 +356,15 @@ export function createDashboard(o) {
     return out;
   }
   function lanes(p, all) { return lanesView(st(p), { all, hbAge: hbAge(p) }).map(l => ({ ...l, project: p.name })); }
+  // gap #9: API billing only - one project's $ per lane: today / 7 days / to date (ended runs = the CLI's figure, running = a live estimate)
+  const apiOn = ps => billingOf(withDefaults(settingsState(ps[0]).view))?.type === 'api';
+  const spendOf = p => spendBreakdown(path.dirname(p.state), { projectsDir, projects: [path.basename(p.state)] })[0] ?? { project: p.name, chats: { today: 0, week: 0 }, lanes: [] };
+  function lanesWithSpend(ps, all) {
+    const rows = ps.flatMap(p => lanes(p, all));
+    if (!apiOn(ps)) return rows;
+    const by = new Map(ps.flatMap(p => spendOf(p).lanes.map(g => [`${p.name}|${g.lane}`, g])));
+    return rows.map(l => { const g = by.get(`${l.project}|${l.name}`); return { ...l, usd: g ? { total: g.total, live: g.live, runs: g.runs } : { total: 0, live: 0, runs: 0 } }; });
+  }
   async function agents(p) {
     const s = settingsState(p), m = withDefaults(s.view);
     const talk = (await sessions.list()).filter(r => !r.project || r.project === p.name);
@@ -439,8 +448,9 @@ export function createDashboard(o) {
     // billing modes (lib/billing.mjs): the mode in words; API billing = the last 24 h of spend vs the daily $ cap, no weekly guard
     const bm = billingOf(m), b = bm ? { name: bm.name, label: bm.label, type: bm.type } : null;
     if (bm?.type === 'api') {
-      const s = spendDay(path.dirname(p.state)), cap = usdCap(m);
-      return { ...parsed, source: 'api', billing: { ...b, usd: s.usd, runs: s.runs, cap }, weeklyStopPct: null, weeklyUsed: null, resetAt: null, guard: cap !== null && s.usd >= cap ? 'STOP' : 'ok' };
+      // gap #9: ended runs + running runs (live estimate) + the dashboard chats; live = the running runs' $ by run id (Running table)
+      const s = spendDay(path.dirname(p.state), Date.now(), { projectsDir }), cap = usdCap(m);
+      return { ...parsed, source: 'api', billing: { ...b, usd: s.usd, runs: s.runs, ended_usd: s.ended_usd, live_usd: s.live_usd, live_runs: s.live_runs, chat_usd: s.chat_usd, chat_turns: s.chat_turns, live: s.live, cap }, weeklyStopPct: null, weeklyUsed: null, resetAt: null, guard: cap !== null && s.usd >= cap ? 'STOP' : 'ok' };
     }
     return { ...parsed, source: fresh ? 'live' : 'estimate', billing: b, estimate: { weekly: parsed.weekly, rate: parsed.rate, cap: parsed.cap },
       weeklyStopPct: stop, weeklyUsed: used ?? null, resetAt: nextReset(parseReset(m.reset)),
@@ -562,6 +572,7 @@ export function createDashboard(o) {
       try { parts[i].advice = parts[i].classes.error ? { error: parts[i].classes.error } : adviceFor(p, parts[i].classes, now); } catch (e) { parts[i].advice = { error: String(e.message).slice(0, 200) }; }
       try { parts[i].replay = JSON.parse(fs.readFileSync(replayReportFile(p.state), 'utf8')); } catch { parts[i].replay = null; }
     });
+    if (apiOn(ps)) ps.forEach((p, i) => { try { parts[i].spend = spendOf(p); } catch (e) { parts[i].spend = { error: String(e.message).slice(0, 200) }; } });   // gap #9
     const v = { parts, ms: Number(process.hrtime.bigint() - t0) / 1e6, account_refresh: { running: !!acct.running, started: acct.started, last: acct.last, cache: accountCacheFile } };
     costViews.set(key, { at: Date.now(), v });
     return { ...v, cached: false };
@@ -1364,7 +1375,7 @@ data: ${JSON.stringify(l)}
         if (route === '/api/adopt') return send(200, await adoptView(one(url)));
         if (route === '/api/overview') return send(200, await overview(pick(url, { all: true })));
         if (route === '/api/inbox') return send(200, { items: (await Promise.all(pick(url, { all: true }).map(inbox))).flat() });
-        if (route === '/api/lanes') { const all = url.searchParams.get('all') === '1'; return send(200, { lanes: pick(url, { all: true }).flatMap(p => lanes(p, all)) }); }
+        if (route === '/api/lanes') { const all = url.searchParams.get('all') === '1'; return send(200, { lanes: lanesWithSpend(pick(url, { all: true }), all) }); }
         if (route === '/api/agents') { const ps = pick(url, { all: true }); return send(200, { tree: (await Promise.all(ps.map(agents))).flat(), queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) }); }
         if (route === '/api/map') return send(200, await map(one(url), url));
         if (route === '/api/deliverables') {

@@ -306,20 +306,24 @@ function apiBurn(b) {
   const $ = v => `$${(Number(v) || 0).toFixed(2)}`, cap = fin(b.cap) && b.cap > 0 ? b.cap : null, over = cap !== null && b.usd >= cap;
   const c = over ? chip('bad', 'daily cap reached: no new Claude work') : cap === null ? chip('warn', 'no daily cap') : chip('ok', 'under the daily cap');
   return `<div class="kv" id="burn-api"><span class="mute small">last 24 h</span><div><span class="big">${$(b.usd)}</span> <span class="mute">${cap === null ? 'spent' : `of the ${$(cap)} daily cap`}</span> ${c}${cap === null ? '' : meter(b.usd, cap, null, over || b.usd > cap * 0.8 ? 'hot' : '')}</div>
-     <span class="mute small">runs</span><div class="small">${plural(b.runs, 'Claude run')} ended in the last 24 h</div>
+     <span class="mute small">runs</span><div class="small" id="burn-api-parts">${$(b.ended_usd ?? b.usd)} from ${plural(b.runs, 'Claude run')} ended in the last 24 h · ${$(b.live_usd)} running${b.live_runs ? ` (${plural(b.live_runs, 'run')}, estimate)` : ''}${b.chat_turns ? ` · ${$(b.chat_usd)} dashboard chats` : ''}</div>
      <span class="mute small">guard</span><div class="small mute">none weekly: API billing has no weekly limit${cap === null ? '. Set a daily cap in Settings (API daily cap) to stop spend past it' : ''}</div></div>`;
 }
 function overview(d, ctx) {
   const o = d.overview, tree = d.agents?.tree || [], byId = Object.fromEntries(tree.map(n => [n.id, n]));
   const top = Object.fromEntries((o.burn.top || []).map(t => [t.id, t]));
   const needs = o.needs.length ? o.needs.map(i => needItem(i, ctx)).join('') : `<div class="item">${art(ctx, 'empty-nothing-needs-you', 'empty')}${chip('ok', 'all clear')}<span>Nothing needs you</span></div>`;
+  // gap #9: API billing - the burn column is each running run's $ so far (a live estimate from its tokens; the end record has the CLI's figure)
+  const apiB = o.burn.usage?.billing?.type === 'api' ? o.burn.usage.billing : null, liveUsd = new Map((apiB?.live || []).map(x => [`${x.project}|${x.id}`, x.usd]));
+  const burnCell = l => { if (!apiB) return fin(top[l.run]?.pct_per_h) ? top[l.run].pct_per_h.toFixed(2) + ' %/h' : '-';
+    const v = liveUsd.get(`${l.project}|${l.run}`); return fin(v) ? `~$${v.toFixed(2)}` : '-'; };
   const rows = o.running.lanes.map(l => {
     const n = byId[l.run] || {}, age = n.age_min, b = n.budget_min;
     const ageCell = fin(b) ? `${meter(age, b * 2, b, age > b ? 'hot' : '')}<div class="small mute">${fmtMin(age)} / budget ${b} min</div>` : `<div class="small mute">${fmtMin(age)} (no time budget)</div>`;
     const ctxCell = ctxMeter(n, { codexNote: true });
     return `<tr id="run-${esc(l.run)}"><td><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="small mute"><span class="id">${esc(l.run)}</span>${aname(l.run_name ?? n.name)}${n.stage ? ' ' + esc(n.stage) : ''}</div></td>
       <td>${exChip(n.executor ?? l.executor, n.model, n.effort)}</td><td style="width:24%">${ageCell}</td><td style="width:22%">${ctxCell}</td>
-      <td class="mono">${fin(top[l.run]?.pct_per_h) ? top[l.run].pct_per_h.toFixed(2) + ' %/h' : '-'}</td></tr>`;
+      <td class="mono run-burn">${burnCell(l)}</td></tr>`;
   }).join('') || `<tr><td colspan="5" class="mute">${art(ctx, 'empty-no-runs', 'empty')}No lane is running.</td></tr>`;
   const u = o.burn.usage, used = u.weeklyUsed, stop = u.weeklyStopPct;
   const guardChip = u.guard === 'STOP' ? chip('bad', 'guard tripped: no new Claude worker') : u.guard === 'ok' ? chip('ok', 'under guard') : chip('idle', 'guard unknown');
@@ -338,7 +342,7 @@ function overview(d, ctx) {
   return `${hero}${firstTask(o.first_run)}${setupGaps(o.setup)}${prof}<div class="glance">
    <section class="card${o.needs_you ? ' needs' : ''}" id="needs"><h2>Needs you <b>${o.needs_you}</b></h2>${needs}</section>
    <section class="card" id="running"><h2>Running <b>${o.running.claude.n}/${o.running.claude.cap ?? '-'}</b> Claude · <b>${o.running.codex.n}/${o.running.codex.cap ?? '-'}</b> Codex</h2>
-     <table><thead><tr><th>lane</th><th>executor</th><th>age vs time budget (mark = budget, end = 2x)</th><th>context</th><th>burn</th></tr></thead><tbody>${rows}</tbody></table></section>
+     <table><thead><tr><th>lane</th><th>executor</th><th>age vs time budget (mark = budget, end = 2x)</th><th>context</th><th>${apiB ? '<span title="spent so far: an estimate from its tokens at list price until the run ends">$ so far</span>' : 'burn'}</th></tr></thead><tbody>${rows}</tbody></table></section>
    <section class="card" id="burn"><h2>Burn${u.billing ? ` <span class="mute small" id="burn-billing">${esc(u.billing.label)}</span>` : ''}</h2>
      ${u.billing?.type === 'api' ? apiBurn(u.billing) : `<div class="kv"><span class="mute small">weekly</span><div><span class="big">${pct(used)}</span> <span class="mute">of ${pct(stop, 0)} guard</span> ${guardChip}${meter(used, 100, stop, fin(used) && fin(stop) && used > stop - 10 ? 'hot' : '')}</div>
      <span class="mute small">trailing 2 h</span><div><b>${fin(u.rate) ? u.rate.toFixed(2) + ' %/h' : '-'}</b> <span class="mute">vs cap ${fin(u.cap) ? u.cap.toFixed(2) + ' %/h' : '-'}</span> ${rateChip}</div>
@@ -386,16 +390,18 @@ function inbox(d, ctx) {
 }
 
 function lanes(d, ctx) {
+  const usd = (d.lanes || []).some(l => l.usd);   // gap #9: API billing - each lane's $ to date (its runs; a running one counted live, an estimate)
+  const usdCell = l => !usd ? '' : `<td class="mono lane-usd">${l.usd?.runs ? `${l.usd.live ? '~' : ''}$${l.usd.total.toFixed(2)}` : dash}</td>`;
   const rows = (d.lanes || []).map(l => {
     const [cls, word] = stateOf(l.text), log = l.run ? `<a href="/log?run=${encodeURIComponent(l.run)}&project=${encodeURIComponent(l.project)}" target="_blank"><button>Log</button></a>` : '';
     const act = cls === 'running' ? `${log} <button data-act="stop" data-project="${esc(l.project)}" data-run="${esc(l.run)}">Stop</button>`
       : l.state === 'parked' ? `<button data-tab="inbox">Open Q</button>` : l.state !== 'archived' ? `${log} <button class="ghost" data-act="archive" data-project="${esc(l.project)}" data-lane="${esc(l.name)}">Archive</button>` : log;
     return `<tr id="lane-${esc(l.name)}"><td><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="id">${esc(l.id)}</div></td><td>${chip(l.state)}</td><td>${chip(cls, word)}</td>
-      <td>${l.executor ? chip(exClass(l.executor), l.executor) : dash}</td><td>${esc(l.text)}</td><td><span class="id">${esc(l.run ?? '-')}</span>${l.run_name ? `<div>${aname(l.run_name)}</div>` : ''}</td><td>${act}</td></tr>`;
-  }).join('') || '<tr><td colspan="7" class="mute">No LANE records.</td></tr>';
+      <td>${l.executor ? chip(exClass(l.executor), l.executor) : dash}</td><td>${esc(l.text)}</td><td><span class="id">${esc(l.run ?? '-')}</span>${l.run_name ? `<div>${aname(l.run_name)}</div>` : ''}</td>${usdCell(l)}<td>${act}</td></tr>`;
+  }).join('') || `<tr><td colspan="${usd ? 8 : 7}" class="mute">No LANE records.</td></tr>`;
   return `<div class="banner">Lanes come from LANE records only (no folder scan); state = the latest run on the lane, whatever executor owns the tree.</div>
    <div class="filters"><input type="search" data-filter="lanes" placeholder="filter lanes"><label class="small"><input type="checkbox" data-act="lanes-all"${d.allLanes ? ' checked' : ''}> show done / archived</label></div>
-   <div class="tablecard"><table data-rows="lanes"><thead><tr><th>lane</th><th>record</th><th>run state</th><th>executor</th><th>now</th><th>latest run</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+   <div class="tablecard"><table data-rows="lanes"><thead><tr><th>lane</th><th>record</th><th>run state</th><th>executor</th><th>now</th><th>latest run</th>${usd ? '<th title="every run of the lane; ~ = one is still running (an estimate)">$ to date</th>' : ''}<th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function agents(d, ctx) {
@@ -1285,6 +1291,18 @@ function usageTable(id, title, note, rows, keys, maxPct) {
 }
 const fmtUtc = iso => { const t = Date.parse(iso ?? ''); if (!Number.isFinite(t)) return '-';
   return `${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(t).getUTCDay()]} ${new Date(t).toISOString().slice(0, 16).replace('T', ' ')}Z`; };
+// gap #9: API billing - the project's $ per lane today / last 7 days, the dashboard chats on their own line (ended runs = the CLI's
+// figure, running = a live estimate from tokens at list price, marked ~)
+function apiSpend(s) {
+  if (!s) return '';
+  if (s.error) return `<section class="card" id="usage-spend"><h2>API spend</h2><div class="small mute">${esc(s.error)}</div></section>`;
+  const $ = v => `$${(Number(v) || 0).toFixed(2)}`, lanes = (s.lanes || []).filter(g => g.week > 0 || g.live);
+  const tot = k => lanes.reduce((a, g) => a + g[k], 0) + (s.chats?.[k] || 0);
+  const rows = lanes.map(g => `<tr><td><b>${esc(g.lane)}</b>${g.live ? ' ' + chip('running', 'live') : ''}</td><td class="mono">${g.live ? '~' : ''}${$(g.today)}</td><td class="mono">${g.live ? '~' : ''}${$(g.week)}</td></tr>`).join('');
+  const chat = s.chats && (s.chats.week > 0) ? `<tr id="usage-spend-chats"><td><b>dashboard chats</b></td><td class="mono">${$(s.chats.today)}</td><td class="mono">${$(s.chats.week)}</td></tr>` : '';
+  return `<section class="card" id="usage-spend"><h2>API spend <b>${$(tot('today'))}</b> today <span class="mute small">${$(tot('week'))} in 7 days · per lane · ~ = a run still running (estimate from its tokens at list price)</span></h2>
+   <table><thead><tr><th>lane</th><th>today</th><th>7 days</th></tr></thead><tbody>${rows + chat || '<tr><td colspan="3" class="mute">No spend in 7 days.</td></tr>'}</tbody></table></section>`;
+}
 function usagePart(p, ctx) {
   const t = p.totals, c = p.checkins, k = p.calib, rows = p.rows || [], sec = p.secondary;
   const head = p.window === 'week' ? `since the weekly reset ${fmtUtc(p.since)}` : `runs started in the last ${p.days} days (your weekly reset time is not set in Settings, so the window rolls)`;
@@ -1304,7 +1322,7 @@ function usagePart(p, ctx) {
      <span class="mute small">per check-in, on average</span><div class="mono">${mTok(pt.cache_read)} cache read · ${mTok(pt.cache_create)} cache write · ${int(pt.input)} input · ${mTok(pt.output)} output · ${ofWeek(pt.pct)}</div>
      <span class="mute small">% of week per day</span><div><b>${pct2(c.pct_per_day)}</b> <span class="small mute">what the check-ins cost you each day</span></div></div>`
     : '<div class="small mute">No check-in with measured usage in this window.</div>';
-  return `<div id="usage-${esc(p.project)}">${ctx.project === 'all' ? `<h2>${esc(p.project)}</h2>` : ''}
+  return `<div id="usage-${esc(p.project)}">${ctx.project === 'all' ? `<h2>${esc(p.project)}</h2>` : ''}${apiSpend(p.spend)}
    <div class="grid2"><section class="card" id="usage-summary"><h2>${fin(hp) ? `Usage <b style="white-space:nowrap">${pct2(hp)}</b> of your weekly Claude limit` : 'Usage: not known yet - set your weekly limit in Settings > Usage calibration'} <span class="mute small">${A ? 'your whole Claude account' : 'the runs Norn started'}, ${esc(head)}${p.next_reset ? ` · next reset ${esc(fmtUtc(p.next_reset))}` : ''}</span></h2>
      <div class="kv" id="usage-account">${acctRows}</div><div class="kv">${secRows}<span class="mute small">Claude tokens</span><div class="mono">${plural(t.claude.runs, 'run')} · ${mTok(t.claude.cache_read)} cache read · ${mTok(t.claude.cache_create)} cache write · ${mTok(t.claude.input)} input · ${mTok(t.claude.output)} output</div>
      <span class="mute small">Codex tokens</span><div class="mono">${plural(t.codex.runs, 'run')} · ${mTok(t.codex.tokens)} tokens <span class="small mute">(Codex has its own plan: totals only, not in the Claude %)</span></div>
