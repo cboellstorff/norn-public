@@ -27,6 +27,7 @@ import { scan, importLegacy, renderImport, adoptStart, adoptDecide, adoptApply, 
 import { loadFlow, startFlow, flowStatus, resumeFlow, FlowError, FLOWS_DIR } from '../lib/flows.mjs';
 import { providersOf, typedExe, executorInfo } from '../lib/executors.mjs';
 import { launchParts, refillOf, agentRefusal } from '../lib/launchpolicy.mjs';
+import { launchArgsRefusal } from '../lib/launchargs.mjs';
 import { loginCommand } from '../lib/authguard.mjs';
 import { presetExe } from '../lib/presets.mjs';
 import { capsMatrix, formatCapsMatrix } from '../lib/harness/index.mjs';
@@ -439,6 +440,11 @@ function runSpec(flags, env, { project, state, locks }) {
     tick: flags['no-tick'] || env.META_NO_TICK ? null : [process.execPath, fileURLToPath(import.meta.url), 'tick', '--reason', 'exit', ...(project ? ['--project', project.file] : []), '--state', state],
     ...(env.META_HB_MS ? { hbMs: Number(env.META_HB_MS) } : {}),
   };
+  // GAP-4: every value a caller can invent (executor, model, effort, stage, lane, round, budget-min, brief; a check-in's paths) checked
+  // against what exists before the run starts or queues - the refusal names the valid choices (launchargs.mjs)
+  const bad = launchArgsRefusal({ executor: ex, model: flags.model, effort: flags.effort, stage: flags.stage, lane: flags.lane, round: flags.round, budgetMin: flags['budget-min'],
+    brief: o.brief, worktree: o.worktree, notes: o.notes, project, budget, state, caller: o.caller });
+  if (bad) throw new RunError(bad);
   if (!o.worktree) throw new RunError('--worktree is required (no project lane_defaults.worktree)');
   if (!o.brief) throw new RunError('--brief is required');
   return o;

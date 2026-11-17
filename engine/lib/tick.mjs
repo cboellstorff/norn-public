@@ -18,6 +18,7 @@ import { handleRoutineEnds, checkinPolicy, laneLevel, debounceOf } from './check
 import { watchProbe } from './watch.mjs';
 import { MACHINE_DEFAULTS, HARNESS_EXECUTORS, capText } from './policy.mjs';
 import { profileOf, memoryOf, memoryEnv, knownAgents } from './launchpolicy.mjs';
+import { knownExecutors, knownModels, knownEfforts } from './launchargs.mjs';
 import { BUILTIN } from './executors.mjs';
 import { ledgerStep } from './ledger.mjs';
 import { tickMergeq, mqProbe, spawnDetached } from './mergeq.mjs';
@@ -46,6 +47,14 @@ export function policyLine(B = {}) {
     + (floorOf(B) ? ` WORKER MINIMUM: every worker run (merges and helpers too) uses ${floorText(floorOf(B))}; never pass a lower --model / --effort (the launcher raises it anyway).` : '');
 }
 
+// GAP-4: the launch line's valid values -> { executors, models, efforts } (the words CHECKIN.md shows; the test executor fake left out)
+export function launchValues(p, budget = {}) {
+  const exs = knownExecutors(p, { fake: false });
+  const models = exs.map(x => { const m = knownModels(x, { project: p, budget }); return `${x}: ${m ? m.join(', ') : 'the model of its entry (leave --model out)'}`; }).join('; ');
+  const efforts = [...new Set(exs.flatMap(x => knownEfforts(x) || []))];
+  return { executors: exs.join(' | '), models, efforts: efforts.join(' | ') || 'none' };
+}
+
 /** Fill engine/prompts/CHECKIN.md (or o.template: CHECKIN-MINOR.md) + the project's checkin_extra -> state/<NAME>.rendered.md; returns that path. */
 export function renderCheckin(p, { budgetFile, budget = {}, statusFile = path.join(p.state, 'STATUS.md'), metaRoot = path.join(ENGINE, '..'), template = CHECKIN_PROMPT, wake = '(not given)', cv = '' } = {}) {
   const v = {
@@ -53,6 +62,7 @@ export function renderCheckin(p, { budgetFile, budget = {}, statusFile = path.jo
     meta_root: fwd(metaRoot), status: fwd(statusFile), budget: fwd(budgetFile || '(none)'),
     ledger: fwd(p.ledger || '(none)'), briefs_dir: fwd(p.briefs_dir || p.root), policy: policyLine(budget),
     agents: knownAgents({ claudeDir: process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), project: p }).join(', ') || 'none: leave --agent out',
+    ...launchValues(p, budget),   // GAP-4: the values `norn run` takes, on the launch line (launchargs.mjs refuses any other)
     rules: (p.rules_read_whole || []).map(fwd).join(', ') || '(none)', wake,
     paths: [['ROOT', p.root], ['STATE', p.state], ['BRIEFS', p.briefs_dir], ['LEDGER', p.ledger]].filter(([, x]) => x).map(([k, x]) => `${k}=${fwd(x)}`).join('  '),
   };
