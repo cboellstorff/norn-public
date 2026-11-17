@@ -1353,7 +1353,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
       if (!it) throw new Usage(`${pos[0]} does not exist`, cmd);
       if (flags.json) out(JSON.stringify(it, null, 1));
       else {
-        out(`${it.id} ${it.kind} ${it.state}: ${title(it)}`);
+        out(`${it.id} ${it.kind} ${it.state}: ${flags.full ? title(it) : shortData(String(title(it)))}`);
         for (const h of it.history) out(`  #${h.seq} ${h.ts} ${h.ev} by ${h.by}${h.run ? ' (' + h.run + ')' : ''} ${JSON.stringify(flags.full ? h.data : shortData(h.data))}`);
       }
       return 0;
