@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { BROWSERS, findBrowser, browserArgs, browserEnv, allowedUrl, checkSteps, shot, parseShotArgs, ShotError, killProfileProcs, removeProfile, closeBrowser } from '../engine/lib/shot.mjs';
+import { BROWSERS, findBrowser, browserArgs, browserEnv, allowedUrl, checkSteps, shot, parseShotArgs, ShotError, killProfileProcs, removeProfile, closeBrowser, launchBrowser, waitDevToolsPort } from '../engine/lib/shot.mjs';
 import { renderMergeBrief } from '../engine/lib/mergebrief.mjs';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
 
@@ -190,3 +190,19 @@ test('shot: closeBrowser never throws - a holder that will not die comes back as
   } finally { h.kill('SIGKILL'); await exited(h); }
 });
 
+
+test('waitDevToolsPort: a browser that dies before DevTools comes up - the error names the binary, its exit and the tail of its stderr (kept in the profile)', async () => {
+  const profile = mkTmp('meta-shot-');
+  const die = `const n = String.fromCharCode(10); process.stderr.write("early noise" + n + "x".repeat(4000) + n + "FATAL: No usable sandbox!" + n); process.exit(3)`;
+  const browser = { kind: 'chrome', exe: process.execPath, prefix: ['-e', die, '--'] };
+  const child = launchBrowser({ browser, profile, size: [800, 600], platform: process.platform });
+  await assert.rejects(waitDevToolsPort({ browser, profile, child }), e => {
+    assert.match(e.message, /^no DevTools port/);
+    assert.ok(e.message.includes(process.execPath), 'the binary tried');
+    assert.match(e.message, /exit 3/);
+    assert.match(e.message, /FATAL: No usable sandbox!/);
+    assert.ok(!e.message.includes('early noise'), 'only the tail');
+    return true;
+  });
+  assert.match(fs.readFileSync(path.join(profile, 'browser-stderr.log'), 'utf8'), /early noise[\s\S]*No usable sandbox/);
+});

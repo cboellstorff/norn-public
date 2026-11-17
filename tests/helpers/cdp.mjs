@@ -45,9 +45,7 @@ export const skipWhy = !shotLib ? 'engine/lib/shot.mjs (norn shot) is not on thi
 
 export async function openPage(size = [1440, 900]) {
   const profile = mkTmp('meta-shot-'), child = shotLib.launchBrowser({ browser, profile, size });
-  let port = null;
-  for (let i = 0; i < 300 && !port; i++) { try { port = Number(fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split(/\r?\n/)[0]) || null; } catch { await new Promise(r => setTimeout(r, 100)); } }
-  if (!port) throw new Error('no DevTools port');
+  const port = await shotLib.waitDevToolsPort({ browser, profile, child });
   let page = null;
   for (let i = 0; i < 100 && !page; i++) { try { page = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(t => t.type === 'page'); } catch { /* not yet */ } if (!page) await new Promise(r => setTimeout(r, 100)); }
   const ws = new WebSocket(page.webSocketDebuggerUrl);

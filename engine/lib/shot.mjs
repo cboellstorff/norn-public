@@ -78,10 +78,36 @@ export function browserEnv({ profile, env = process.env, platform = process.plat
   const key = Object.keys(env).find(k => k.toUpperCase() === 'USERPROFILE') || 'USERPROFILE';
   return { ...env, [key]: home };
 }
+/** the browser's stderr, kept in its temp profile: a browser that never brings DevTools up says why there (CI-RED-702D70D) */
+export const STDERR_LOG = 'browser-stderr.log';
 /** start the browser on the temp profile: the ONE launch path (norn shot and the dashboard browser tests) */
 export function launchBrowser({ browser, profile, size, hosts = [], platform = process.platform, env = process.env }) {
-  return spawn(browser.exe, [...(browser.prefix || []), ...browserArgs({ kind: browser.kind, profile, size, hosts })],
-    { stdio: 'ignore', detached: platform !== 'win32', windowsHide: true, env: browserEnv({ profile, env, platform }) });
+  const err = fs.openSync(path.join(profile, STDERR_LOG), 'a');
+  try {
+    return spawn(browser.exe, [...(browser.prefix || []), ...browserArgs({ kind: browser.kind, profile, size, hosts })],
+      { stdio: ['ignore', 'ignore', err], detached: platform !== 'win32', windowsHide: true, env: browserEnv({ profile, env, platform }) });
+  } finally { fs.closeSync(err); }
+}
+/** the last lines of the browser's stderr (at most chars), '' when it wrote none */
+export function stderrTail(profile, chars = 1500) {
+  let s = ''; try { s = fs.readFileSync(path.join(profile, STDERR_LOG), 'utf8'); } catch { return ''; }
+  s = s.trimEnd();
+  return s.length <= chars ? s : s.slice(s.indexOf('\n', s.length - chars) + 1 || s.length - chars);
+}
+/** wait for the DevTools port the browser writes into its profile; none within ms (or a failing exit first: Edge's Windows launcher
+ * hands off and exits 0) = an Error naming the binary, its exit and the tail of its stderr */
+export async function waitDevToolsPort({ browser, profile, child, ms = 30000 }) {
+  const end = Date.now() + ms;
+  for (;;) {
+    try { const port = Number(fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split(/\r?\n/)[0]); if (port) return port; } catch { /* not yet */ }
+    const failed = child && child.exitCode !== null && child.exitCode !== 0;
+    if (failed || Date.now() > end) {
+      const how = failed ? `exit ${child.exitCode}` : `no exit, ${Math.round(ms / 1000)} s`;
+      const tail = stderrTail(profile);
+      throw new Error(`no DevTools port from ${browser.exe} (${how}); its stderr ${tail ? `ends:\n${tail}` : 'is empty'}`);
+    }
+    await new Promise(r => setTimeout(r, 100));
+  }
 }
 
 export function allowedUrl(url, origin) {
@@ -208,11 +234,7 @@ export async function shot(o) {
   const shots = [], blocked = [], logs = [];
   try {
     const deadline = o.timeoutMs || 120000;
-    const port = await until(() => {
-      // Edge's Windows launcher hands the browser to a child of its own and exits 0: only a failing exit is an error
-      if (child.exitCode !== null && child.exitCode !== 0) throw new ShotError(`the browser exited (${child.exitCode}) before DevTools came up`, 1);
-      try { return Number(fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split(/\r?\n/)[0]) || null; } catch { return null; }
-    }, 30000, 'the browser DevTools port');
+    const port = await waitDevToolsPort({ browser: br, profile, child }).catch(e => { throw new ShotError(e.message, 1); });
     const base = `http://127.0.0.1:${port}`;
     const page = await until(async () => {
       try { return (await (await fetch(`${base}/json/list`)).json()).find(t => t.type === 'page') || null; } catch { return null; }
