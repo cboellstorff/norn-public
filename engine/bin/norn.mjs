@@ -797,7 +797,7 @@ function billingCmd(argv, env, out, err) {
     const f = h1Flags(mode === undefined ? argv : argv.slice(1), ['usd-per-day', 'keep-caps!', 'budget', 'machine']);
     const m = machineOf({ budget: f.budget, machine: f.machine }, env), stateRoot = path.join(metaRoot(env), 'state');
     if (mode === undefined && f['usd-per-day'] === undefined) {
-      out(billingLine(m.budget, null, { stateRoot }));
+      out(billingLine(m.budget, null, { stateRoot, projectsDir: projectsDirOf(m.machine, env) }));
       for (const b of BILLING_MODES) out(`  ${b.name === m.budget.billing ? '*' : ' '} ${b.name.padEnd(8)} ${b.label}: ${b.summary}`);
       return 0;
     }
@@ -812,7 +812,7 @@ function billingCmd(argv, env, out, err) {
     const B = { ...m.budget, ...split(updated).budget }, q = refreshQueued(stateRoot, B);
     out(`billing ${m.budgetFile}: ${Object.entries(changes).map(([k, v]) => `${k} ${v}`).join(', ')}`);
     if (q.length) out(`queued runs updated: ${q.length} (their usage keys follow the new budget)`);
-    out(billingLine(B, null, { stateRoot }));
+    out(billingLine(B, null, { stateRoot, projectsDir: projectsDirOf(m.machine, env) }));
     if (isApi(B) && usdCap(B) === null) out('note: no daily $ cap - only the worker cap limits spend (norn billing api --usd-per-day N)');
     return 0;
   } catch (e) {

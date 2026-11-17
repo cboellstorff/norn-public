@@ -15,7 +15,7 @@ export const onAccount = info => (info?.caps || []).includes('max_claude_workers
 // usage hold is the optional daily $ cap (api_usd_per_day) over the last 24 h of Claude runs on this machine.
 export function usageRefusal(spec, state, { rate = true, now = Date.now() } = {}) {
   const B = spec?.budget || {};
-  if (isApi(B)) return apiRefusal(B, state, { now, stateRoot: spec?.stateRoot });
+  if (isApi(B)) return apiRefusal(B, state, { now, stateRoot: spec?.stateRoot, projectsDir: spec?.projectsDir });
   const wantGuard = typeof B.weekly_stop_pct === 'number';
   const wantRate = rate && typeof B.usage_rate_cap_pct_per_h === 'number' && !isMergeStage(spec.stage);
   if (!wantGuard && !wantRate) return null;
