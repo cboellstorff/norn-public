@@ -139,6 +139,21 @@ test('norn fix start: says why nothing starts; refuses a directive that is not a
   assert.match(o.join('\n'), /nothing to start \(the directive is done\)/);
 });
 
+test('norn fix start routes the fixer by the PROJECT policy (Settings, as the dash says), not the bare budget', () => {
+  const root = tmp('fixer-route-'), state = path.join(root, 'state'), repo = path.join(root, 'repo'), fwd = s => s.split(path.sep).join('/');
+  fs.mkdirSync(repo, { recursive: true });
+  const pf = path.join(root, 'kestrel.json'), bf = path.join(root, 'budget.json');
+  fs.writeFileSync(pf, JSON.stringify({ schema: 1, name: 'kestrel', title: 'K', root: fwd(repo), policy: { lanes: {}, executors: { docs: { executor: 'no-such-proj' } } } }));
+  fs.writeFileSync(bf, JSON.stringify({ policy: { executors: { docs: { executor: 'no-such-budget' } } } }));
+  const e = [], run = argv => main(argv, { META_ROOT: root, META_ROLE: 'owner' }, () => {}, s => e.push(s));
+  const dec = record(state, { kind: 'decision', ev: 'create', by: 'dashboard', data: { lane: 'fixall', question: 'Fix all', choice: 'send', why: 'tap', findings: ['I-1'] } });
+  const dir = record(state, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text: 'Fix all', via: 'dashboard', findings: ['I-1'], fixall: dec.id } });
+  fs.mkdirSync(path.join(state, 'fixer'), { recursive: true });
+  fs.writeFileSync(findingsFile(state, dir.id), JSON.stringify({ rows: [{ id: 'I-1', key: 'k', path: 'CLAUDE.md', line: 2, why: 'w', action: 'a' }] }));
+  assert.equal(run(['fix', 'start', dir.id, '--project', pf, '--state', state, '--budget', bf]), 2);
+  assert.match(e.join('\n'), /unknown executor "no-such-proj"/, 'the project policy routes the docs class');
+});
+
 test('the result card: one per ended fixer run without a verdict - files with their hunks, the status lines; no hunk = failed', () => {
   const w = world({ n: 3, runs: 1 }), notes = '/s/fixer/DIR-9-0.md';
   w.items['RUN-1'].data.notes = notes;

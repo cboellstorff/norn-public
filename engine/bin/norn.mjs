@@ -1670,7 +1670,7 @@ function fixCmd(argv, env, out, err) {
     const items = loadState(state).items, d = items[id];
     if (!d || d.kind !== 'directive' || !d.data?.fixall) throw new RunError(`${id} is not a Fix all directive`);
     const bf = flags.budget || path.join(metaRoot(env), 'local', 'budget.json');
-    const pol = withDefaults(fs.existsSync(bf) ? readJsonFile(bf) : {}).policy, batch = fixBatch(pol);
+    const pol = withDefaults(merged(fs.existsSync(bf) ? readJsonFile(bf) : {}, project.policy)).policy, batch = fixBatch(pol);   // the project policy (Settings), as the dash routes the docs class
     const plan = fixPlan(d, items, { batch, readBrief: readRunBrief });
     if (!plan.next) { out(`${id}: nothing to start (${plan.live ? `fixer run ${plan.live} is ${items[plan.live]?.state}` : d.state !== 'active' ? `the directive is ${d.state}` : plan.left.length ? `${plan.left.length} left: the tap approved ${plan.approved} run(s), all ran` : 'every finding taken'})`); return 0; }
     const ff = findingsFile(state, id);
