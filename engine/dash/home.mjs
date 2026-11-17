@@ -189,7 +189,7 @@ function card(e, ctx) {
   const what = e.kind === 'unreviewed' ? `${rid(e.id)} <b>${esc(e.lane ?? 'run')}</b> ended ${esc(String(e.outcome ?? e.state).toUpperCase())}${e.why ? `: ${esc(e.why)}` : ''} - not reviewed yet`
     : e.kind === 'parked' ? `lane <b>${esc(String(e.id).slice(2))}</b> parked${e.q ? ` by ${rid(e.q)}` : e.why ? `: ${esc(e.why)}` : ''}`
     : e.kind === 'login' ? `${esc(e.title)}` : `${esc(e.title ?? e.id)}`;
-  const go = e.kind === 'unreviewed' ? 'agents' : 'inbox';
+  const go = e.kind === 'unreviewed' ? 'runs' : 'inbox';
   return `<div class="head">${tag('needs', 'NEEDS YOU')}<span class="txt">${what}</span><span class="spacer"></span><button class="ghost" data-tab="${go}">open</button></div>`;
 }
 const LINE = new Set(['segment', 'stop', 'checkin', 'handoff']), PLAIN = new Set(['you', 'controller', 'tools', 'show', 'norn']);
@@ -252,8 +252,7 @@ export function slashMenu(text, st = {}) {
 export const chatState = (st = {}) => (st.handing_off ? 'handing off ...' : st.busy ? 'thinking ...' : st.running ? 'session open' : 'idle');
 /** The Home tab body. d: GET /api/home; ctx: { project, homeFilter, now } */
 export function renderHome(d, ctx = {}) {
-  const st = d.status || {}, filter = ctx.homeFilter ?? 'all', needs = d.needs_you ?? (d.events || []).filter(e => e.cat === 'needs' && e.kind !== 'approval').length;
-  const approvals = d.approvals ?? (d.events || []).filter(e => e.kind === 'approval' && e.state === 'pending').length;   // UX review 4: counted by name, beside needs you
+  const st = d.status || {}, filter = ctx.homeFilter ?? 'all', needs = d.needs_you, approvals = d.approvals;   // UX review 4: the Inbox's count; approvals by name beside it
   const harness = `${HARNESS[st.executor] ?? esc(st.executor ?? 'claude')}${st.model ? ` · ${esc(SHORT(st.model))}` : ''}${st.effort ? `<span class="heff"> · ${esc(st.effort)}</span>` : ''}`;
   const lim = fin(st.handoff_k) ? st.handoff_k * 1000 : null;
   const amber = fin(st.ctx) && fin(st.no_new_step_k) && st.ctx >= st.no_new_step_k * 1000;
@@ -286,7 +285,7 @@ export function renderHome(d, ctx = {}) {
 }
 
 // ---------- the phone bottom bar (SPEC sec. 10: Talk / Inbox / Agents / Plan / More) ----------
-const BAR = [['home', 'Home', '✉'], ['inbox', 'Inbox', '⚑'], ['agents', 'Runs', '⚙'], ['plan', 'Plan', '☰']];
+const BAR = [['home', 'Home', '✉'], ['inbox', 'Inbox', '⚑'], ['runs', 'Runs', '⚙'], ['plan', 'Plan', '☰']];
 export function renderBottomBar(tab, counts = {}) {
   return BAR.map(([k, l, g]) => `<button data-tab="${k}"${k === tab ? ' aria-current="page"' : ''}><span class="bg" aria-hidden="true">${g}</span>${counts[k] ? `<span class="count" aria-label="${counts[k]} need you">${counts[k]}</span>` : ''}<span class="bl">${l}</span></button>`).join('')
     + `<button data-act="more" aria-expanded="false"><span class="bg" aria-hidden="true">⋯</span><span class="bl">More</span></button>`;

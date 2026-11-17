@@ -81,7 +81,7 @@ const NORN = ['palette.mjs', 'pixel.mjs', 'assets.mjs', 'motion.mjs', 'look.mjs'
   'live.mjs', 'stage.mjs', 'weave.mjs', 'mapview.mjs', 'well.mjs', 'tapestry.mjs', 'orc.mjs'];   // META-TEND P6: SloppaChoppa's stage   // S2: the Map (the Well / the Tapestry)
 const TYPES = { js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', woff2: 'font/woff2', png: 'image/png' };
 const typeOf = f => TYPES[f.split('.').pop()];
-export const TABS = ['home', 'overview', 'inbox', 'lanes', 'agents', 'map', 'roadmap', 'plan', 'records', 'usage', 'tests', 'docs', 'context', 'slop', 'ledger', 'settings'];
+export const TABS = ['home', 'overview', 'inbox', 'work', 'lanes', 'runs', 'map', 'plan', 'roadmap', 'health', 'usage', 'slop', 'tests', 'context', 'history', 'records', 'ledger', 'docs', 'settings'];
 const hash = s => createHash('sha256').update(s).digest('hex');
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const plain = o => o !== null && typeof o === 'object' && !Array.isArray(o);
@@ -369,14 +369,14 @@ export function createDashboard(o) {
       .map(n => { const rf = refused(n.id); return { ...n, project: p.name, ...(gc.has(n.id) ? { guard: gc.get(n.id) } : {}), ...(rf.length ? { refused: rf } : {}) }; });
   }
   // the Ledger tab (LEDGER-UX R1): `count` lines (default 100, max 2000) ending `offset` lines before the end ("show older" pages);
-  // runs = the run ids the Agents tab lists, so the tab links only those
+  // runs = the run ids the Runs page lists, so the tab links only those
   async function ledgerPage(p, url) {
     const n = url.searchParams.get('count'), o = url.searchParams.get('offset');
     const count = Math.min(2000, Math.max(1, Number.parseInt(n ?? '', 10) || 100)), offset = Math.max(0, Number.parseInt(o ?? '', 10) || 0);
     const all = p.ledger ? await tail(p.ledger, Infinity) : [], end = Math.max(0, all.length - offset), start = Math.max(0, end - count);
     return { file: p.ledger ?? null, ledger: all.slice(start, end), total: all.length, count, offset, more: start > 0, runs: [...shownRunIds(runsOf(st(p)))] };
   }
-  // the lane -> agent map (LANE-MAP-DESIGN 1): built from the fold + the agents tree the Agents tab already reads
+  // the lane -> agent map (LANE-MAP-DESIGN 1): built from the fold + the agents tree the Runs page already reads
   async function map(p, url) {
     const more = new Set((url.searchParams.get('more') || '').split(',').map(x => x.trim()).filter(Boolean));
     return { project: p.name, ...mapGraph(st(p), { all: url.searchParams.get('all') === '1', more, tree: await agents(p), deliverables: deliverablesOf(p).rows }) };
@@ -568,7 +568,7 @@ export function createDashboard(o) {
     return { ...v, cached: false };
   }
   const docsList = p => (p.docs || []).map((d, i) => ({ i, tab: d.tab, path: d.path, exists: existsS(d.path) }));
-  // META-UX-BUILD S1: the Instructions tab and the Guard read ONE instruction scan per project, never run in a request: the last view
+  // META-UX-BUILD S1: Context and Slop read ONE instruction scan per project, never run in a request: the last view
   // is served at once (from memory, else <state>/instructions-view.json, so a restart is not cold) and, once older than o.insTtlMs
   // (60 s), rebuilt by a worker thread (lib/guard-scan.mjs, this server's own home + machine) - one rebuild at a time per project.
   // A new view, or the end of a rebuild a page was shown as "refreshing", reaches the page as the stream's derived event (in the sig).

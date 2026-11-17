@@ -13,7 +13,7 @@ const n = k => Array.from({ length: k }, (_, i) => i);
 /** a Guard view as guardOf builds it: 100 rows, 12 of them rules rows */
 function bigGuard() {
   const rows = n(100).map(i => ({ id: `A-${i}`, type: i < 12 ? 'rules' : 'instructions', severity: i < 30 ? 'medium' : 'low', new: i < 3, why: `why ${i}`, surface: 's',
-    path: 'C:/r/CLAUDE.md', line: i + 1, go: { tab: 'instructions' } }));
+    path: 'C:/r/CLAUDE.md', line: i + 1, go: { tab: 'context' } }));
   const types = [['code', 'code', 'agents', 0], ['instructions', 'instruction files', 'instructions', 88], ['rules', 'rules', 'instructions', 12]]
     .map(([type, label, tab, open]) => ({ type, label, tab, open, warn: 0, new: 0 }));
   return { project: 'kestrel', rows, types, total: 100, new: 3, pending: false, slop: true, voice: { popups: 'off', daily_cap: 3 }, errors: [],

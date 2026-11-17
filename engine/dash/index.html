@@ -84,6 +84,7 @@ main{padding:18px 20px;max-width:1500px;margin:0 auto}
 .card h2{margin:0 0 10px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);display:flex;gap:8px;align-items:baseline}
 .card h2 b{font-size:20px;letter-spacing:0;text-transform:none;color:var(--ink)}
 .card.needs{border-color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
+.hub{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:12px}.hubcard h2 button{font:inherit;color:inherit;letter-spacing:inherit;text-transform:inherit}.hubnow{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .pagehead{margin:0 0 8px;font-size:15px;display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}.pagehead>b{font-size:20px}
 .item{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid var(--line)}
 .item:first-of-type{border-top:0}
@@ -432,7 +433,7 @@ details.ck .ck-full{text-align:left;margin:6px 0 2px;padding:8px 10px;border:1px
 </aside>
 <script>const TOKEN = __TOKEN__, REMOTE = __REMOTE__;</script>
 <script type="module">
-import { TABS, DEST_TAB, loadTab, loadParts, partsKey, renderTab, renderNav, pageTitle, needsCount, fmtTime, esc, matchText, renderFeedHead, renderFeedEvent, rmScopeNext, rmUrlHash, parseRmHash } from '/ui.mjs';
+import { TABS, loadTab, loadParts, partsKey, renderTab, renderNav, pageTitle, needsCount, fmtTime, esc, matchText, renderFeedHead, renderFeedEvent, rmScopeNext, rmUrlHash, parseRmHash } from '/ui.mjs';
 import DOMPurify from '/vendor/purify.es.mjs';
 import { renderDeliverable, renderRmEditor, rmEditBody } from '/ui.mjs';
 import { initLook, setLook, setTheme, setQuiet, look, ground, assetImg, assetUrl, motion } from '/norn/look.mjs';
@@ -445,12 +446,6 @@ const step = n => { document.body.dataset.step = n; };
 step('imports');
 const sanitize = h => DOMPurify.sanitize(h, { ADD_ATTR: ['target'] }); // docs markdown: defence in depth over docs.mjs escaping
 const $ = s => document.querySelector(s), qs = new URLSearchParams(location.search);
-// META-UX-BUILD S4 (owner DIR-65): Instructions is Context - an old tab=instructions link lands on Context (the URL then says context).
-// META-UX-BUILD S5 (owner DIR-64): the Guard is Slop - an old tab=guard link lands on Slop the same way.
-// UX review 2: a destination id (?tab=work / health / history) lands on its first page the same way.
-const OLD_TAB = { instructions: 'context', guard: 'slop', ...DEST_TAB };
-const tabOf = t => OLD_TAB[t] ?? t;
-if (OLD_TAB[qs.get('tab')]) { qs.set('tab', OLD_TAB[qs.get('tab')]); history.replaceState(null, '', '?' + qs.toString() + location.hash); }
 const S = { tab: TABS.some(t => t[0] === qs.get('tab')) || qs.get('tab') === 'adopt' ? qs.get('tab') : 'home', homeFilter: HOME_FILTERS.some(x => x[0] === qs.get('filter')) ? qs.get('filter') : 'all', homeOpen: new Set(), projects: [], adoptAdd: false, adoptScan: null, adoptAsk: null, adoptEdits: {}, adoptForm: null, project: qs.get('project') || null, allLanes: false, mapZoom: Number(qs.get('zoom')) || 1, ledgerN: 100, recOpen: new Set(), mapMore: new Set(), mapAll: false, doc: qs.get('doc') || null, docLine: Number(qs.get('line')) || null, docSrc: false, docScroll: !!qs.get('line'), paused: false, at: null, needs: 0, setCat: qs.get('setcat'), setQ: qs.get('setq') || '', setLevel: (() => { try { return localStorage.getItem('meta-setlevel') || 'basic'; } catch { return 'basic'; } })(), setVersion: null, setDirty: 0,
   mapView: qs.get('view') || (() => { try { return localStorage.getItem('meta-mapview'); } catch { return null; } })() || 'well', nornZoom: 1, quiet: false,
   sub: qs.get('sub'), subLimit: null, parts: {}, partsBusy: {},
@@ -548,7 +543,7 @@ function popUp() {
 // a Guard row / chip: the tab that fixes it, opened at its file + line, its doc, or its element
 // META-UX-BUILD S3: a file (an Instructions file link, a doc) opens in the Docs reader at its line
 function goTo(g) {
-  document.body.classList.remove('more'); S.tab = tabOf(g.tab); S.sub = g.sub || null; S.subLimit = null; S.batch = null; S.fixall = null;
+  document.body.classList.remove('more'); S.tab = g.tab; S.sub = g.sub || null; S.subLimit = null; S.batch = null; S.fixall = null;
   const file = g.ins ? g.ins : g.doc !== undefined && g.doc !== '' ? `doc-${g.doc}` : null;
   if (file) { S.tab = 'docs'; S.doc = file; S.docLine = Number(g.line) || null; S.docScroll = !!S.docLine; }
   if (g.jump) S.jump = g.jump;
@@ -569,7 +564,7 @@ async function partsFetch(tab, d) {
 // META-UX-BUILD S2: the chosen sub-view lives in the URL (&sub=): a tap pushes it, Back / a reload / a shared link land on it
 const tabUrl = () => `?project=${encodeURIComponent(S.project)}&tab=${S.tab}${S.sub ? '&sub=' + encodeURIComponent(S.sub) : ''}${S.tab === 'docs' && S.doc ? `&doc=${encodeURIComponent(S.doc)}${S.docLine ? '&line=' + S.docLine : ''}` : ''}`;
 addEventListener('popstate', () => {
-  const q = new URLSearchParams(location.search), t = tabOf(q.get('tab'));
+  const q = new URLSearchParams(location.search), t = q.get('tab');
   if (!TABS.some(x => x[0] === t) || q.get('project') !== S.project) return;
   S.tab = t; S.sub = q.get('sub'); S.subLimit = null; S.batch = null; S.fixall = null; S.doc = q.get('doc') || null; S.docLine = Number(q.get('line')) || null; render();
 });
@@ -580,7 +575,7 @@ async function render(force = false, why = []) {
     document.body.dataset.tab = S.tab; $('#bbar').innerHTML = S.project ? renderBottomBar(S.tab, { inbox: S.needs }) : '';
     const more = $('#bbar [data-act=more]'); if (more) more.setAttribute('aria-expanded', String(document.body.classList.contains('more')));
     chatLive(S.tab === 'home' && S.project && S.project !== 'all' ? S.project : null);
-    const nav = $('#tabs'), navX = nav.scrollLeft; nav.innerHTML = renderNav(S.tab, { inbox: S.needs }, look()); nav.scrollLeft = navX;
+    const nav = $('#tabs'), navX = nav.scrollLeft; nav.innerHTML = renderNav(S.tab, { inbox: S.needs }); nav.scrollLeft = navX;
     if (S.navTab !== S.tab) { S.navTab = S.tab; const show = () => nav.querySelector('[aria-selected=true]')?.scrollIntoView({ inline: 'nearest', block: 'nearest' }); show(); document.fonts.ready.then(show); }
     if (!S.project) S.tab = 'adopt';
     step('render:loadTab ' + S.tab); const d = await loadTab(S.tab, S.project, get, { allLanes: S.allLanes, doc: S.doc, docLine: S.docLine, docSrc: S.docSrc, wide: !matchMedia('(max-width:700px)').matches, mapMore: S.mapMore, mapAll: S.mapAll, ledgerN: S.ledgerN, adoptAdd: S.adoptAdd, adoptScan: S.adoptScan, projects: S.projects, parts: S.parts, sub: S.sub, limit: S.subLimit, batch: S.batch, fixall: S.tab === 'slop' ? S.fixall : null });
@@ -890,9 +885,9 @@ document.addEventListener('click', e => {
   const rid = e.target.closest('a[data-rid]');   // record-id chips in Docs: open the item where it lives
   if (rid) { e.preventDefault(); const id = rid.dataset.rid, k = id.split(/[-:]/)[0];
     if (k === 'RM') { S.tab = 'roadmap'; S.rm = { item: id, view: S.rm.view }; S.rmJump = true; history.replaceState(null, '', rmUrl()); render(); return; }   // META-ROADMAP S2
-    S.tab = { DEC: 'records', DIR: 'records', Q: 'inbox', RUN: 'agents', L: 'lanes' }[k] ?? 'records';
+    S.tab = { DEC: 'records', DIR: 'records', Q: 'inbox', RUN: 'runs', L: 'lanes' }[k] ?? 'records';
     if (S.tab === 'records') S.find = id; if (S.tab === 'lanes') { S.find = id.slice(2); S.allLanes = true; }
-    S.jump = { inbox: 'q-' + id, agents: 'node-' + id, records: 'rec-' + id }[S.tab] ?? null;
+    S.jump = { inbox: 'q-' + id, runs: 'node-' + id, records: 'rec-' + id }[S.tab] ?? null;
     history.replaceState(null, '', `?project=${encodeURIComponent(S.project)}&tab=${S.tab}`); render(); return; }
   const b = e.target.closest('button,[data-t]'); if (!b) return;
   const p = b.dataset.project, d = b.dataset;

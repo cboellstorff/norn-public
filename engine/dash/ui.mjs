@@ -13,10 +13,11 @@ import { SUB_CAP, pickSub, subviewPage, subMore } from './subviews.mjs';
 import { GUARD_SUBS } from './guardparts.mjs';
 import { firstDoc, placeFindings, findingsByLine } from './docparts.mjs';
 import { needsYou } from './terms.mjs';
-export const TABS = [['home', 'Home'], ['overview', 'Overview'], ['inbox', 'Inbox'], ['lanes', 'Lanes'], ['agents', 'Runs'], ['map', 'Map'], ['roadmap', 'Roadmap'], ['plan', 'Plan'], ['records', 'Records'],
-  ['usage', 'Usage'], ['tests', 'Tests'],
-  ['docs', 'Docs'], ['context', 'Context'], ['slop', 'Slop'], ['ledger', 'Ledger'], ['settings', 'Settings']];
-export const ONE_PROJECT = ['home', 'map', 'roadmap', 'records', 'docs', 'context', 'slop', 'ledger', 'settings', 'tests'];
+export const TABS = [['home', 'Home'], ['overview', 'Overview'], ['inbox', 'Inbox'],
+  ['work', 'Work'], ['lanes', 'Lanes'], ['runs', 'Runs'], ['map', 'Map'], ['plan', 'Plan'], ['roadmap', 'Roadmap'],
+  ['health', 'Health'], ['usage', 'Usage'], ['slop', 'Slop'], ['tests', 'Tests'], ['context', 'Context'],
+  ['history', 'History'], ['records', 'Records'], ['ledger', 'Ledger'], ['docs', 'Docs'], ['settings', 'Settings']];
+export const ONE_PROJECT = ['home', 'map', 'roadmap', 'history', 'records', 'docs', 'context', 'slop', 'ledger', 'settings', 'tests'];
 
 // ---------- formatting ----------
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -73,48 +74,34 @@ const oneProject = tab => panel(tab, `<div class="card"><p class="mute">Choose o
 
 export const needsCount = ov => (ov && fin(ov.needs_you) ? ov.needs_you : 0);
 export const pageTitle = (n, project, look = 'classic') => `${n > 0 ? `(${n}) ` : ''}${look === 'norn' ? 'Norn' : 'norn'} - ${project === 'all' ? 'all projects' : project}`;
-// Norn vocabulary (META-VISUAL-B S3, VISUAL-A2 CONCEPTS): the three Norns and what each holds. Since UX review 2 the bar uses NAV
-// (plain names, both looks); these groups carry the Overview hero's lore lines. [key, name, what it shows, tab ids in display order]
-export const NORN_GROUPS = [
-  ['norn', 'Norn', 'the thread', ['home']],   // META-CONTROLLER C2 (Look 3, owner Q-25): the conversation is the home page
-  ['verdandi', 'Verdandi', 'what is', ['overview', 'map', 'agents', 'lanes', 'usage', 'tests', 'context', 'slop']],   // META-TEND P6: the Guard overview beside them (REPORT 5.3). META-TEND: Tests (suite time is a cost) and Instructions (steering files load now, REPORT 5.3) beside Usage
-  ['urd', 'Urd', 'what was', ['records', 'ledger', 'docs']],
-  ['skuld', 'Skuld', 'what shall be', ['plan', 'inbox', 'settings']],   // META-PLAN R1: the near term first
-  ['wyrd', 'Wyrd', 'all three', ['roadmap']],   // META-ROADMAP S2: one roadmap row is all three at once (SPEC sec. 4 "Where it sits")
-];
+// Norn vocabulary (META-VISUAL-B S3, VISUAL-A2 CONCEPTS): the Norn look's Overview hero carries the three Norns' lore lines (and Wyrd,
+// all three). The bar is NAV in both looks (UX review 2).
 export const NORN_LORE = {
   verdandi: 'Verdandi - what is: the threads being spun at the Well of Urd right now.',
   urd: 'Urd - what was: every knot tied stays tied; the record cannot be unwoven.',
   skuld: 'Skuld - what shall be: the loose ends, the questions, the cloth not yet hung.',
   wyrd: 'Wyrd - all three: one thread from what was through what is to what shall be.',
 };
-const tabButton = (tab, counts) => ([k, l]) => `<button role="tab" id="tab-${k}" data-tab="${k}" aria-selected="${k === tab}">${esc(l)}${countBadge(counts[k])}</button>`;
-// UX review 2: the bar is 7 destinations with plain names (both looks); the 16 pages sit under them, each page keeps its tab id, route
-// and deep link (?tab=lanes lands on Work > Lanes). A destination with one page is that page's own button (id tab-<page>); one with
-// more is a dest-<id> button (it opens its first page) and, while open, a second row with its pages. A destination id used as a tab
-// (?tab=work) lands on its first page (DEST_TAB, index.html). [id, label, page tab ids in display order]
+// UX review 2: the bar is 7 destinations with plain names (both looks). Home, Overview, Inbox and Settings are one page each; Work,
+// Health and History are pages of their own (a hub: one card per page under it, with what needs a look) and, while one of them or one of
+// its pages is open, a second row lists its pages. Label, tab id and URL (?tab=<id>) are the same word for every page.
+// [id (= the destination's own page), label, the pages under it in display order]
 export const NAV = [
-  ['home', 'Home', ['home']],
-  ['overview', 'Overview', ['overview']],
-  ['inbox', 'Inbox', ['inbox']],
-  ['work', 'Work', ['lanes', 'agents', 'map', 'plan', 'roadmap']],
+  ['home', 'Home', []],
+  ['overview', 'Overview', []],
+  ['inbox', 'Inbox', []],
+  ['work', 'Work', ['lanes', 'runs', 'map', 'plan', 'roadmap']],
   ['health', 'Health', ['usage', 'slop', 'tests', 'context']],
   ['history', 'History', ['records', 'ledger', 'docs']],
-  ['settings', 'Settings', ['settings']],
+  ['settings', 'Settings', []],
 ];
-/** the destination a page sits in ([id, label, pages]) or null (the setup page) */
-export const destOf = tab => NAV.find(([, , ids]) => ids.includes(tab)) ?? null;
-/** a destination id that is not itself a page -> its first page */
-export const DEST_TAB = Object.fromEntries(NAV.filter(([g, , ids]) => !ids.includes(g)).map(([g, , ids]) => [g, ids[0]]));
+/** the destination a page sits in ([id, label, pages]): itself or the one whose pages hold it; null for the setup page */
+export const destOf = tab => NAV.find(([g, , ids]) => g === tab || ids.includes(tab)) ?? null;
 const countBadge = n => (n ? `<span class="count" aria-label="${n} need you">${n}</span>` : '');
 export function renderNav(tab, counts = {}) {
   const label = Object.fromEntries(TABS), cur = destOf(tab);
-  const top = NAV.map(([g, name, ids]) => {
-    if (ids.length === 1) return tabButton(tab, counts)([ids[0], name]);
-    const on = cur?.[0] === g;
-    return `<button role="tab" id="dest-${g}" class="dest" data-tab="${on ? tab : ids[0]}" aria-selected="${on}" aria-controls="pages-${g}">${esc(name)}${countBadge(ids.reduce((n, k) => n + (counts[k] || 0), 0))}</button>`;
-  }).join('');
-  const pages = cur && cur[2].length > 1 ? `<div class="pages" id="pages-${cur[0]}" role="tablist" aria-label="${esc(cur[1])}">${cur[2].map(k => tabButton(tab, counts)([k, label[k]])).join('')}</div>` : '';
+  const top = NAV.map(([g, name, ids]) => `<button role="tab" id="tab-${g}" data-tab="${g}" aria-selected="${cur?.[0] === g}"${ids.length ? ` aria-controls="pages-${g}"` : ''}>${esc(name)}${countBadge([g, ...ids].reduce((n, k) => n + (counts[k] || 0), 0))}</button>`).join('');
+  const pages = cur && cur[2].length ? `<div class="pages" id="pages-${cur[0]}" role="tablist" aria-label="${esc(cur[1])}">${cur[2].map(k => `<button role="tab" id="tab-${k}" data-tab="${k}" aria-selected="${k === tab}">${esc(label[k])}${countBadge(counts[k])}</button>`).join('')}</div>` : '';
   return `<div class="dests" role="tablist" aria-label="Sections">${top}</div>${pages}`;
 }
 // a picked art image (the asset map) - Norn look only, and only where the page passes its asset function (none in node)
@@ -158,7 +145,11 @@ export async function loadTab(tab, project, get, ctx = {}) {
   if (tab === 'inbox') { const [ib, deliverables] = await Promise.all([get(`/api/inbox?${q}`), dlvGet(get, q)]); return { ...ib, deliverables }; }
   if (tab === 'lanes') return { ...(await get(`/api/lanes?${q}${ctx.allLanes ? '&all=1' : ''}`)), allLanes: !!ctx.allLanes };
   if (tab === 'map') return get(`/api/map?${q}${ctx.mapMore?.size ? `&more=${encodeURIComponent([...ctx.mapMore].join(','))}` : ''}${ctx.mapAll ? '&all=1' : ''}`);
-  if (tab === 'agents') { const [a, o, guard] = await Promise.all([get(`/api/agents?${q}`), get(`/api/overview?${q}`), guardGet(get, q, all)]); return { ...a, top: o.burn.top, guard }; }
+  // UX review 2: the three destination pages - what needs a look under each, from the endpoints the pages already use
+  if (tab === 'work') { const [overview, a] = await Promise.all([get(`/api/overview?${q}`), get(`/api/agents?${q}`)]); return { overview, queue: a.queue || [] }; }
+  if (tab === 'health') { const [overview, slop] = await Promise.all([get(`/api/overview?${q}`), all ? null : Promise.resolve().then(() => get(`/api/guard?${q}&part=summary`)).catch(() => null)]); return { overview, slop }; }
+  if (tab === 'history') return { records: await get(`/api/records?${q}`) };
+  if (tab === 'runs') { const [a, o, guard] = await Promise.all([get(`/api/agents?${q}`), get(`/api/overview?${q}`), guardGet(get, q, all)]); return { ...a, top: o.burn.top, guard }; }
   if (tab === 'records') return get(`/api/records?${q}`);
   if (tab === 'roadmap') {
     const d = await get(`/api/roadmap?${q}`);
@@ -207,7 +198,7 @@ export function renderTab(tab, d, ctx = {}) {
   if (tab === 'usage') return panel(tab, usage(d, { ...ctx, now }));
   if (tab === 'plan') return panel(tab, plan(d, { ...ctx, now }));
   if (tab === 'home') return panel(tab, renderHome(d, { ...ctx, now }));
-  return panel(tab, ({ overview, inbox, lanes, agents, map, roadmap, records, docs, context, ledger, settings, tests, slop: guard })[tab](d, { ...ctx, now }));
+  return panel(tab, ({ overview, inbox, work: workHub, lanes, runs, map, roadmap, health: healthHub, history: historyHub, records, docs, context, ledger, settings, tests, slop: guard })[tab](d, { ...ctx, now }));
 }
 
 // META-TEND TESTS (owner DIR-19 + DIR-47): lean tests, measured - count + suite time over time, the slowest, never-failing and
@@ -357,7 +348,7 @@ function overview(d, ctx) {
   const recs = d.records ? [...d.records.decisions, ...d.records.directives].sort((a, b) => String(b.updated).localeCompare(String(a.updated))).slice(0, 5)
     .map(r => `<tr><td class="id">${esc(r.id)}</td><td>${chip(r.state)}</td><td>${r.kind === 'decision' ? `<b>${esc(r.data.lane ?? '')}</b> ${esc(r.data.question ?? '')}<div class="small mute">${esc(r.data.choice ?? '')}${r.data.why ? ' - ' + esc(r.data.why) : ''}</div>` : esc(r.data.text)}</td><td class="small mute">${esc(r.by)} ${fmtTime(r.updated, ctx.now)}</td></tr>`).join('') : '';
   const led = d.ledger ? ledgerRows(parseLedger(d.ledger.ledger).slice(-4), d.ledger, ctx, true) : '';
-  const hero = ctx.look === 'norn' && ctx.art ? `<div class="hero">${art(ctx, 'hero-night', 'hero-n')}${art(ctx, 'hero-day', 'hero-d')}<div class="lore">${NORN_GROUPS.filter(([g]) => NORN_LORE[g]).map(([g]) => `<p>${esc(NORN_LORE[g])}</p>`).join('')}</div></div>` : '';
+  const hero = ctx.look === 'norn' && ctx.art ? `<div class="hero">${art(ctx, 'hero-night', 'hero-n')}${art(ctx, 'hero-day', 'hero-d')}<div class="lore">${Object.values(NORN_LORE).map(l => `<p>${esc(l)}</p>`).join('')}</div></div>` : '';
   const prof = o.setup?.profile_now ? `<p class="small" id="profile-now" style="margin:0 0 10px">Profile: <b>${esc(profileWords(o.setup.profile_now, ctx.now))}</b> <button class="ghost" data-tab="settings">Settings</button></p>` : '';
   return `${hero}${firstTask(o.first_run)}${setupGaps(o.setup)}${prof}<div class="glance">
    <section class="card${o.needs_you ? ' needs' : ''}" id="needs"><h2>Needs you <b>${o.needs_you}</b></h2>${needs}</section>
@@ -405,7 +396,7 @@ function inbox(d, ctx) {
   ].join('');
   const adv = items.filter(i => i.type === 'advice');
   const advCard = adv.length ? `<section class="card" id="inbox-advice" style="margin-bottom:12px"><h2>Model advice <span class="mute small">${plural(adv.length, 'card')} · vendor guidance over what each kind of work cost (Usage tab) · nothing changes until you tap</span></h2>${adv.map(i => adviceRow(i, ctx)).join('')}</section>` : '';
-  const nNeeds = d.needs_you ?? needsYou(items), nInfo = items.length - needsYou(items);   // UX review 4: the one needs-you count (terms.mjs)
+  const nNeeds = needsYou(items), nInfo = items.length - nNeeds;   // UX review 4: the one needs-you count (terms.mjs)
   return `<h2 class="pagehead" id="inbox-needs">Needs you <b>${int(nNeeds)}</b>${nInfo ? ` <span class="mute small">+ ${int(nInfo)} for information (answered, waiting for the next check-in; model advice)</span>` : ''}</h2><div class="legend small mute">States: ${['open', 'answered', 'applied', 'superseded', 'withdrawn'].map(s => chip(s)).join(' ')} - set by explicit events only; this page never guesses.</div>${qs}${fxCard}${enfCard}${audCard}${dlvCard}${advCard}
    <div class="tablecard"><h3>Also needs a look <span class="mute small">parked lanes · unreviewed runs · answered, not yet applied</span></h3><table><thead><tr><th>id</th><th>state</th><th>what</th></tr></thead><tbody>${other || '<tr><td colspan="3" class="mute">nothing</td></tr>'}</tbody></table></div>`;
 }
@@ -423,7 +414,38 @@ function lanes(d, ctx) {
    <div class="tablecard"><table data-rows="lanes"><thead><tr><th>lane</th><th>record</th><th>run state</th><th>executor</th><th>now</th><th>latest run</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
-function agents(d, ctx) {
+// ---------- UX review 2: Work, Health and History - one card per page under the destination: what it shows + what needs a look now ----------
+const HUB_WHAT = { lanes: 'one row per lane: its latest run, state and outcome', runs: 'every running and recent run as a tree: tokens, context, its findings',
+  map: 'lanes as threads, runs as beads on them', plan: 'what starts next and what it waits for, what lands next, the usage forecast',
+  roadmap: 'themes and items, their status from the linked lanes, runs and records', usage: 'usage against the weekly guard and the hourly cap; what each kind of work cost',
+  slop: 'every open finding of every check, in batches by the kind of fix', tests: 'suite time, the slowest tests, tests that never fail or duplicate others',
+  context: 'what one agent session loads and what it costs, per role and per file', records: 'directives and decisions with their history',
+  ledger: 'the project ledger, newest first', docs: "the project's docs and every file the agents read" };
+function hub(dest, now) {
+  const label = Object.fromEntries(TABS), [, , ids] = NAV.find(([g]) => g === dest);
+  return `<div class="hub" id="${dest}-hub">${ids.map(k => `<section class="card hubcard" id="hub-${k}"><h2><button class="lnk" data-tab="${k}">${esc(label[k])}</button></h2>
+    <p class="small mute">${esc(HUB_WHAT[k])}</p>${now[k] ? `<div class="small hubnow">${now[k]}</div>` : ''}</section>`).join('')}</div>`;
+}
+function workHub(d) {
+  const o = d.overview, needs = o.needs || [], n = t => needs.filter(i => i.type === t).length, run = o.running;
+  return hub('work', {
+    lanes: `${chip(run.lanes.length ? 'running' : 'idle', `${int(run.lanes.length)} running`)}${n('parked') ? ' ' + chip('parked', `${int(n('parked'))} parked`) : ''}`,
+    runs: `${chip(run.claude.n + run.codex.n ? 'running' : 'idle', `${int(run.claude.n)} Claude · ${int(run.codex.n)} Codex running`)}${n('unreviewed') ? ' ' + chip('warn', `${int(n('unreviewed'))} unreviewed`) : ''}`,
+    plan: chip(d.queue.length ? 'idle' : 'ok', `${int(d.queue.length)} queued`) });
+}
+function healthHub(d) {
+  const u = d.overview.burn.usage, s = d.slop;
+  const use = u.billing?.type === 'api' ? chip('idle', 'API billing: see the daily cap') : u.guard === 'STOP' ? chip('bad', 'guard tripped: no new Claude worker')
+    : fin(u.weeklyUsed) ? chip(u.guard === 'ok' ? 'ok' : 'idle', `${pct(u.weeklyUsed)} of the ${pct(u.weeklyStopPct, 0)} weekly guard`) : chip('idle', 'usage unknown');
+  return hub('health', { usage: `${use}${u.rateOK === false ? ' ' + chip('bad', 'over the hourly cap') : ''}`,
+    slop: s ? `${chip(s.total ? 'warn' : 'ok', plural(s.total ?? 0, 'open finding'))}${s.new ? ' ' + chip('needs', `${int(s.new)} new`) : ''}` : '' });
+}
+function historyHub(d) {
+  const r = d.records, act = (r.directives || []).filter(x => x.state === 'active').length;
+  return hub('history', { records: `${chip(act ? 'active' : 'idle', plural(act, 'active directive'))} ${chip('idle', plural((r.decisions || []).length, 'decision'))}` });
+}
+
+function runs(d, ctx) {
   const top = Object.fromEntries((d.top || []).map(t => [t.id, t]));
   const name = n => n.kind === 'subagent' ? `${esc(n.agentType ?? 'subagent')}${n.description ? ` "${esc(n.description)}"` : ''}`
     : n.kind === 'helper' ? `<span class="id">${esc(n.id)}</span>${aname(n.name)} helper${n.class ? ' · ' + esc(n.class) : ''}${n.q ? ` "${esc(n.q)}"` : ''}${n.outcome ? ' · ' + esc(String(n.outcome).toUpperCase()) : ''}`
@@ -461,7 +483,7 @@ export function guardChip(rows, go = null) {
 /** a link to where a finding is fixed: data-go (the tab) + the tab's own target (a file + line, a doc, an element id) */
 export const goAttrs = go => [`data-go="${esc(go.tab)}"`, go.sub ? `data-gosub="${esc(go.sub)}"` : '', go.ins ? `data-goins="${esc(go.ins)}"` : '', go.line ? `data-goline="${esc(go.line)}"` : '',
   go.doc !== undefined ? `data-godoc="${esc(go.doc)}"` : '', go.jump ? `data-gojump="${esc(go.jump)}"` : ''].filter(Boolean).join(' ');
-const G_TAB = { context: 'Context', tests: 'Tests', usage: 'Usage', agents: 'Runs', docs: 'Docs', slop: 'Slop' };
+const G_TAB = { context: 'Context', tests: 'Tests', usage: 'Usage', runs: 'Runs', docs: 'Docs', slop: 'Slop' };
 const G_SEV = { high: 'bad', medium: 'warn', low: 'idle', count: 'idle' };
 const shortPath = p => String(p).replace(/\\/g, '/').split('/').slice(-2).join('/');
 const guardRow = (r, labels) => `<li class="grow" id="slop-${esc(r.id)}"><div>${chip(G_SEV[r.severity] ?? 'idle', r.severity)} ${chip('idle', labels[r.type] ?? r.type)}${r.new ? ' ' + chip('needs', 'new') : ''}

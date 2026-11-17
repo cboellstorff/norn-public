@@ -5,11 +5,12 @@ random port, `--no-open` skips the browser, `--project <project.json>` limits it
 only, bound to 127.0.0.1. Every POST needs the per-start token embedded in the page (a fresh random token each start).
 
 ## Where things are (UX review 2: 7 destinations, plain names, both looks)
-The bar is **Home · Overview · Inbox · Work · Health · History · Settings** (`ui.mjs` `NAV`). Work, Health and History open a second row
-with their pages: **Work** = Lanes, Runs (tab id `agents`), Map, Plan, Roadmap; **Health** = Usage, Slop, Tests, Context; **History** =
-Records, Ledger, Docs. Every page keeps its tab id and deep link (`?tab=lanes` lands on Work > Lanes); `?tab=work` / `health` /
-`history` land on the first page; old `?tab=instructions` / `guard` land on Context / Slop. The Inbox button carries the needs-you count.
-On a phone the bottom bar is Home / Inbox / Runs / Plan / More (More opens the full bar).
+The bar is **Home · Overview · Inbox · Work · Health · History · Settings** (`ui.mjs` `NAV`). Work, Health and History are pages
+of their own: one card per page under them with what needs a look now (running, parked, unreviewed, queued; the guard and the hourly
+cap; open and new findings; active directives). While one of them or one of its pages is open, a second row lists its pages:
+**Work** = Lanes, Runs, Map, Plan, Roadmap; **Health** = Usage, Slop, Tests, Context; **History** = Records, Ledger, Docs. Every page's
+label, tab id and URL are the same word (`?tab=runs` is Runs); there is no alias or redirect table. The Inbox button carries the
+needs-you count. On a phone the bottom bar is Home / Inbox / Runs / Plan / More (More opens the full bar).
 
 ## What you see (from records, runs, heartbeats and transcripts - never from an LLM; re-renders on change via `/api/stream`, no timer)
 - Header: project switcher (one project or All projects), status time, check-ins on / paused, theme (light / dark / system),
@@ -30,7 +31,7 @@ On a phone the bottom bar is Home / Inbox / Runs / Plan / More (More opens the f
 - Roadmap (`norn road`): themes and items with a status derived from the linked lanes, runs and records (never typed); a tree
   or a board, filters, and the unplaced work that has no item yet.
 - Lanes: one row per lane record with its latest run (any executor), state and outcome.
-- Runs (tab id `agents`): every running and recent run as a tree (main session + subagents, Codex runs), tokens and context from the transcripts.
+- Runs: every running and recent run as a tree (main session + subagents, Codex runs), tokens and context from the transcripts.
 - Records: directives and decisions with their history; Add / Revoke directive, Overrule decision.
 - Docs: the project's `docs` list rendered as markdown (docs.mjs + pinned vendor/ libs, contents sidebar, record-id chips).
   Ledger: the project ledger, one row per entry, newest first (`ledger.mjs` parses check-in / minor / auto / controller lines into a headline + labelled sub-lines, record ids link to where they live, headings / prose as markdown), search + kind filter, 100 lines then "Show older" (`/api/ledger?count=&offset=`). Settings: categories from the schema (policy.mjs `SECTIONS`) with left nav, search (`@modified`),

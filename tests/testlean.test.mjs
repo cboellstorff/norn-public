@@ -189,7 +189,7 @@ test('Tests tab: /api/tests reads <state>/tests; the view shows counts over time
   assert.match(html, /walks &lt;SETUP&gt;/, 'names are escaped');
   assert.match(html, /aria-label="test cases per day \(tests\): 11-13 961, 11-14 805"/);   // UX review 6: the unit in the label
   assert.match(html, /gate passed/); assert.match(html, /kills 0/); assert.match(html, /inside: <span class="mute">a\.test\.mjs<\/span> big/);
-  assert.match(renderNav('tests', {}, 'norn'), /id="dest-health"[^>]*aria-selected="true"[^]*id="pages-health"[^]*data-tab="usage"[^]*data-tab="tests"/, 'beside Usage under Health (UX review 2)');
+  assert.match(renderNav('tests', {}), /id="tab-health"[^>]*aria-selected="true"[^]*id="pages-health"[^]*data-tab="usage"[^]*data-tab="tests"/, 'beside Usage under Health (UX review 2)');
   const empty = renderTab('tests', { history: [], git: null, lean: null, mutation: null, advisories: null, waves: [], commands: { measure: 'norn tests measure', history: 'norn tests history' } }, {});
   assert.match(empty, /not measured yet/); assert.match(empty, /norn tests history/);
 });

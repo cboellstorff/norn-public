@@ -223,7 +223,7 @@ test('dash Plan tab: queued runs are listed (position, not before), not in Agent
   assert.equal(agentsTree(runs, {}).length, 0);
   const queue = queueOf(runs);
   assert.equal(queue[0].not_before, '2026-11-09T18:16:00.000Z');
-  assert.ok(!/RUN-1|qlane/.test(renderTab('agents', { tree: [], queue: queue.map(x => ({ ...x, project: 'demo' })) }, { project: 'demo' })));
+  assert.ok(!/RUN-1|qlane/.test(renderTab('runs', { tree: [], queue: queue.map(x => ({ ...x, project: 'demo' })) }, { project: 'demo' })));
   const now = Date.parse('2026-11-09T12:00:00Z');
   const html = renderTab('plan', { parts: [buildPlan({ project: 'demo', runs, ready: readiness(d.state, { now, resources: () => ({ free_gb: 64, cpu_pct: 0 }) }), now })] }, { project: 'demo', now });
   assert.match(html, /Up next/);

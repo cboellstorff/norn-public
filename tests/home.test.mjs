@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { homeEvents, renderThread, renderHome, renderBottomBar, imagePaths, fileUrl, HOME_FILTERS } from '../engine/dash/home.mjs';
-import { TABS, NORN_GROUPS, renderNav, renderTab, loadTab } from '../engine/dash/ui.mjs';
+import { TABS, NAV, renderNav, renderTab, loadTab } from '../engine/dash/ui.mjs';
 import { TABS as SERVER_TABS } from '../engine/dash/server.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { threadFile } from '../engine/lib/chat.mjs';
@@ -114,10 +114,10 @@ test('C2 renderHome (Look 3): the side columns, the thread header (harness, cont
 
 test('C2 nav: Home is the first tab, alone in the Norn group (the thread); the phone bottom bar Home / Inbox / Runs / Plan / More (UX review 4: the same names as the top bar)', async () => {
   assert.deepEqual(TABS[0], ['home', 'Home']); assert.equal(SERVER_TABS[0], 'home');
-  assert.deepEqual(NORN_GROUPS[0], ['norn', 'Norn', 'the thread', ['home']]);
-  assert.match(renderNav('home', {}, 'norn'), /^<div class="dests"[^>]*><button role="tab" id="tab-home"[^>]*aria-selected="true"/);   // UX review 2: Home first in the bar
+  assert.deepEqual(NAV[0], ['home', 'Home', []]);
+  assert.match(renderNav('home', {}), /^<div class="dests"[^>]*><button role="tab" id="tab-home"[^>]*aria-selected="true"/);   // UX review 2: Home first in the bar
   const bar = renderBottomBar('home', { inbox: 2 });
-  assert.deepEqual([...bar.matchAll(/data-tab="(\w+)"/g)].map(m => m[1]), ['home', 'inbox', 'agents', 'plan']);
+  assert.deepEqual([...bar.matchAll(/data-tab="(\w+)"/g)].map(m => m[1]), ['home', 'inbox', 'runs', 'plan']);
   assert.match(bar, /data-act="more"/); assert.match(bar, /Home/); assert.match(bar, /Runs/); assert.match(bar, /aria-label="2 need you">2</);
   assert.match(bar, /data-tab="home"[^>]*aria-current="page"/);
   const seen = [];
