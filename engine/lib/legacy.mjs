@@ -27,14 +27,26 @@ const probeable = pid => {
   return true;
 };
 const startOf = (status, stdout, platform) => { const t = Date.parse((stdout || '').trim() + (platform === 'win32' ? '' : ' UTC')); return status === 0 && Number.isFinite(t) ? t : null; };
-export function procStart(pid, platform = process.platform) {
+// Linux (CI-RED-C1159BD R1): `ps -o lstart=` has whole seconds, so a process and the one it spawned 0.2 s later had the same start
+// time (a reused pid read as ours). /proc/<pid>/stat field 22 = starttime in clock ticks since boot (USER_HZ), + /proc/stat btime.
+let clkTck = null;
+const userHz = () => clkTck ??= (n => Number.isInteger(n) && n > 0 ? n : 100)(Number(spawnSync('getconf', ['CLK_TCK'], { encoding: 'utf8' }).stdout));
+function linuxStart(pid, { proc = '/proc', hz } = {}) {
+  const stat = read(path.join(proc, String(pid), 'stat')), bt = /^btime (\d+)$/m.exec(read(path.join(proc, 'stat')) || '');
+  if (!stat || !bt) return null;
+  const ticks = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]);   // fields after "(comm)" start at field 3 (state)
+  return Number.isFinite(ticks) ? Number(bt[1]) * 1000 + Math.round(ticks * 1000 / (hz ?? userHz())) : null;
+}
+export function procStart(pid, platform = process.platform, linux = {}) {
   if (!probeable(pid)) return null;
+  if (platform === 'linux') return linuxStart(pid, linux);
   const r = spawnSync(...startProbe(pid, platform));
   return startOf(r.status, r.stdout, platform);
 }
 /** procStart without blocking the event loop (a run's supervisor: its heartbeat beats through the probe; CI-RED-18A9C0A R2) */
 export function procStartAsync(pid, platform = process.platform) {
   if (!probeable(pid)) return Promise.resolve(null);
+  if (platform === 'linux') return Promise.resolve(linuxStart(pid));
   return new Promise(resolve => execFile(...startProbe(pid, platform), (err, stdout) => resolve(startOf(err ? 1 : 0, stdout, platform))));
 }
 // the same process: alive and created within 120 s of the recorded start (worker.ps1's pid-reuse rule)

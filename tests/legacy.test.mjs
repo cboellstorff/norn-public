@@ -85,3 +85,18 @@ test('watch: heartbeats while alive, then end (outcome from NOTES) + tick spawne
   assert.equal(fs.readdirSync(path.join(s, 'locks')).length, 0);
   await waitFor(() => fs.existsSync(tickMark), 'tick spawned');   // a detached node start: its completion, not a 5 s budget
 });
+
+// CI-RED-C1159BD R1: Linux procStart was `ps -o lstart=` - whole seconds. The test process and the supervisor it spawned 0.2 s
+// later had the same "start time", so a reused pid read as the same process. Linux reads /proc/<pid>/stat starttime (clock ticks
+// since boot) + /proc/stat btime: two processes started 0.3 s apart in the same second differ.
+test('procStart on Linux: /proc starttime ticks + btime, sub-second (two processes in the same second differ)', () => {
+  const proc = mkTmp('meta-proc-'), hz = 100, btime = 1763340000;
+  fs.writeFileSync(path.join(proc, 'stat'), `cpu  1 2 3 4\nintr 5\nbtime ${btime}\nprocesses 9\n`);
+  const stat = (pid, ticks) => { fs.mkdirSync(path.join(proc, String(pid)), { recursive: true });
+    fs.writeFileSync(path.join(proc, String(pid), 'stat'), `${pid} (node (x) y) S 1 ${pid} ${pid} 0 -1 4194560 1 0 0 0 0 0 0 0 20 0 11 0 ${ticks} 1000 10 18446744073709551615\n`); };
+  stat(process.pid, 123410); stat(process.ppid, 123440);
+  const a = procStart(process.pid, 'linux', { proc, hz }), b = procStart(process.ppid, 'linux', { proc, hz });
+  assert.equal(a, btime * 1000 + 1234100, 'btime + starttime / CLK_TCK, in ms');
+  assert.equal(b - a, 300, 'started 0.3 s apart in the same second: two processes');
+  assert.equal(procStart(999999999, 'linux', { proc, hz }), null, 'no such pid');
+});
