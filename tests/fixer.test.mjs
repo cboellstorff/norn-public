@@ -85,3 +85,75 @@ test('rec show: a long id list prints as its first ids + a count; --full prints 
   const full = o.join('\n');
   assert.ok(short.length * 4 < full.length, `the short show is a fraction of the full one (${short.length} vs ${full.length})`);
 });
+
+// ---- the start by code: the findings file the dash keeps, the tick's spawn, `norn fix start`; the result card ----
+import { keepFindings, findingsFile, tickFix, fixCards, verdictText } from '../engine/lib/fixer.mjs';
+import { record } from '../engine/lib/records.mjs';
+
+const tmp = p => fs.mkdtempSync(path.join(os.tmpdir(), p));
+const guardRow = (id, extra = {}) => ({ id, type: 'instructions', kind: 'drafts', batch: 'instr-c16|drafts', path: 'C:/r/CLAUDE.md', line: 3, why: `why ${id}`, action: 'move it', ...extra });
+
+test('keepFindings: the rows of an active fixall directive, once; nothing for a directive without fixall', () => {
+  const state = tmp('fixer-keep-'), w = world({ n: 3 });
+  w.items['DIR-5'] = { id: 'DIR-5', kind: 'directive', state: 'active', data: { text: 'plain' } };
+  const rows = [guardRow('I-c16-000'), guardRow('I-c16-001', { patch: '@@ -1 +1 @@\n-a\n+b' }), guardRow('I-c16-002', { patch: true }), guardRow('OTHER')];
+  assert.deepEqual(keepFindings(state, w.items, rows), ['DIR-9']);
+  const kept = JSON.parse(fs.readFileSync(findingsFile(state, 'DIR-9'), 'utf8')).rows;
+  assert.deepEqual(kept.map(r => [r.id, r.key, r.line, r.patch ?? null]), [['I-c16-000', 'instr-c16|drafts', 3, null], ['I-c16-001', 'instr-c16|drafts', 3, '@@ -1 +1 @@\n-a\n+b'], ['I-c16-002', 'instr-c16|drafts', 3, null]]);
+  assert.deepEqual(keepFindings(state, w.items, rows), [], 'written once');
+});
+
+test('tickFix: one detached `norn fix start DIR-n --queue` per directive with a next batch and a findings file; a start stamp stops a second', () => {
+  const state = tmp('fixer-tick-'), w = world({ n: 3 }), calls = [], spawnFn = (exe, args) => { calls.push(args); return { pid: 7 }; };
+  const p = { name: 'kestrel', file: 'C:/x/kestrel.json' };
+  assert.deepEqual(tickFix(p, state, { metaCmd: 'norn.mjs', items: w.items, spawnFn }), [], 'no findings file yet: nothing');
+  keepFindings(state, w.items, [guardRow('I-c16-000')]);
+  assert.equal(tickFix(p, state, { metaCmd: 'norn.mjs', items: w.items, spawnFn }).length, 1);
+  assert.deepEqual(calls[0], ['norn.mjs', 'fix', 'start', 'DIR-9', '--queue', '--project', 'C:/x/kestrel.json', '--state', state]);
+  assert.equal(tickFix(p, state, { metaCmd: 'norn.mjs', items: w.items, spawnFn }).length, 0, 'the stamp: no second spawn within 5 minutes');
+  assert.equal(tickFix(p, state, { metaCmd: 'norn.mjs', items: w.items, spawnFn, now: Date.now() + 6 * 60000 }).length, 1);
+  const w1 = world({ n: 3, runs: 1 });
+  assert.equal(tickFix(p, tmp('fixer-tick2-'), { metaCmd: 'm', items: w1.items, spawnFn }).length, 0, 'the approved run ran: nothing more');
+});
+
+test('norn fix start: says why nothing starts; refuses a directive that is not a Fix all one or has no findings file', () => {
+  const root = tmp('fixer-start-'), state = path.join(root, 'state'), repo = path.join(root, 'repo');
+  fs.mkdirSync(repo, { recursive: true });
+  const pf = path.join(root, 'kestrel.json'), fwd = s => s.split(path.sep).join('/');
+  fs.writeFileSync(pf, JSON.stringify({ schema: 1, name: 'kestrel', title: 'K', root: fwd(repo), policy: { lanes: {} } }));
+  const env = { META_ROOT: root, META_ROLE: 'owner' }, o = [], e = [];
+  const run = argv => main(argv, env, s => o.push(s), s => e.push(s));
+  const dec = record(state, { kind: 'decision', ev: 'create', by: 'dashboard', data: { lane: 'fixall', question: 'Fix all', choice: 'send', why: 'tap', findings: ['I-1'] } });
+  const dir = record(state, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text: 'Fix all', via: 'dashboard', findings: ['I-1'], fixall: dec.id } });
+  const plain = record(state, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text: 'plain', via: 'dashboard' } });
+  assert.equal(run(['fix', 'start', plain.id, '--project', pf, '--state', state]), 2);
+  assert.match(e.join('\n'), /not a Fix all directive/);
+  e.length = 0;
+  assert.equal(run(['fix', 'start', dir.id, '--project', pf, '--state', state]), 2);
+  assert.match(e.join('\n'), /no findings file yet/);
+  fs.mkdirSync(path.join(state, 'fixer'), { recursive: true });
+  fs.writeFileSync(findingsFile(state, dir.id), JSON.stringify({ rows: [{ id: 'I-1', key: 'k', path: 'CLAUDE.md', line: 2, why: 'w', action: 'a' }] }));
+  const d2 = record(state, { kind: 'directive', ev: 'done', id: dir.id, by: 'checkin', data: { refs: [dec.id] } });
+  o.length = 0; e.length = 0;
+  assert.equal(run(['fix', 'start', dir.id, '--project', pf, '--state', state]), 0, e.join('\n') + String(d2.id));
+  assert.match(o.join('\n'), /nothing to start \(the directive is done\)/);
+});
+
+test('the result card: one per ended fixer run without a verdict - files with their hunks, the status lines; no hunk = failed', () => {
+  const w = world({ n: 3, runs: 1 }), notes = '/s/fixer/DIR-9-0.md';
+  w.items['RUN-1'].data.notes = notes;
+  const text = ['### `CLAUDE.md:3` - medium - rewrite', '```diff', '--- a/CLAUDE.md', '+++ b/CLAUDE.md', '@@ -3,1 +3,1 @@', '-old', '+new', '```',
+    '### `AGENTS.md:9` - medium - remove', '```diff', '--- a/AGENTS.md', '+++ b/AGENTS.md', '@@ -9,1 +8,0 @@', '-gone', '```', '## Findings', '- I-c16-000: drafted', '- I-c16-001: drafted', '- I-c16-002: skipped: no way picked'].join('\n');
+  const [c] = fixCards(w.items, { readNotes: () => text, readBrief: w.readBrief });
+  assert.deepEqual([c.run, c.directive, c.state, c.n, c.files.map(f => f.file)], ['RUN-1', 'DIR-9', 'ready', 2, ['CLAUDE.md', 'AGENTS.md']]);
+  assert.deepEqual(c.status.map(s => s.state), ['drafted', 'drafted', 'skipped']);
+  assert.equal(fixCards(w.items, { readNotes: () => 'I could not.', readBrief: w.readBrief })[0].state, 'failed');
+  w.items['DEC-3'] = { id: 'DEC-3', kind: 'decision', state: 'in-force', created: '2026-11-17T08:00:00Z', data: { lane: 'fixall-result', directive: 'DIR-9', run: 'RUN-1', ids: ['I-c16-000'], choice: 'apply' } };
+  assert.equal(fixCards(w.items, { readNotes: () => text, readBrief: w.readBrief }).length, 0, 'a verdict: the card leaves');
+  const t = verdictText(c, { choice: 'apply', skip: ['AGENTS.md'], close: 'DEC-3' });
+  assert.match(t, /Apply the fixer hunks of RUN-1 \(Fix all DIR-9, DEC-1\): 1 hunk\(s\) in CLAUDE\.md\./);
+  assert.match(t, /leave AGENTS\.md as it is/);
+  assert.match(t, /`norn rec done DIR-9 --refs DEC-3`/);
+  assert.equal(verdictText(c, { choice: 'discard' }), null, 'a discard that closes nothing: no directive');
+  assert.match(verdictText(c, { choice: 'discard', close: 'DEC-3' }), /^Then close DIR-9/);
+});
