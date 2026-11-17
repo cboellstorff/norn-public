@@ -104,6 +104,12 @@ if (cmd) {
     child = spawn(sp.exe, sp.args, { cwd: spec.worktree, env, stdio: [inFd, outFd, logFd], windowsHide: true, ...(guard && process.platform !== 'win32' ? { detached: true } : {}) });
     childPid = child.pid ?? null;
     beat();
+    // GAP-12: a lane start refreshes the overlap check (fetch origin + gh, overlap.mjs) in its own detached process - never on this
+    // process's loop (the heartbeat); outside this run's job like the tick. A work run on a lane only; a failure is a log line
+    if (spec.overlap && spec.lane && !['checkin', 'audit', 'talk'].includes(spec.kind) && spec.role !== 'helper' && !spec.parent) {
+      try { const away = job ? spawnOutside(spec.overlap[0], spec.overlap.slice(1)) : null; if (!away) spawn(spec.overlap[0], spec.overlap.slice(1), { detached: true, stdio: 'ignore', windowsHide: true }).unref(); }
+      catch (e) { logLine(`overlap check not started: ${e.message}`); }
+    }
     child.on('error', e => finish(null, null, String(e.message)));
     child.on('exit', (code, signal) => finish(code, signal, null));
     if (nudgeable()) nudgeTimer = setInterval(nudgeCheck, spec.hbMs);

@@ -35,6 +35,7 @@ import { runProbe } from '../lib/probe.mjs';
 import { writeStatus, weeklyEstimate, accountCacheR, crTotal } from '../lib/status.mjs';
 import { weekStart, parseReset } from '../lib/cost.mjs';
 import { digest, tryDigest } from '../lib/digest.mjs';
+import { projectOverlap, overlapOn, overlapText } from '../lib/overlap.mjs';
 import { renderDigest } from '../lib/views.mjs';
 import { tick, quietFlag } from '../lib/tick.mjs';
 import { POLICY_DEFAULTS, withDefaults, applySettings, floorChanges, merged, split, writeBudget, capsMissing, slopOn } from '../lib/policy.mjs';
@@ -436,6 +437,8 @@ function runSpec(flags, env, { project, state, locks }) {
     budget, paused: [path.join(path.dirname(path.resolve(state)), 'PAUSED'), path.join(state, 'PAUSED')], statusFile: path.join(state, 'STATUS.md'),
     ledger: project?.ledger, projectsDir: machine?.claude?.projects_dir, ...(ledgerConfig(machine, { metaRoot: root, machineFile: mf }) ? { git_ledger: ledgerConfig(machine, { metaRoot: root, machineFile: mf }) } : {}),
     tick: flags['no-tick'] || env.META_NO_TICK ? null : [process.execPath, fileURLToPath(import.meta.url), 'tick', '--reason', 'exit', ...(project ? ['--project', project.file] : []), '--state', state],
+    // GAP-12: a lane start refreshes the overlap check (detached, by the supervisor); no project / policy off / no tick (tests) = none
+    overlap: !project || !overlapOn(project.policy) || flags['no-tick'] || env.META_NO_TICK ? null : [process.execPath, fileURLToPath(import.meta.url), 'overlap', '--project', project.file, '--state', state, '--force'],
     ...(env.META_HB_MS ? { hbMs: Number(env.META_HB_MS) } : {}),
   };
   if (!o.worktree) throw new RunError('--worktree is required (no project lane_defaults.worktree)');
@@ -553,10 +556,11 @@ const S5_USAGE = {
   status: 'norn status [--project <name | project.json> | --state D] [--machine F] [--budget F] [--out F]',
   tick: 'norn tick [--project <name | project.json>] [--reason R] [--at ISO] [--dry] [--machine F] [--budget F]    (no --project = every project in machine.json; --dry = FAKE claude; --at = wait until then: the debounce tick)',
   runs: 'norn runs [--unreviewed] [--lane L] [--json] [--all-nodes (+ the runs of the federation nodes, read-only: fetched with machine.json ledger.remote, else the fill\'s fed-cache.json)] [--project <name | F> | --state D]  |  norn runs review RUN-n --refs X,Y --as checkin|controller  |  norn runs landed RUN-n --why W [--sha S] --as checkin|controller|owner    (a ruling: the work of the run counts as merged on main where git cannot see it - run:RUN-n:merged / :done conditions on its family are met)',
+  overlap: 'norn overlap [--project <name | project.json>] [--state D] [--force]    (GAP-12: fetch origin (at most every 10 min; --force now) and list each running lane overlaps with the remote branches and open PRs (gh, GitHub); policy.overlap.enabled false = off)',
   digest: 'norn digest [--project F | --state D] [--json | --hook]    (NORN-WATCH S1: the level-triggered resume digest; --hook = a SessionStart hook payload; read-only)',
   sched: 'norn sched show|install|remove [--machine F]    (the machine scheduler, D13; install / remove touch the real OS scheduler)',
 };
-const S5_FLAGS = ['project', 'state', 'machine', 'budget', 'out', 'reason', 'dry!', 'unreviewed!', 'lane', 'json!', 'refs', 'as', 'hook!', 'all-nodes!', 'why', 'sha', 'at'];
+const S5_FLAGS = ['project', 'state', 'machine', 'budget', 'out', 'reason', 'dry!', 'force!', 'unreviewed!', 'lane', 'json!', 'refs', 'as', 'hook!', 'all-nodes!', 'why', 'sha', 'at'];
 function s5Flags(argv) {
   const flags = {}, pos = [];
   for (let i = 0; i < argv.length; i++) {
@@ -656,6 +660,21 @@ function s5Cmd(argv, env, out, err) {
       const s = writeStatus({ state, project: project?.name, providers: providersOf(project), budget: m.budget, projectsDir: projectsDirOf(m.machine, env), usageJson: m.machine?.usage || {}, ci: project?.ci,
         cacheFile: path.join(state, 'usage-cache.json'), digest: tryDigest(state, project || {}) }, flags.out || path.join(state, 'STATUS.md'));
       out(s.line);
+      return 0;
+    }
+    if (cmd === 'overlap') {   // GAP-12: refresh the overlap cache (a lane start spawns this; the tick refreshes too) and print it
+      if (pos.length) throw new RunError(`unexpected ${pos[0]}`);
+      if (!project) throw new RunError('overlap needs --project (the repo whose origin is compared)');
+      if (!overlapOn(project.policy)) { out(`overlap ${project.name}: the overlap check is off (policy.overlap.enabled false)`); return 0; }
+      const c = projectOverlap({ ...project, state }, { force: !!flags.force });
+      if (!c) { out(`overlap ${project.name}: no repo to compare`); return 0; }
+      if (c.fetch_error) err(`overlap ${project.name}: ${c.fetch_error}`);
+      const ls = Object.values(c.lanes || {});
+      if (!ls.length) out(`overlap ${project.name}: no running lane`);
+      for (const l of ls) {
+        if (!l.overlaps.length) out(`${l.lane}: no overlap (${l.files} changed file${l.files === 1 ? '' : 's'})`);
+        for (const o of l.overlaps) out(`${l.lane}: ${overlapText(o)}: ${o.files.join(', ')}${o.n > o.files.length ? ', ...' : ''}${o.url ? ` ${o.url}` : ''}`);
+      }
       return 0;
     }
     if (cmd === 'digest') {
@@ -1330,7 +1349,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
     return evalCmd(argv.slice(1), { out, err, liveStates: [...live, ...(env.META_STATE ? [env.META_STATE] : [])] });
   }
   if (['run', 'stop', 'requeue', 'hook'].includes(argv[0])) return runCmd(argv, env, out, err);
-  if (['status', 'tick', 'runs', 'sched', 'digest'].includes(argv[0])) return s5Cmd(argv, env, out, err);
+  if (['status', 'tick', 'runs', 'sched', 'digest', 'overlap'].includes(argv[0])) return s5Cmd(argv, env, out, err);
   if (argv[0] === 'migrate') return migrateCmd(argv.slice(1), env, out, err);
   if (['setup', 'doctor', 'project', 'gen'].includes(argv[0])) return setupCmd(argv, env, out, err);
   if (argv[0] === 'dash') return dashCmd(argv.slice(1), env, out, err);

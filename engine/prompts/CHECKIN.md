@@ -83,6 +83,12 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
   naming that plan waits (after run:RUN-m:reviewed). Read the findings file first; then `META runs review RUN-m --refs <ids>` (the review run)
   releases the build, or withdraw / requeue the build to fix the plan. A review with 0 findings releases itself.
 
+## 2h. Upstream overlap (digest `overlap`; per project policy.overlap.enabled, default on)
+- A row = a RUNNING lane whose changed files overlap a remote branch or an open PR (someone else, maybe another Norn, builds on
+  the same files). Read the branch / PR (`git log origin/<ref>`, the PR link). Same work: mail the run to stop and record an
+  owner question (merge theirs, or keep ours). Neighbouring work: mail the run the files and the ref so it rebases onto it
+  before its merge. Unrelated (a shared file only): let it run. The row leaves when the lane stops or the overlap goes.
+
 ## 3. Dispatch (only within caps; caps come from the BUDGET file + STATUS)
 - {{policy}} <!-- policy:checkin -->
 - First apply BUDGET `lanes[<lane>]` (missing = `{executor: auto}`). `paused` = NEVER dispatch that lane;
