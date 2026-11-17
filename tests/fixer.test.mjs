@@ -224,10 +224,13 @@ test('the brief quotes the exact lines now around each finding, its path relativ
   assert.doesNotMatch(b, / {4}1\| | {4}11\| /);
   assert.match(b, /EXACT CONTEXT/);
   assert.deepEqual(briefRows(b), [{ id: 'I-1', file: 'docs/CLAUDE.md', line: 6 }]);
-  // a very long line is cut and says so (the real batch: 40 findings in memory files with 2000-char lines made a 329 kB brief)
-  const long = 'w'.repeat(2000), c = fixerBrief({ project: 'k', dir: 'DIR-9', dec: 'DEC-1', rows: [{ id: 'I-2', path: 'C:/r/M.md', line: 1, why: 'w' }], readFile: () => long });
-  assert.match(c, new RegExp(`    1\\| w{300}… \\[cut: 1700 more chars; read the whole line in the file before you quote it\\]`));
-  assert.ok(c.length < 2500, 'the brief stays small');
+  // a very long CONTEXT line is cut and says so (the real batch: 40 findings in memory files with 2000-char lines made a 329 kB brief);
+  // the finding's own line stays whole (cut, the fixer skipped 10 of 40 findings "the line is cut, so I cannot quote it")
+  const long = 'w'.repeat(2000), c = fixerBrief({ project: 'k', dir: 'DIR-9', dec: 'DEC-1', rows: [{ id: 'I-2', path: 'C:/r/M.md', line: 1, why: 'w' }], readFile: () => `${'v'.repeat(2000)}\n${long}` });
+  assert.match(c, /    1\| v{2000}\n/, 'the finding line: whole');
+  assert.match(c, new RegExp(`    2\\| w{300}… \\[cut: 1700 more chars: Read line 2 in the file to quote it whole\\]`));
+  assert.match(c, /never skip a finding because a line is cut/);
+  assert.ok(c.length < 6000, 'the brief stays small');
   // the run's prompt is a pointer to the brief file, never the brief itself (a Windows command line holds ~32k chars)
   const pr = fixerPrompt('C:\\s\\fixer\\DIR-9-1.brief.md');
   assert.match(pr, /^Read C:\/s\/fixer\/DIR-9-1\.brief\.md /); assert.ok(pr.length < 400);

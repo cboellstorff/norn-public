@@ -60,11 +60,12 @@ const linesNow = (text, line, pad = 4) => {
   const ls = plain(text)?.replace(/\n$/, '').split('\n');
   if (!ls || !line) return null;
   const a = Math.max(1, line - pad), b = Math.min(ls.length, line + pad);
-  return a > b ? null : ls.slice(a - 1, b).map((l, i) => `    ${a + i}| ${cut(l)}`).join('\n');
+  return a > b ? null : ls.slice(a - 1, b).map((l, i) => `    ${a + i}| ${cut(l, a + i, a + i === line ? FIND_MAX : LINE_MAX)}`).join('\n');
 };
-// a long line is cut (memory files hold 2000-char lines: 40 findings x 9 whole lines made a 329 kB brief) and says so
-const LINE_MAX = 300;
-const cut = l => (l.length > LINE_MAX ? `${l.slice(0, LINE_MAX)}… [cut: ${l.length - LINE_MAX} more chars; read the whole line in the file before you quote it]` : l);
+// a long context line is cut (memory files hold 2000-char lines: 40 findings x 9 whole lines made a 329 kB brief) and says so;
+// the finding's own line stays whole up to FIND_MAX (cut, the fixer skipped it: "the line is cut, so I cannot quote it")
+const LINE_MAX = 300, FIND_MAX = 6000;
+const cut = (l, n, max) => (l.length > max ? `${l.slice(0, max)}… [cut: ${l.length - max} more chars: Read line ${n} in the file to quote it whole]` : l);
 /** the fixer run's prompt: a pointer to its brief file (a Windows command line holds ~32k chars; the brief can be far longer) */
 export const fixerPrompt = brief => `Read ${fwd(brief)} (your brief: the findings, their lines now and the answer format) and do exactly that. You are READ-ONLY; your FINAL message is the answer.`;
 
@@ -82,7 +83,7 @@ export function fixerBrief({ project, dir, dec, rows, picks = [], root = '', rea
     'You are READ-ONLY: draft every change, edit nothing. The owner applies your hunks on one result card (nothing lands before he taps Apply).',
     'Read each named file around its line, then write, as your FINAL message:',
     '1. For each file you change, one heading `### `path/to/file:line` - medium - rewrite` and a ```diff block (unified: --- a/<path>, +++ b/<path>, @@ -l,n +l,m @@ hunks) with the exact new text; <path> = the file as the list names it.',
-    '   EXACT CONTEXT: every hunk carries 2-3 unchanged context lines before and after the change (fewer only at the start or end of the file); each context line and each `-` line is copied byte for byte from the file (its "lines now" below: same spelling, spaces, punctuation, never shortened); l = the number of the first context line, n = context + `-` lines, m = context + `+` lines. Every hunk is checked against the file as it is: one that does not apply as written shows as "does not apply" and its finding stays open.',
+    '   EXACT CONTEXT: every hunk carries 2-3 unchanged context lines before and after the change (fewer only at the start or end of the file); each context line and each `-` line is copied byte for byte from the file (its "lines now" below: same spelling, spaces, punctuation, never shortened); l = the number of the first context line, n = context + `-` lines, m = context + `+` lines. Every hunk is checked against the file as it is: one that does not apply as written shows as "does not apply" and its finding stays open. A line shown cut: Read it in the file and quote it whole; never skip a finding because a line is cut.',
     '2. A list `## Findings` with ONE line per finding below: `- <id>: drafted` or `- <id>: skipped: <why>` (a your-call finding without a picked way, a fix you cannot make safely).',
     'Keep every unrelated line as it is. Never touch a file the list does not name.', '', '## The findings', '', ...items, ''].join('\n');
 }
