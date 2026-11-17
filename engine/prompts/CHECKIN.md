@@ -41,6 +41,9 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
   `META rec not-an-answer DEC-m --q Q-n --why W`. Either one; the row leaves.
 - Every active DIR and open Q older than a newer OWNER record on the same subject (caps, a lane, an executor):
   `META rec supersede X --by Y --why "<its own words>"`.
+- Every digest row "possible duplicate directives: DIR-a ~ DIR-b" (the newer restates the older): fold them the same pass. When the
+  newer covers the older, `META rec supersede DIR-a --by DIR-b --why "restated by DIR-b"`; when the older holds something the newer
+  lacks, act on both as one and cite both ids. Never create (or ask for) a directive that restates an active one: name the active DIR.
 - An open Q marked STALE (> 24 h): confirm it still blocks, or withdraw it with `META rec withdraw Q-n --why W`.
 
 ## 2c. Deliverables (finished work followed to main and the install; state derived from git, never typed)

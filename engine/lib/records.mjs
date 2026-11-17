@@ -380,7 +380,10 @@ function validateData(kind, ev, d, target, st, by) {
     }
   }
   if (kind === 'directive') {
-    if (ev === 'create') { str(d.text, 'text'); via(d.via, ['dashboard', 'talk', 'chat', 'cli']); list(d.scope, 'scope'); str(d.expires_utc, 'expires_utc', { req: false }); }
+    if (ev === 'create') {
+      str(d.text, 'text'); via(d.via, ['dashboard', 'talk', 'chat', 'cli']); list(d.scope, 'scope'); str(d.expires_utc, 'expires_utc', { req: false });
+      list(d.distinct_from, 'distinct_from');   // gap #5: the active DIRs this one was created next to on purpose (--new): no duplicate row
+    }
     if (ev === 'done') list(d.refs, 'refs', { req: true });
     if (ev === 'supersede') {
       str(d.why, 'why');
