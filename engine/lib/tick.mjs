@@ -26,6 +26,7 @@ import { checkinCv } from './cv.mjs';
 import { ciProbe } from './ciwatch.mjs';
 import { guardWatch, guardProbe, guardPolicy } from './guard.mjs';
 import { floorOf, floorText } from './floor.mjs';
+import { isApi, usdCap } from './billing.mjs';
 
 const ENGINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const CHECKIN_PROMPT = path.join(ENGINE, 'prompts', 'CHECKIN.md');
@@ -40,7 +41,7 @@ const tickLog = (state, msg) => { try { fs.appendFileSync(path.join(state, 'tick
 export function policyLine(B = {}) {
   const astra = B.max_astra ?? B.max_codex, sol = B.max_sol ?? B.max_codex;
   return `POLICY (from the machine budget): caps ${capText(B.max_claude_workers)} Claude / ${capText(B.max_codex)} Codex (${capText(astra)} codex-astra, ${capText(sol)} codex-sol), `
-    + `1 writer per worktree; usage rate cap ${capText(B.usage_rate_cap_pct_per_h)} %/h${B.weekly_stop_pct !== undefined ? `; weekly guard ${B.weekly_stop_pct} %` : ''}.`
+    + `1 writer per worktree; usage rate cap ${capText(B.usage_rate_cap_pct_per_h)} %/h${isApi(B) ? `; API billing: no weekly limit${usdCap(B) === null ? '' : `, daily cap $${usdCap(B)}`}` : B.weekly_stop_pct !== undefined ? `; weekly guard ${B.weekly_stop_pct} %` : ''}.`
     + (floorOf(B) ? ` WORKER MINIMUM: every worker run (merges and helpers too) uses ${floorText(floorOf(B))}; never pass a lower --model / --effort (the launcher raises it anyway).` : '');
 }
 

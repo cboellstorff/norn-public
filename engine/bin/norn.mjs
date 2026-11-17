@@ -70,6 +70,7 @@ import { slopCmd } from '../lib/slop/cli.mjs';
 import { testsCmd } from '../lib/testscli.mjs';
 import { openBlocks, findingLine } from '../lib/slop/host.mjs';
 import { scopeCheck, denyJson } from '../lib/scope.mjs';
+import { BILLING_MODES, BILLING_NAMES, billingChanges, billingLine, refreshQueued, isApi, usdCap } from '../lib/billing.mjs';
 
 const USAGE = {
   'add question': 'norn rec add question --lane L --title T [--body TEXT | --body-file F] [--option "key|text|cost"]... [--recommend "key|why"] [--class i..v] [--blocks a,b] [--source S] [--owner-only]',
@@ -785,6 +786,38 @@ function smokeCmd(argv, env, out, err) {
   return undefined;
 }
 
+// ---------- billing modes: norn billing [<mode>] [--usd-per-day N|off] (how the Claude account is paid for -> the usage guard) ----------
+const BILLING_USAGE = `usage: norn billing [${BILLING_NAMES.join(' | ')}] [--usd-per-day N | off] [--keep-caps] [--budget F] [--machine F]    (no mode = show the mode in force and the modes; a plan mode sets the weekly guard, the rate cap and the worker cap that fit the plan (--keep-caps: the billing key only); api = pay per token: no weekly guard, no calibration, an optional daily $ cap. Queued runs get the new usage keys too.)`;
+function billingCmd(argv, env, out, err) {
+  try {
+    const mode = argv[0] && !argv[0].startsWith('--') ? argv[0] : undefined;
+    const f = h1Flags(mode === undefined ? argv : argv.slice(1), ['usd-per-day', 'keep-caps!', 'budget', 'machine']);
+    const m = machineOf({ budget: f.budget, machine: f.machine }, env), stateRoot = path.join(metaRoot(env), 'state');
+    if (mode === undefined && f['usd-per-day'] === undefined) {
+      out(billingLine(m.budget, null, { stateRoot }));
+      for (const b of BILLING_MODES) out(`  ${b.name === m.budget.billing ? '*' : ' '} ${b.name.padEnd(8)} ${b.label}: ${b.summary}`);
+      return 0;
+    }
+    const name = mode ?? m.budget.billing;
+    if (!name) throw new Usage('name a mode: no billing mode is set yet', null);
+    let changes;
+    try { changes = billingChanges(name, { usdPerDay: f['usd-per-day'] }); } catch (e) { throw new Usage(e.message, null); }
+    if (f['keep-caps']) changes = { billing: changes.billing, ...(changes.api_usd_per_day !== undefined ? { api_usd_per_day: changes.api_usd_per_day } : {}) };
+    let updated;
+    try { updated = applySettings(merged(m.budget, {}), floorChanges(merged(m.budget, {}), changes).changes); } catch (e) { if (e.status === 400) throw new Usage(e.message, null); throw e; }   // validated as a Settings save
+    writeBudget(m.budgetFile, m.budget, updated);
+    const B = { ...m.budget, ...split(updated).budget }, q = refreshQueued(stateRoot, B);
+    out(`billing ${m.budgetFile}: ${Object.entries(changes).map(([k, v]) => `${k} ${v}`).join(', ')}`);
+    if (q.length) out(`queued runs updated: ${q.length} (their usage keys follow the new budget)`);
+    out(billingLine(B, null, { stateRoot }));
+    if (isApi(B) && usdCap(B) === null) out('note: no daily $ cap - only the worker cap limits spend (norn billing api --usd-per-day N)');
+    return 0;
+  } catch (e) {
+    if (e instanceof Usage || e instanceof ConfigError) { err('error: ' + e.message); err(BILLING_USAGE); return 2; }
+    throw e;
+  }
+}
+
 // ---------- META-USAGE-WEEK: norn calib --pct N [--at <ISO UTC>] [--budget F] (an owner's claude.ai weekly reading -> the budget) ----------
 const CALIB_USAGE = 'usage: norn calib --pct N (0-100) [--at <YYYY-MM-DDTHH:MMZ>, default now] [--budget F] [--machine F]    (records an owner\'s claude.ai weekly reading: calib_time_utc + calib_pct; N >= 10 re-derives cacheR_per_pct from the week start; appends usage/CALIB.txt when it exists)';
 function calibCmd(argv, env, out, err) {
@@ -1241,6 +1274,7 @@ Plumbing:
   norn ready                       what can start now
   norn merge-brief                 write the brief of one staged merge
   norn gen                         regenerate (or --check) the generated agent files
+  norn billing                     how the Claude account is paid for: a plan (weekly limit) or API billing
   norn calib                       record a weekly usage reading
   norn harness                     install the Norn tools into an agent CLI
   norn mcp                         the stdio MCP server
@@ -1251,7 +1285,7 @@ Plumbing:
   norn eval                        replay check-ins against a copy of a state dir`;
 function usageOf(c) {
   const u = { rec: ALL_USAGE, migrate: MIGRATE_USAGE, ...SETUP_USAGE, ...RUN_USAGE, ...S5_USAGE, dash: DASH_USAGE, smoke: 'norn smoke [--keep] [--update-goldens]',
-    calib: CALIB_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
+    calib: CALIB_USAGE, billing: BILLING_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
     eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
     node: NODE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
   return u && 'usage: ' + u.replace(/^usage: /, '');
@@ -1301,6 +1335,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'shot') return shotCmd(argv.slice(1), out, err);
   if (argv[0] === 'smoke') return smokeCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'calib') return calibCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'billing') return billingCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'notify') return notifyCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'merge-brief') return mergeBriefCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'ledger') return ledgerCmd(argv.slice(1), env, out, err);

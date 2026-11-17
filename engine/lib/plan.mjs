@@ -162,7 +162,8 @@ export function holdWords(term, { runs = [], now = Date.now(), label = labelOf }
   if (t.startsWith('PAUSED')) return 'held: paused';
   if (t === 'usage: RATE_OK=0') return 'held: usage over the hourly cap';
   if (t === 'usage: RATE_OK unknown') return 'held: hourly usage not measured yet';
-  if (t === 'usage: weekly unknown') return 'held: weekly usage not measured yet';
+  if (t === 'usage: weekly unknown') return 'held: weekly usage not measured yet (on API billing, set Billing to api)';
+  if ((m = t.match(/^usage: api spend \$([\d.]+) in 24 h >= cap \$([\d.]+)$/))) return `held: API spend $${m[1]} in 24 h reached the $${m[2]} daily cap`;
   if ((m = t.match(/^usage: weekly ([\d.]+) % >= guard ([\d.]+) %$/))) return `held: weekly usage at the stop (${m[1]} % of ${m[2]} %)`;
   if (t.startsWith('cap ') || t.startsWith('cap:')) return 'waits for a worker slot';
   if ((m = t.match(/^worktree held by (\S+)/))) return `waits for its folder (${/^RUN-\d+$/.test(m[1]) ? name(m[1]) : 'another run'} is writing there)`;
@@ -188,6 +189,12 @@ export function forecastOf({ status = '', budget = {}, now = Date.now(), queuedC
   const f = { rate, cap, over: rate !== null && cap !== null ? rate > cap : null, rateOk: ok ? ok[1] === '1' : null, weekly, stop, headroom, reset, stopAt: null, line: '', costLine: null,
     lineAt: null, linePre: '', linePost: '' };
   const at = (pre, ms, post = '') => { f.lineAt = new Date(ms).toISOString(); f.linePre = pre; f.linePost = post; f.line = `${pre}${dayClock(ms, now)}${post}`; };
+  // API billing (billing.mjs): STATUS says the last 24 h of spend and the daily cap; no weekly limit to forecast
+  const api = status.match(/^- billing: API .*$/m), usd = api?.[0].match(/api spend last 24 h \$([\d.,]+)/), capM = api?.[0].match(/of the \$([\d.,]+) daily cap/);
+  if (api) { f.api = { usd: usd ? n(usd[1]) : null, cap: capM ? n(capM[1]) : null }; f.over = null; f.weekly = null; f.stop = null; f.headroom = null;
+    const $ = v => `$${(v ?? 0).toFixed(2)}`;
+    f.line = f.api.cap === null ? `API billing: ${$(f.api.usd)} in the last 24 h, no daily cap` : f.api.usd >= f.api.cap ? `API daily cap reached: ${$(f.api.usd)} of ${$(f.api.cap)} in 24 h - new Claude work waits` : `API billing: ${$(f.api.usd)} of the ${$(f.api.cap)} daily cap in the last 24 h`;
+    return f; }
   if (weekly === null) f.line = 'usage not measured yet';
   else if (stop === null) f.line = 'no weekly stop set';
   else if (headroom <= 0) { if (resetMs) at('weekly stop reached: new Claude work waits for the reset (', resetMs, ')'); else f.line = 'weekly stop reached: new Claude work waits for the reset'; }
