@@ -17,7 +17,7 @@ import { buildCommand, parseOutcome, hbPath, refreshLock, releaseLock, startRun,
 import { resolveShim } from './paths.mjs';
 import { onRunDone } from './deliverables.mjs';
 import { ingestRead } from './adopt.mjs';
-import { holdJob, reapJob, reapGroup, spawnOutside } from './jobguard.mjs';
+import { holdJob, reapJob, reapGroup, spawnOutside, holdGone } from './jobguard.mjs';
 import { usageRefusal, onAccount } from './usageguard.mjs';
 import { nodeUsage } from './fed.mjs';
 import { readGate, noteCheckin } from './gate.mjs';
@@ -197,7 +197,7 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
       for (const lf of lockFiles) releaseLock(lf, run);
       try { for (const f of fillQueue(state)) logLine(`queue: ${f.queued} -> ${f.next}`); } catch (e2) { logLine(`queue fill failed: ${e2.message}`); }
     }
-    process.exit(0);
+    await holdGone(job); process.exit(0);
   }
   // DELIVERABLES-SPEC 1: a DONE run's branch becomes (or refreshes) its deliverable; never fails the exit
   if (outcome === 'done') { try { const d = onRunDone(state, run); if (d) logLine(`deliverable ${d.id} ${d.ev}`); } catch (e) { logLine(`deliverable not recorded: ${e.message}`); } }
@@ -232,6 +232,7 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
     }
     catch (e) { logLine(`tick failed: ${e.message}`); }
   }
+  await holdGone(job);   // its hold ends before it: a settled run leaves no process (LEAK RED)
   process.exit(0);
 }
 
