@@ -26,6 +26,14 @@ const probeable = pid => {
   try { process.kill(pid, 0); } catch (e) { if (e.code !== 'EPERM') return false; }
   return true;
 };
+/** the pid runs: kill(pid, 0) answers AND (Linux) it is no zombie. An exited child whose parent has not reaped it yet - the parent
+ * blocked in Atomics.wait, so libuv never handled SIGCHLD - still answers kill(pid, 0): `norn run --wait` waited its whole 120 s net
+ * for every run on Linux (CI ubuntu: four OOTB tests at 121 s each, 2.5 s on Windows). /proc/<pid>/stat state Z = gone. */
+export function running(pid, { proc = '/proc' } = {}) {
+  if (!probeable(pid)) return false;
+  const st = read(path.join(proc, String(pid), 'stat'));
+  return !(st && /^Z/.test(st.slice(st.lastIndexOf(')') + 2)));
+}
 const startOf = (status, stdout, platform) => { const t = Date.parse((stdout || '').trim() + (platform === 'win32' ? '' : ' UTC')); return status === 0 && Number.isFinite(t) ? t : null; };
 // Linux (CI-RED-C1159BD R1): `ps -o lstart=` has whole seconds, so a process and the one it spawned 0.2 s later had the same start
 // time (a reused pid read as ours). /proc/<pid>/stat field 22 = starttime in clock ticks since boot (USER_HZ), + /proc/stat btime.

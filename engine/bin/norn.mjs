@@ -35,6 +35,7 @@ import { runProbe } from '../lib/probe.mjs';
 import { writeStatus, weeklyEstimate, accountCacheR, crTotal } from '../lib/status.mjs';
 import { weekStart, parseReset } from '../lib/cost.mjs';
 import { digest, tryDigest } from '../lib/digest.mjs';
+import { running } from '../lib/legacy.mjs';
 import { projectOverlap, overlapOn, overlapText } from '../lib/overlap.mjs';
 import { renderDigest } from '../lib/views.mjs';
 import { tick, quietFlag } from '../lib/tick.mjs';
@@ -501,7 +502,7 @@ function runCmd(argv, env, out, err) {
       // ended when its supervisor is gone (as fednode.mjs waits; 120 s = only a hung supervisor's net)
       const sup = loadState(state).items[r.run]?.end?.supervisor_pid;
       for (let t0 = Date.now(); sup && Date.now() - t0 < 120000;) {
-        try { process.kill(sup, 0); } catch (e) { if (e.code !== 'EPERM') break; }
+        if (!running(sup)) break;   // a zombie supervisor (our own unreaped child: this loop blocks the loop) has exited
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
       }
       const it = loadState(state).items[r.run], e = it.end || {};
