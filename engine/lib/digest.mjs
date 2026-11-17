@@ -19,6 +19,7 @@ import { digestRow } from './slop/daily.mjs';
 import { slopOn } from './policy.mjs';
 import { adviceDigestRow } from './advice.mjs';
 import { critiqueRows } from './critique.mjs';
+import { wholeHold, readHold, holdItem, noticeMin } from './holds.mjs';
 
 const H = 3600e3;
 export const WINDOW_H = 72;
@@ -165,7 +166,7 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   const main = deliverableConfig(project).main;
   const sections = {
     finished: [...finished(runs, dlvRows, { now, git, main, cited: actedOn(items) }), ...nodeFinished(stateDir, st.items, { now, git, main, cited: actedOn(items) })],
-    queued: queued(items.filter(i => i.kind === 'run'), { evalAfter: evalAfter || makeEval(stateDir, { git }), ready: ready || readiness(stateDir, { now }) }),
+    queued: queued(items.filter(i => i.kind === 'run'), { evalAfter: evalAfter || makeEval(stateDir, { git }), ready: (ready ||= readiness(stateDir, { now })) }),
     questions: questions(items, { now }),
     ended: ended(runs, { now }),
     directives: directives(items, { now }),
@@ -175,6 +176,14 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   const held = heldLanes(st.items, now);
   if (held.length) sections.held = held.map(h => ({ id: h.id, lane: h.lane, holder: h.holder, who: holdWho(h), until: h.until,
     min: Math.max(0, Math.ceil((Date.parse(h.until) - now) / 60000)), why: h.why }));
+  // GAP-1 (holds.mjs): ALL queued work waits on one machine-level hold (usage guard / PAUSED) past policy.holds.notice_min - ONE row, first;
+  // the walk says it holds NOW, hold.json (the tick's) says since when; it leaves when the walk no longer holds
+  const hw = wholeHold(ready), hr = hw ? readHold(stateDir) : null;
+  if (hw && hr?.term === hw.term) {
+    let status = ''; try { status = fs.readFileSync(path.join(stateDir, 'STATUS.md'), 'utf8'); } catch { /* no reset words */ }
+    const it = holdItem({ ...hr, ...hw }, { now, min: noticeMin(project?.policy), status });
+    if (it) sections.hold = [{ id: 'HOLD', term: it.term, scope: it.scope, runs: it.runs, merges: it.merges, since: it.since, min: it.minutes, reason: it.reason, fix: it.fix, clears: it.clears }];
+  }
   // META-ROADMAP S3 (SPEC sec. 3 check-in duty 2): the audit's Unplaced list stays in the digest until it is 0
   let rm = null;
   try { rm = unplacedNow(stateDir, { now, items: st.items, dlv: dlvRows }); } catch { rm = null; }

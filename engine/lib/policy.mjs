@@ -58,7 +58,9 @@ export const POLICY_DEFAULTS={
   voice:{popups:'off',daily_cap:3},   // META-TEND P6 (DEC-264, DIR-36): SloppaChoppa's pop-ups ship OFF until the owner's 11-21 review; the badge works from day one
   launch:{roles:{worker:'full',merge:'full',checkin:'full',chat:'full'},profiles:{}},
   // META-GUARD R1 (DIR-23): the live usage guard (guard.mjs) - runaway = k x the peers' median above floor_m M cache reads; over the hand-off line for N calls; tool spam
-  guard:{k:3,floor_m:5,min_peers:3,peer_days:14,over_handoff_turns:5,tool_result_k:20,tool_share_pct:40,tool_share_floor_m:2,push:false}};   // META-STANDING-CONTEXT R1: launch profile per role (standing.mjs)   // META-STANDING-CONTEXT R1: a paragraph older than this, never confirmed = STALE
+  guard:{k:3,floor_m:5,min_peers:3,peer_days:14,over_handoff_turns:5,tool_result_k:20,tool_share_pct:40,tool_share_floor_m:2,push:false},
+  // GAP-1 (holds.mjs): ALL queued work held on one machine-level hold this long = one needs-you item, one digest row, one notice
+  holds:{notice_min:60}};   // META-STANDING-CONTEXT R1: launch profile per role (standing.mjs)   // META-STANDING-CONTEXT R1: a paragraph older than this, never confirmed = STALE
 
 // META-OOTB F-2 + FOLLOWUP R1: the routing `project new` writes, derived in ONE place from the executors setup found AND the caps in
 // force (local/budget.json; an unset cap = no limit). A Codex executor is allowed only when the Codex total and its own cap
@@ -103,6 +105,7 @@ export const SETTINGS=[
   S('workers','policy.guard.floor_m','Runaway alarm floor (M cache reads)',num(0,1000),'No runaway alarm below this many million cache reads, whatever the ratio.','5','Lower = small runs alarm too.',['norn guard']),
   S('workers','policy.guard.tool_share_pct','Tool-spam hint at (% of the cache reads of a run)',int(5,100),'A live run whose tool output (test logs, file reads, greps) causes this share of its cache reads (above 2M) gets a tool-spam hint; so does one tool result over 20k tokens.','40','Lower = more hints.',['norn guard','norn guard sources']),
   S('workers','policy.guard.push','Push usage alarms to the phone',bool,'Off: usage alarms go into the FYI digest notice (batched). On: one low-priority notice per alarm at once.','false','On = more pings.',['norn tick (notify class usage)']),
+  S('workers','policy.holds.notice_min','Tell me when everything is held (min)',int(0,1440),'When every queued run (or every queued Claude run) has waited this long on the same machine-level hold - the usage guard (weekly usage unknown or at the stop, the hourly rate cap, the API daily cap) or a PAUSED file - Norn puts ONE item in the Inbox with the fix, one row in the check-in digest and sends one notice. It leaves by itself when the hold clears.','60','Lower = earlier word of a stall, more items for short holds (the hourly rate cap often clears within 2 h).',['norn tick (holds.mjs)','dashboard Inbox',CHECKIN]),
   S('voice','policy.slop.enabled','SloppaChoppa',bool,'On: SloppaChoppa checks a lane branch when its run ends DONE, holds its merge while a BLOCK finding is open, lists his findings in the Guard and sits in the header. Off: all of that stops for this project - no run-end check, no merge hold, no code rows in the Guard, no SloppaChoppa in the header, the Guard or a pop-up (the Guard stays a plain list with a count). Turn him back on and his findings show again from the next check; nothing recorded is lost while off.','on','Off = a lane branch merges without the slop check: leftovers (merge debris, empty catches) can reach main unseen.',['the run supervisor (run-end check)','norn merge-brief + the merge queue (the hold)','dashboard header + Guard page']),
   S('voice','policy.voice.popups','SloppaChoppa pop-ups',en(['off','on','quiet']),'He pops up bottom-right by himself only for a NEW finding at warn level or above, once per finding: on = animated, quiet = still frames, off = never (the header badge and the Guard page work either way; a click on him always calls him up).','off','On = an interruption per new finding, up to the daily cap; never while you type, never over Send.',['dashboard header + Guard page']),
   S('voice','policy.voice.daily_cap','SloppaChoppa pop-ups per day',int(0,10),'At most this many unprompted appearances a day (this browser); 0 = none.','3','Higher = more interruptions.',['dashboard header']),
@@ -240,6 +243,8 @@ export const SECTION_RULES=[
   [/^policy\.slop\./,'voice/switch'],
   [/^policy\.voice\./,'voice/popups'],
   [/^policy\.guard\./,'workers/usage'],
+  [/^policy\.holds\./,'workers/usage'],
+  [/^policy\.holds\./,'workers/usage'],
   [/^policy\.launch\./,'advanced/harness'],
   [/^policy\.cadence\./,'checkins/schedule'],
   [/^policy\.checkin\./,'checkins/schedule'],

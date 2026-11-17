@@ -703,7 +703,8 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
     const paused = (spec.paused || []).find(f => fs.existsSync(f));
     if (paused) row.terms.push(`PAUSED (${paused.replace(/\\/g, '/')})`);
     const info = infoOf(spec), caps = info?.caps || [], staleMs = spec.staleMs ?? STALE_MS;
-    const usage = onAccount(info) ? usageRefusal(spec, state) : null;   // CHECKIN-V2 piece 0: the weekly guard + RATE_OK, like a dispatch (waits)
+    row.account = onAccount(info);   // GAP-1 (holds.mjs): "every queued Claude run held" counts the rows the usage guard applies to
+    const usage = row.account ? usageRefusal(spec, state) : null;   // CHECKIN-V2 piece 0: the weekly guard + RATE_OK, like a dispatch (waits)
     if (usage) row.terms.push(`usage: ${usage}`);
     const lim = limitRefusal(state, spec, { limits: (L ??= openLimits(state, { now })) });   // META-LIMIT-GATE: waits for the reset, holds no cap
     if (lim) row.terms.push(lim);
