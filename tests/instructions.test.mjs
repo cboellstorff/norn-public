@@ -12,7 +12,7 @@ import { mark, slowStep, loopReport } from './helpers/loopwatch.mjs';
 import { loadProject } from '../engine/lib/config.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { estTokens, TOKEN_METHOD, discover, sessionsOn, dailyCost, lint, instructionsView, formatInstructions, knownCommands } from '../engine/lib/instructions.mjs';
-import { renderTab, loadTab, NORN_GROUPS, TABS } from '../engine/dash/ui.mjs';
+import { renderTab, loadTab, NAV, TABS } from '../engine/dash/ui.mjs';
 import { guardRows, guardView } from '../engine/lib/guardview.mjs';
 import { guardSummary, guardPart } from '../engine/dash/guardparts.mjs';
 import { TABS as SERVER_TABS, createDashboard } from '../engine/dash/server.mjs';
@@ -197,11 +197,10 @@ const VIEW = {
     parts: { worker: { run: 'RUN-640', method: 'request', total: 22269, parts: [{ key: 'base', label: 'harness base prompt + tool schemas', ours: false, tokens: 9106 }, { key: 'skills', label: 'skills list', ours: true, tokens: 4251 }, { key: 'plugins', label: 'plugins (their skills)', ours: true, tokens: 4946 }] } } },
   suggest: [{ id: 'S-1', class: 'stale', path: 'C:/r/CLAUDE.md', file: 'CLAUDE.md', anchor: 'p12345678', line: 3, head: 'Old rule', tokens: 600, loads_per_day: 3, saved_per_day: 1800, why: 'older than 30 d', action: 'delete it', patch: '--- a/C:/r/CLAUDE.md\n+++ b/C:/r/CLAUDE.md\n@@ -3,2 +2,0 @@\n-Old rule\n-\n', owner_file: false }],
 };
-test('Context (was Instructions): in the Verdandi group next to Usage (META-TEND P1-VISUAL), a one-project tab; rows with load class, ~size, daily cost, drift and hints', async () => {
+test('Context: in Health next to Usage (UX review 2), a one-project tab; rows with load class, ~size, daily cost, drift and hints', async () => {
   assert.ok(TABS.some(([k, l]) => k === 'context' && l === 'Context'));   // META-UX-BUILD S4 (owner DIR-65)
   assert.ok(SERVER_TABS.includes('context'));
-  const ver = NORN_GROUPS.find(g => g[0] === 'verdandi')[3];
-  assert.deepEqual(ver.slice(ver.indexOf('usage')), ['usage', 'tests', 'context', 'slop']);   // META-TEND P6: Guard (the open faults now = what is) after Instructions
+  assert.deepEqual(NAV.find(d => d[0] === 'health')[2], ['usage', 'slop', 'tests', 'context']);   // UX review 2: Health
   assert.ok(renderTab('context', { one: true }).includes('Choose one project'));
   const html = ['role', 'file', 'growing', 'checkins', 'checks'].map(sub => renderTab('context', { ...VIEW, sub, limit: 1000 }, {})).join('');
   assert.match(html, /id="panel-context"/);

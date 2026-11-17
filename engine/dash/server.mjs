@@ -55,6 +55,7 @@ import { insViewFile } from '../lib/guard-scan.mjs';
 import { insSummary, insPart } from './insparts.mjs';
 import { guardSummary, guardPart, chipView, fixSheet, fixPick } from './guardparts.mjs';
 import { SUB_CAP } from './subviews.mjs';
+import { isNeed, needsYou } from './terms.mjs';
 import { docsList as docsListOf } from './docparts.mjs';
 import { paragraphs } from '../lib/instructions.mjs';
 import { openCardsAsync } from '../lib/rules.mjs';
@@ -84,7 +85,7 @@ const NORN = ['palette.mjs', 'pixel.mjs', 'assets.mjs', 'motion.mjs', 'look.mjs'
   'live.mjs', 'stage.mjs', 'weave.mjs', 'mapview.mjs', 'well.mjs', 'tapestry.mjs', 'orc.mjs'];   // META-TEND P6: SloppaChoppa's stage   // S2: the Map (the Well / the Tapestry)
 const TYPES = { js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', woff2: 'font/woff2', png: 'image/png' };
 const typeOf = f => TYPES[f.split('.').pop()];
-export const TABS = ['home', 'overview', 'inbox', 'lanes', 'agents', 'map', 'roadmap', 'plan', 'records', 'usage', 'tests', 'docs', 'context', 'slop', 'ledger', 'settings'];
+export const TABS = ['home', 'overview', 'inbox', 'work', 'lanes', 'runs', 'map', 'plan', 'roadmap', 'health', 'usage', 'slop', 'tests', 'context', 'history', 'records', 'ledger', 'docs', 'settings'];
 const hash = s => createHash('sha256').update(s).digest('hex');
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const plain = o => o !== null && typeof o === 'object' && !Array.isArray(o);
@@ -325,9 +326,9 @@ export function createDashboard(o) {
 
   // ---------- tab data ----------
   // META-HOME-POLISH R1: what needs you in one project (the Home opens on the first that has some); a broken project counts 0
-  // META-TEND P4: what NEEDS you = every Inbox row but answered Qs and model advice (advisory: it blocks nothing, it waits for a tap)
-  const isNeed = i => i.type !== 'answered' && i.type !== 'advice';
-  const needsOf = async p => { try { return (await inbox(p)).filter(isNeed).length; } catch { return 0; } };
+  // META-TEND P4: what NEEDS you = every Inbox row but answered Qs and model advice (advisory: it blocks nothing, it waits for a tap).
+  // UX review 4: the one count is terms.mjs needsYou - Overview, Inbox, Home and the project picker all use it.
+  const needsOf = async p => { try { return needsYou(await inbox(p)); } catch { return 0; } };
   async function inbox(p) {
     const s = await stAsync(p), items = Object.values(s.items), out = [];
     // META-ADOPT A3: ONE needs-you row while a drafted setup has parts to review (not one per missing thing)
@@ -388,14 +389,14 @@ export function createDashboard(o) {
       .map(n => { const rf = refused(n.id); return { ...n, project: p.name, ...(gc.has(n.id) ? { guard: gc.get(n.id) } : {}), ...(rf.length ? { refused: rf } : {}) }; });
   }
   // the Ledger tab (LEDGER-UX R1): `count` lines (default 100, max 2000) ending `offset` lines before the end ("show older" pages);
-  // runs = the run ids the Agents tab lists, so the tab links only those
+  // runs = the run ids the Runs page lists, so the tab links only those
   async function ledgerPage(p, url) {
     const n = url.searchParams.get('count'), o = url.searchParams.get('offset');
     const count = Math.min(2000, Math.max(1, Number.parseInt(n ?? '', 10) || 100)), offset = Math.max(0, Number.parseInt(o ?? '', 10) || 0);
     const all = p.ledger ? await tail(p.ledger, Infinity) : [], end = Math.max(0, all.length - offset), start = Math.max(0, end - count);
     return { file: p.ledger ?? null, ledger: all.slice(start, end), total: all.length, count, offset, more: start > 0, runs: [...shownRunIds(runsOf(st(p)))] };
   }
-  // the lane -> agent map (LANE-MAP-DESIGN 1): built from the fold + the agents tree the Agents tab already reads
+  // the lane -> agent map (LANE-MAP-DESIGN 1): built from the fold + the agents tree the Runs page already reads
   async function map(p, url) {
     const more = new Set((url.searchParams.get('more') || '').split(',').map(x => x.trim()).filter(Boolean));
     return { project: p.name, ...mapGraph(st(p), { all: url.searchParams.get('all') === '1', more, tree: await agents(p), deliverables: deliverablesOf(p).rows }) };
@@ -493,7 +494,7 @@ export function createDashboard(o) {
     const burners = tree.flatMap(n => [n, ...(n.children || [])]).filter(n => n.burn30 > 0)
       .map(n => ({ id: n.id, project: n.project, lane: n.lane ?? null, burn30: n.burn30, pct_per_h: perPct ? Math.round((n.burn30 * 2 / perPct) * 100) / 100 : null }))
       .sort((a, b) => b.burn30 - a.burn30).slice(0, 5);
-    return { now: iso(), projects: ps.map(p => p.name), needs_you: needs.length, needs,
+    return { now: iso(), projects: ps.map(p => p.name), needs_you: needsYou(needs), needs,
       running: { claude: { n: claude, cap: m.max_claude_workers ?? null }, codex: { n: codex, cap: m.max_codex ?? null }, lanes: running },
       burn: { usage: usage(ps[0], m), top: burners, executors: providerUsage(ps) },
       paused: ps.some(p => pausedFiles(p).some(existsS)), checkin_locked: ps.some(p => lockFresh(p)),
@@ -589,7 +590,7 @@ export function createDashboard(o) {
     return { ...v, cached: false };
   }
   const docsList = p => (p.docs || []).map((d, i) => ({ i, tab: d.tab, path: d.path, exists: existsS(d.path) }));
-  // META-UX-BUILD S1: the Instructions tab and the Guard read ONE instruction scan per project, never run in a request: the last view
+  // META-UX-BUILD S1: Context and Slop read ONE instruction scan per project, never run in a request: the last view
   // is served at once (from memory, else <state>/instructions-view.json, so a restart is not cold) and, once older than o.insTtlMs
   // (60 s), rebuilt by a worker thread (lib/guard-scan.mjs, this server's own home + machine) - one rebuild at a time per project.
   // A new view, or the end of a rebuild a page was shown as "refreshing", reaches the page as the stream's derived event (in the sig).
@@ -914,7 +915,7 @@ export function createDashboard(o) {
       ruled: items.filter(i => i.kind === 'decision' && new Date(i.created).toDateString() === today).sort(byNew).slice(0, 6)
         .map(d => ({ id: d.id, text: d.data.question ? `${d.data.question}: ${d.data.choice ?? ''}` : d.data.choice ?? d.data.text ?? '', created: d.created, state: d.state })),
       orders: items.filter(i => i.kind === 'directive' && i.state === 'active').sort(byNew).slice(0, 8).map(d => ({ id: d.id, text: d.data.text ?? '', created: d.created })) };
-    return { project: p.name, now: iso(), events, needs_you: events.filter(e => e.cat === 'needs').length, status, side };
+    return { project: p.name, now: iso(), events, needs_you: needsYou(needs), approvals: events.filter(e => e.kind === 'approval' && e.state === 'pending').length, status, side };
   }
   // GET /api/file?project=&path=: an image the thread shows inline, served only from the allow-listed roots - the project root, its
   // state dir, and the worktree + NOTES folder of each of its runs (shots live beside the work that made them). Real paths are compared
@@ -1378,7 +1379,7 @@ data: ${JSON.stringify(l)}
         }
         if (route === '/') return send(200, (await readA(path.join(DASH, 'index.html'))).replace('__TOKEN__', JSON.stringify(token)).replace('__REMOTE__', JSON.stringify(who.device ? { device: who.device.id, name: who.device.name } : null)), 'text/html; charset=utf-8');
         if (route === '/api/remote' && remote) return send(200, remoteView(who));
-        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
+        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/terms.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
         const vm = route.match(/^\/vendor\/([a-z0-9.-]+)$/);   // pinned browser libraries + font (vendor/VENDOR.md), allowlist only
         if (vm && VENDOR.includes(vm[1])) return send(200, await fs.promises.readFile(path.join(DASH, 'vendor', vm[1])), typeOf(vm[1]));
         const nm = route.match(/^\/norn\/([a-z.]+)$/);   // the Norn look's modules + stylesheet, allowlist only
@@ -1390,7 +1391,7 @@ data: ${JSON.stringify(l)}
         if (route === '/api/adopt/repos') return send(200, { repos: await reposNear() });
         if (route === '/api/adopt') return send(200, await adoptView(one(url)));
         if (route === '/api/overview') return send(200, await overview(pick(url, { all: true })));
-        if (route === '/api/inbox') return send(200, { items: (await Promise.all(pick(url, { all: true }).map(inbox))).flat() });
+        if (route === '/api/inbox') { const items = (await Promise.all(pick(url, { all: true }).map(inbox))).flat(); return send(200, { items, needs_you: needsYou(items) }); }
         if (route === '/api/lanes') { const all = url.searchParams.get('all') === '1'; return send(200, { lanes: lanesWithSpend(pick(url, { all: true }), all) }); }
         if (route === '/api/agents') { const ps = pick(url, { all: true }); return send(200, { tree: (await Promise.all(ps.map(agents))).flat(), queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) }); }
         if (route === '/api/map') return send(200, await map(one(url), url));

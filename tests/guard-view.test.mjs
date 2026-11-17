@@ -28,7 +28,7 @@ test('guardRows: every phase and SloppaChoppa typed, each with the tab that fixe
   assert.deepEqual(by['models:class chores'].go, { tab: 'usage', jump: 'usage-advice' });
   assert.equal(by['models:class chores'].cls, 'chores');
   assert.ok(!rows.some(r => r.id === 'M-k2'), 'a decided advice card is closed');
-  assert.deepEqual(by['code:a.mjs'].go, { tab: 'agents', jump: 'node-RUN-9' });
+  assert.deepEqual(by['code:a.mjs'].go, { tab: 'runs', jump: 'node-RUN-9' });
   assert.equal(by['code:a.mjs'].severity, 'high');
 });
 
@@ -57,8 +57,8 @@ test('guardView: counts per type, new first, the trend = open findings by the da
 
 test('the worst pick: a low row (path not found), even a new one, never outranks a warn-level finding in the order, his line or the best action', () => {
   const rows = rankRows([
-    { id: 'q', type: 'rules', severity: 'low', new: true, why: 'a rule names a path git never had: C:/x/.superpowers/QUIET does not exist', go: { tab: 'instructions' } },
-    { id: 'm', type: 'memory', severity: 'medium', new: false, why: 'MEMORY.md is over 200 lines.', go: { tab: 'instructions', ins: 'm' } },
+    { id: 'q', type: 'rules', severity: 'low', new: true, why: 'a rule names a path git never had: C:/x/.superpowers/QUIET does not exist', go: { tab: 'context' } },
+    { id: 'm', type: 'memory', severity: 'medium', new: false, why: 'MEMORY.md is over 200 lines.', go: { tab: 'context', ins: 'm' } },
     { id: 'h', type: 'tests', severity: 'high', new: false, why: 'a test is red.', go: { tab: 'tests' } },
     { id: 'n', type: 'docs', severity: 'medium', new: true, why: 'a doc is stale.', go: { tab: 'docs', doc: 1 } }]);
   assert.deepEqual(rows.map(r => r.id), ['n', 'h', 'm', 'q'], 'warn level first (new first inside it), low last');

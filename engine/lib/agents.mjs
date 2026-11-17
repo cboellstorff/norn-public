@@ -1,4 +1,4 @@
-// Agents tab data (META-GENERAL-DESIGN 6, 12-S6): one root per RUN, children from the transcript. Transcripts and Codex rollouts
+// Runs page data (META-GENERAL-DESIGN 6, 12-S6): one root per RUN, children from the transcript. Transcripts and Codex rollouts
 // are tailed incrementally (byte offset cache; only complete appended lines are parsed). Unknown records are ignored (design 13).
 import fs from 'node:fs';
 import path from 'node:path';
@@ -119,16 +119,16 @@ export function codexInfo(file, cache = new Map()) {
   return r ? { total: r.c.total, last: r.c.last, window: r.c.window, ts: r.c.ts } : null;
 }
 
-// the file locations are the adapters' (harness-agnostic feed, LANE-MAP-DESIGN 2); re-exported for the Agents tab and its tests
+// the file locations are the adapters' (harness-agnostic feed, LANE-MAP-DESIGN 2); re-exported for the Runs page and its tests
 export { findTranscript } from './harness/claude.mjs';
 export { findRollout } from './harness/codex.mjs';
 
 const readText = f => { try { return readTextS(f); } catch { return null; } };
 const ended = r => r.state !== 'running';
 const QUEUE_STATES = ['queued', 'filled', 'withdrawn'];
-// a queue entry is no session: the Agents tab lists the queued ones apart (META-GT12); ended runs stay RECENT_MS
+// a queue entry is no session: the Runs page lists the queued ones apart (META-GT12); ended runs stay RECENT_MS
 const shown = (r, now) => !QUEUE_STATES.includes(r.state) && !(ended(r) && now - Date.parse(r.updated) > RECENT_MS);
-/** The run ids the Agents tree lists now (the Ledger tab links only those, LEDGER-UX R1). */
+/** The run ids the Runs tree lists now (the Ledger tab links only those, LEDGER-UX R1). */
 export const shownRunIds = (runs, now = Date.now()) => new Set([...runs].filter(r => r.kind === 'run' && shown(r, now)).map(r => r.id));
 
 /**
