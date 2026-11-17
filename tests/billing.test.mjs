@@ -8,7 +8,8 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { mkTmp } from './helpers/tmp.mjs';
 import { usageRefusal } from '../engine/lib/usageguard.mjs';
-import { billingChanges, billingChoices, refreshQueued, spendDay, billingLine, BILLING_NAMES } from '../engine/lib/billing.mjs';
+import { billingChanges, billingChoices, spendDay, billingLine, BILLING_NAMES } from '../engine/lib/billing.mjs';
+import { liveBudget } from '../engine/lib/runs.mjs';
 import { capsMissing } from '../engine/lib/policy.mjs';
 import { forecastOf, holdWords } from '../engine/lib/plan.mjs';
 import { buildStatus } from '../engine/lib/status.mjs';
@@ -77,12 +78,13 @@ test('modes: each plan sets its caps; api sets only the mode (+ the daily cap); 
   assert.equal(billingChoices().find(b => b.default).name, 'max-5x');
 });
 
-test('refreshQueued: a queued spec gets the new usage keys and keeps its others; a key the budget lacks is dropped', () => {
-  const r = root(), f = path.join(r.state, 'runs', 'RUN-7.queue.json');
-  fs.writeFileSync(f, JSON.stringify({ lane: 'x', budget: { max_claude_workers: 3, weekly_stop_pct: 95, usage_rate_cap_pct_per_h: 0.57 } }));
-  assert.deepEqual(refreshQueued(r.stateRoot, { billing: 'api', api_usd_per_day: 40, usage_rate_cap_pct_per_h: 0.57 }), [f]);
-  assert.deepEqual(JSON.parse(fs.readFileSync(f, 'utf8')), { lane: 'x', budget: { max_claude_workers: 3, usage_rate_cap_pct_per_h: 0.57, billing: 'api', api_usd_per_day: 40 } });
-  assert.deepEqual(refreshQueued(r.stateRoot, { billing: 'api', api_usd_per_day: 40, usage_rate_cap_pct_per_h: 0.57 }), [], 'unchanged = not rewritten');
+test('a queued spec reads the budget in force (GAP-2): its budget file only; gone = none; unparseable = held, never guessed', () => {
+  const r = root(), bf = path.join(r.t, 'budget.json');
+  fs.writeFileSync(bf, JSON.stringify({ billing: 'api', api_usd_per_day: 40 }));
+  assert.deepEqual(liveBudget({ budget_file: bf }), { billing: 'api', api_usd_per_day: 40 });
+  assert.deepEqual(liveBudget({ budget_file: path.join(r.t, 'gone.json') }), {}, 'a removed file = no budget, as norn run reads it');
+  fs.writeFileSync(bf, '{ broken');
+  assert.throws(() => liveBudget({ budget_file: bf }), /budget .*budget\.json unreadable .*: held until it parses/);
 });
 
 test('STATUS + forecast: API billing says the spend and the cap, asks for no calibration, RATE_OK=1', () => {
@@ -97,12 +99,13 @@ test('STATUS + forecast: API billing says the spend and the cap, asks for no cal
   assert.equal(f.line, 'API billing: $3.50 of the $10.00 daily cap in the last 24 h');
 });
 
-test('norn billing: shows the modes; sets api + a daily cap in the budget and the queued runs; a plan sets its caps', () => {
+test('norn billing: shows the modes; sets api + a daily cap in the budget (a queued run reads it at fill); a plan sets its caps', () => {
   const r = root(), local = path.join(r.t, 'local');
   fs.mkdirSync(local);
   fs.writeFileSync(path.join(local, 'budget.json'), JSON.stringify({ max_claude_workers: 3, max_codex: 0, weekly_stop_pct: 95, usage_rate_cap_pct_per_h: 0.57 }));
   const q = path.join(r.state, 'runs', 'RUN-3.queue.json');
-  fs.writeFileSync(q, JSON.stringify({ budget: { max_claude_workers: 3, weekly_stop_pct: 95 } }));
+  const spec = { budget_file: path.join(local, 'budget.json') };
+  fs.writeFileSync(q, JSON.stringify(spec));
   const norn = (...a) => spawnSync(process.execPath, [NORN, 'billing', ...a], { encoding: 'utf8', windowsHide: true, env: { ...process.env, META_ROOT: r.t, META_NO_TICK: '1' } });
   let x = norn();
   assert.equal(x.status, 0, x.stderr);
@@ -112,8 +115,8 @@ test('norn billing: shows the modes; sets api + a daily cap in the budget and th
   assert.equal(x.status, 0, x.stderr);
   const b = JSON.parse(fs.readFileSync(path.join(local, 'budget.json'), 'utf8'));
   assert.equal(b.billing, 'api'); assert.equal(b.api_usd_per_day, 25); assert.equal(b.max_claude_workers, 3, 'api keeps the worker cap');
-  assert.equal(JSON.parse(fs.readFileSync(q, 'utf8')).budget.billing, 'api');
-  assert.match(x.stdout, /queued runs updated: 1/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(q, 'utf8')), spec, 'the queued spec is not rewritten');
+  assert.equal(liveBudget(spec).billing, 'api', 'its fill reads the new mode');
   x = norn('pro');
   assert.equal(x.status, 0, x.stderr);
   const p = JSON.parse(fs.readFileSync(path.join(local, 'budget.json'), 'utf8'));
@@ -123,7 +126,7 @@ test('norn billing: shows the modes; sets api + a daily cap in the budget and th
   assert.match(x.stderr, /api billing mode only/);
 });
 
-test('the dash: Settings offers Billing; saving api reaches the queued runs; the Burn card shows the spend, not the weekly guard', async () => {
+test('the dash: Settings offers Billing; saving api reaches the queued runs (read at fill); the Burn card shows the spend, not the weekly guard', async () => {
   const { fixture } = await import('./helpers/dash-fixture.mjs');
   const { renderTab, loadTab } = await import('../engine/dash/ui.mjs');
   const f = await fixture();
@@ -131,7 +134,8 @@ test('the dash: Settings offers Billing; saving api reaches the queued runs; the
     const ui = async r => (await f.get(r)).data, now = Date.now();
     const q = path.join(f.pa.state, 'runs', 'RUN-90.queue.json');
     fs.mkdirSync(path.dirname(q), { recursive: true });
-    fs.writeFileSync(q, JSON.stringify({ budget: { max_claude_workers: 1, weekly_stop_pct: 50 } }));
+    const spec = { budget_file: f.budgetFile };
+    fs.writeFileSync(q, JSON.stringify(spec));
     const g = (await f.get('/api/settings?project=kestrel')).data;
     assert.equal(g.billing_now, null);
     assert.deepEqual(g.billing.map(b => b.name), BILLING_NAMES);
@@ -140,8 +144,8 @@ test('the dash: Settings offers Billing; saving api reaches the queued runs; the
     assert.match(html, /Not set: Norn treats the account as a plan/);
     const r = await f.post('/api/settings', { project: 'kestrel', version: g.version, changes: { billing: 'api', api_usd_per_day: 20 } });
     assert.equal(r.status, 200, JSON.stringify(r.data));
-    assert.equal(r.data.requeued, 1);
-    assert.equal(JSON.parse(fs.readFileSync(q, 'utf8')).budget.billing, 'api');
+    assert.deepEqual(JSON.parse(fs.readFileSync(q, 'utf8')), spec, 'the queued spec is not rewritten');
+    assert.equal(liveBudget(spec).billing, 'api', 'its fill reads the saved mode');
     html = renderTab('settings', await loadTab('settings', 'kestrel', ui), { now, project: 'kestrel' });
     assert.match(html, /In force: <b>API billing \(pay per token\)<\/b>/);
     const ov = (await f.get('/api/overview?project=kestrel')).data;

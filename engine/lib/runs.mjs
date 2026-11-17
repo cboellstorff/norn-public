@@ -28,7 +28,7 @@ import { unserved, osLabel, fedOf, fetchClaims, claimKey, claimRun, releaseClaim
 import { workClass, isFable } from './workclass.mjs';
 import { resolveAtFill } from './launchpolicy.mjs';
 import { floorOf, raiseToFloor, floorBinds } from './floor.mjs';
-import { pathKey } from './config.mjs';
+import { pathKey, metaRoot } from './config.mjs';
 
 const fwd = p => String(p).replace(/\\/g, '/');
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -463,6 +463,27 @@ function duplicateCheck(o) {
 
 // ---------- queue (META-GT12): a run waiting for a cap slot; filled FIFO per cap on every run exit and by norn status ----------
 export const queueSpecPath = (state, run) => path.join(state, 'runs', run + '.queue.json');
+// GAP-2 (queued runs kept stale settings): a queue spec is the launch spec of its queue time, but only what is genuinely the run's own
+// may stay frozen in it. Two kinds of key:
+//  - MACHINE-LEVEL, read LIVE at every fill walk and fill start: the whole machine budget (spec.budget_file = the local/budget.json
+//    `norn run` read: worker caps max_*, billing + the usage guard keys, the worker floor worker_min_*, the default models / efforts
+//    claude_model / *_effort, the typed executors' caps), and the project policy parts (launchpolicy.mjs resolveAtFill: memory, launch
+//    profile, model / effort / agent / class when not given on the command line, a typed executor's entry). The pause files and
+//    STATUS are paths derived from the state dir; their existence / content is read at each fill, so they never go stale.
+//  - PER-RUN, kept as queued: executor, lane, brief, worktree, notes, stage, round, after / inputs, epic, priority, labels, parent / via,
+//    the flags the dispatcher gave (refill.explicit: --model / --effort / --agent / --class), budget_min, the state / locks dirs.
+// Not refreshed (machine.json, rarely changed): exe, node_labels, git_ledger. The queue spec keeps NO copy of the budget: queueRun names
+// the file (the caller's budget_file, else this install's local/budget.json) and drops the object, so every fill reads the file. A file
+// that is gone = {} (as `norn run` reads it); one that does not parse holds the run this pass (a term), never a launch on a guess.
+export const machineBudgetFile = (env = process.env) => path.join(metaRoot(env), 'local', 'budget.json');
+/** the machine budget in force NOW for a queued spec (spec.budget_file); throws a RunError when the file does not parse */
+export function liveBudget(spec) {
+  const f = spec.budget_file;
+  try { return JSON.parse(fs.readFileSync(f, 'utf8').replace(/^\uFEFF/, '')); } catch (e) {
+    if (e.code === 'ENOENT') return {};
+    throw new RunError(`budget ${fwd(f)} unreadable (${e.message}): held until it parses`);
+  }
+}
 /**
  * Record a queued run (RUN event `queue`: the start fields + not_before, requeue_of) and keep its launch spec beside the run specs.
  * o: a startRun spec + notBefore? (ISO; the fill waits until then) + requeueOf? (the limit-exit run it repeats). Returns { run, position }.
@@ -470,14 +491,15 @@ export const queueSpecPath = (state, run) => path.join(state, 'runs', run + '.qu
 export function queueRun(o) {
   if (!o.fromQueue) heldRefusal(o.state, o.lane, o.caller);
   const caller = o.caller;
-  o = withFloor(withEpic(noCaller(o)));
+  o = { ...o, budget_file: path.resolve(o.budget_file ?? machineBudgetFile()) };   // GAP-2: the fill reads this file, never a copy
+  o = withFloor(withEpic(noCaller({ ...o, budget: o.budget ?? liveBudget(o) })));   // a re-queue of a spec (no budget kept): the file's
   duplicateCheck(o);
   busyDoor({ ...o, caller });
   const info = launchable(o);
   if (o.after?.length || o.inputs?.length) {
     try { checkRefs(o.state, o.after, o.inputs); } catch (e) { if (e instanceof AfterError) throw new RunError(e.message); throw e; }
   }
-  const { queue: _q, notBefore, run: _r, log: _l, final: _f, session_id: _s, lockFile: _k, lockFiles: _ks, fromQueue: _fq, now: _n, ...spec } = o;
+  const { queue: _q, notBefore, run: _r, log: _l, final: _f, session_id: _s, lockFile: _k, lockFiles: _ks, fromQueue: _fq, now: _n, budget: _b, ...spec } = o;
   const ev = record(o.state, { kind: 'run', ev: 'queue', by: 'launcher', data: drop({ ...startFields(o, info), ...runTail(spec), not_before: notBefore, warnings: [...floorNotice(o), ...fableNotice(o)].length ? [...floorNotice(o), ...fableNotice(o)] : undefined }) });
   if (o.epic && isNew(o)) joinEpic(o.state, o.epic, ev.id);
   const file = queueSpecPath(o.state, ev.id);
@@ -698,8 +720,9 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
       for (const c of a.conds) if (!c.met) row.terms.push(`after ${c.cond} unmet`);
     }
     if (q.not_before && Date.parse(q.not_before) > now) row.terms.push(`not_before ${q.not_before}`);
-    const spec = readJson(queueSpecPath(state, q.id));
+    let spec = readJson(queueSpecPath(state, q.id));
     if (!spec) { gone('queue spec missing'); continue; }
+    try { spec = { ...spec, budget: liveBudget(spec) }; } catch (e) { row.terms.push(e.message); continue; }   // GAP-2: caps, usage guard, floor of NOW
     const paused = (spec.paused || []).find(f => fs.existsSync(f));
     if (paused) row.terms.push(`PAUSED (${paused.replace(/\\/g, '/')})`);
     const info = infoOf(spec), caps = info?.caps || [], staleMs = spec.staleMs ?? STALE_MS;

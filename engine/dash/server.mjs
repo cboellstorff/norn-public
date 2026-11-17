@@ -15,7 +15,7 @@ import { createChat, readThread, threadFile, threadFlushed, threadState, chatCos
 import { ActError, showRoots, outboxDir } from '../lib/chatact.mjs';
 import { genWhyNot } from '../lib/setup.mjs';
 import { profileChoices, profileChanges, getProfile, loadProfiles, COSTS } from '../lib/profiles.mjs';
-import { billingOf, spendDay, usdCap, billingChoices, refreshQueued, USAGE_KEYS } from '../lib/billing.mjs';
+import { billingOf, spendDay, usdCap, billingChoices } from '../lib/billing.mjs';
 import { floorOf } from '../lib/floor.mjs';
 import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudgetAsync, atomicWriteAsync as atomicA, onlyChanged, floorChanges, retiredExecutors, capOfExecutor, getPath } from '../lib/policy.mjs';
 import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin } from '../lib/records.mjs';
@@ -1321,8 +1321,7 @@ data: ${JSON.stringify(l)}
     const updated = applySettings(s.view, changes, exExtra(p)), next = onlyChanged(s.view, changes, updated), parts = split(next), written = [];
     const was = withDefaults(s.view).policy.cadence.checkin_interval_min, now = updated.policy.cadence.checkin_interval_min;
     if (await writeBudgetAsync(o.budgetFile, s.budget, next)) written.push(o.budgetFile);
-    // a billing / usage-guard change reaches the runs already queued (they keep a copy of the budget they were queued with)
-    const requeued = USAGE_KEYS.some(k => k in changes) ? refreshQueued(path.dirname(p.state), { ...s.budget, ...parts.budget }).length : 0;
+    // GAP-2: a budget change reaches the runs already queued by itself - the queue fill reads the budget in force (runs.mjs liveBudget)
     if (JSON.stringify(parts.policy) !== JSON.stringify(s.proj.policy ?? {})) { await atomicA(p.file, JSON.stringify({ ...s.proj, policy: parts.policy }, null, 2) + '\n'); written.push(p.file); }
     let decision = null;
     if (prof) {
@@ -1330,7 +1329,7 @@ data: ${JSON.stringify(l)}
       decision = (await rec(p, { kind: 'decision', ev: 'create', by: 'dashboard', data: { lane: 'settings', question: 'caps profile', choice: `${prof.label} (${profile.cost})`,
         why: `saved from Settings: ${from} setting(s) from the profile${own.length ? `, ${own.length} of the owner's own` : ''}`, profile: prof.name, cost: profile.cost, values, own } })).id;
     }
-    return { ok: true, written, decision, requeued, regenerated: await regenerate(p, updated), gen: await genA(p), interval: now !== was ? now : null };   // DEC-362: sources, then norn gen
+    return { ok: true, written, decision, regenerated: await regenerate(p, updated), gen: await genA(p), interval: now !== was ? now : null };   // DEC-362: sources, then norn gen
   }
 
   // a remote device's request runs inside writeOrigin (records stamp via remote:<device>); cleared when it ends (no stamp leaks into

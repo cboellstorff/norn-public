@@ -27,6 +27,7 @@ import { scan, importLegacy, renderImport, adoptStart, adoptDecide, adoptApply, 
 import { loadFlow, startFlow, flowStatus, resumeFlow, FlowError, FLOWS_DIR } from '../lib/flows.mjs';
 import { providersOf, typedExe, executorInfo } from '../lib/executors.mjs';
 import { launchParts, refillOf, agentRefusal } from '../lib/launchpolicy.mjs';
+import { launchArgsRefusal } from '../lib/launchargs.mjs';
 import { loginCommand } from '../lib/authguard.mjs';
 import { presetExe } from '../lib/presets.mjs';
 import { capsMatrix, formatCapsMatrix } from '../lib/harness/index.mjs';
@@ -71,7 +72,7 @@ import { testsCmd } from '../lib/testscli.mjs';
 import { openBlocks, findingLine } from '../lib/slop/host.mjs';
 import { scopeCheck, denyJson } from '../lib/scope.mjs';
 import { dupOf, dupMessage } from '../lib/dupdirs.mjs';
-import { BILLING_MODES, BILLING_NAMES, billingChanges, billingLine, refreshQueued, isApi, usdCap } from '../lib/billing.mjs';
+import { BILLING_MODES, BILLING_NAMES, billingChanges, billingLine, isApi, usdCap } from '../lib/billing.mjs';
 
 const USAGE = {
   'add question': 'norn rec add question --lane L --title T [--body TEXT | --body-file F] [--option "key|text|cost"]... [--recommend "key|why"] [--class i..v] [--blocks a,b] [--source S] [--owner-only]',
@@ -434,11 +435,17 @@ function runSpec(flags, env, { project, state, locks }) {
       slop: { enabled: slopOn(project?.policy) } },   // META-BETA-PREP (DIR-52): the run-end slop check obeys the project's one switch
     // the nudge waits while these exist: the project's QUIET flag (common-rules.txt line 1) and its GPU lock file (gpu_lock.ps1)
     quiet: project ? quietFlag(project) : undefined, gpu_lock: project?.gpu_lock_file,
-    budget, paused: [path.join(path.dirname(path.resolve(state)), 'PAUSED'), path.join(state, 'PAUSED')], statusFile: path.join(state, 'STATUS.md'),
+    budget, budget_file: path.resolve(bf),   // GAP-2: the fill reads the budget of NOW from here (runs.mjs liveBudget); budget = the copy for a resume
+    paused: [path.join(path.dirname(path.resolve(state)), 'PAUSED'), path.join(state, 'PAUSED')], statusFile: path.join(state, 'STATUS.md'),
     ledger: project?.ledger, projectsDir: machine?.claude?.projects_dir, ...(ledgerConfig(machine, { metaRoot: root, machineFile: mf }) ? { git_ledger: ledgerConfig(machine, { metaRoot: root, machineFile: mf }) } : {}),
     tick: flags['no-tick'] || env.META_NO_TICK ? null : [process.execPath, fileURLToPath(import.meta.url), 'tick', '--reason', 'exit', ...(project ? ['--project', project.file] : []), '--state', state],
     ...(env.META_HB_MS ? { hbMs: Number(env.META_HB_MS) } : {}),
   };
+  // GAP-4: every value a caller can invent (executor, model, effort, stage, lane, round, budget-min, brief; a check-in's paths) checked
+  // against what exists before the run starts or queues - the refusal names the valid choices (launchargs.mjs)
+  const bad = launchArgsRefusal({ executor: ex, model: flags.model, effort: flags.effort, stage: flags.stage, lane: flags.lane, round: flags.round, budgetMin: flags['budget-min'],
+    brief: o.brief, worktree: o.worktree, notes: o.notes, project, budget, state, caller: o.caller });
+  if (bad) throw new RunError(bad);
   if (!o.worktree) throw new RunError('--worktree is required (no project lane_defaults.worktree)');
   if (!o.brief) throw new RunError('--brief is required');
   return o;
@@ -794,7 +801,7 @@ function smokeCmd(argv, env, out, err) {
 }
 
 // ---------- billing modes: norn billing [<mode>] [--usd-per-day N|off] (how the Claude account is paid for -> the usage guard) ----------
-const BILLING_USAGE = `usage: norn billing [${BILLING_NAMES.join(' | ')}] [--usd-per-day N | off] [--keep-caps] [--budget F] [--machine F]    (no mode = show the mode in force and the modes; a plan mode sets the weekly guard, the rate cap and the worker cap that fit the plan (--keep-caps: the billing key only); api = pay per token: no weekly guard, no calibration, an optional daily $ cap. Queued runs get the new usage keys too.)`;
+const BILLING_USAGE = `usage: norn billing [${BILLING_NAMES.join(' | ')}] [--usd-per-day N | off] [--keep-caps] [--budget F] [--machine F]    (no mode = show the mode in force and the modes; a plan mode sets the weekly guard, the rate cap and the worker cap that fit the plan (--keep-caps: the billing key only); api = pay per token: no weekly guard, no calibration, an optional daily $ cap. Queued runs start under the new mode: the fill reads the budget in force.)`;
 function billingCmd(argv, env, out, err) {
   try {
     const mode = argv[0] && !argv[0].startsWith('--') ? argv[0] : undefined;
@@ -813,9 +820,8 @@ function billingCmd(argv, env, out, err) {
     let updated;
     try { updated = applySettings(merged(m.budget, {}), floorChanges(merged(m.budget, {}), changes).changes); } catch (e) { if (e.status === 400) throw new Usage(e.message, null); throw e; }   // validated as a Settings save
     writeBudget(m.budgetFile, m.budget, updated);
-    const B = { ...m.budget, ...split(updated).budget }, q = refreshQueued(stateRoot, B);
+    const B = { ...m.budget, ...split(updated).budget };   // GAP-2: queued runs read the budget at fill (runs.mjs liveBudget): nothing to rewrite
     out(`billing ${m.budgetFile}: ${Object.entries(changes).map(([k, v]) => `${k} ${v}`).join(', ')}`);
-    if (q.length) out(`queued runs updated: ${q.length} (their usage keys follow the new budget)`);
     out(billingLine(B, null, { stateRoot }));
     if (isApi(B) && usdCap(B) === null) out('note: no daily $ cap - only the worker cap limits spend (norn billing api --usd-per-day N)');
     return 0;

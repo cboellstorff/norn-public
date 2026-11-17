@@ -32,8 +32,14 @@ function sandbox() {
   d.brief = (body, name = 'brief.md') => { const f = path.join(t, name); fs.writeFileSync(f, body); return f; };
   d.runs = () => Object.values(loadState(d.state).items).filter(i => i.kind === 'run');
   d.item = id => loadState(d.state).items[id];
-  d.opts = (o = {}) => ({ state: d.state, locksDir: d.locks, executor: 'fake', lane: 'demo', worktree: d.wt(1), notes: d.notes, hbMs: 150, staleMs: 3000,
-    policy: { auto_resume_max: 0 }, budget: { max_claude_workers: 1 }, tick: null, ...o });
+  // GAP-2: a queued run reads its budget FILE at fill (no copy is kept): each launch writes the budget it is given to a file of its own
+  let nb = 0;
+  d.opts = (o = {}) => {
+    const budget = o.budget ?? { max_claude_workers: 1 }, budget_file = o.budget_file ?? path.join(t, `budget-${++nb}.json`);
+    if (!o.budget_file) fs.writeFileSync(budget_file, JSON.stringify(budget));
+    return { state: d.state, locksDir: d.locks, executor: 'fake', lane: 'demo', worktree: d.wt(1), notes: d.notes, hbMs: 150, staleMs: 3000,
+      policy: { auto_resume_max: 0 }, tick: null, ...o, budget, budget_file };
+  };
   // ended AND its supervisor gone: the run's own end-of-run fill (under queue.lock) is done (FINDING L1)
   d.ended = id => waitFor(() => { const it = d.item(id); return settled(it) && it; });
   return d;
