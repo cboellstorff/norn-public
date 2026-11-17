@@ -786,6 +786,7 @@ function openStream() {
 document.addEventListener('input', e => { if (e.target.matches('[data-filter],[data-filter-state]')) applyFilters();
   if (e.target.matches('[data-set-search]')) { S.setQ = e.target.value; setFilter(); } if (e.target.matches('[data-key]')) dirty(); });
 document.addEventListener('change', e => {
+  if (e.target.matches('[data-set-billing]')) { const o = e.target.selectedOptions[0]; $('#set-billing-note').textContent = o ? o.title : ''; }
   if (e.target.matches('[data-set-profile]')) { const o = e.target.selectedOptions[0]; $('#set-profile-note').textContent = o ? o.title : ''; }
   if (e.target.matches('[data-filter-state]')) applyFilters();
   if (e.target.matches('[data-key]')) dirty();
@@ -928,6 +929,13 @@ document.addEventListener('click', e => {
   if (b.dataset.setLevel) { S.setLevel = b.dataset.setLevel; try { localStorage.setItem('meta-setlevel', S.setLevel); } catch { /* private mode */ }
     for (const x of document.querySelectorAll('[data-set-level]')) { const on = x === b; x.className = on ? 'strong' : 'ghost'; x.setAttribute('aria-pressed', on); }
     setFilter(); return; }
+  if (d.act === 'set-billing') {   // billing modes: fill the billing key + the caps that fit it; Review changes + Save stay the human step
+    const sel = $('[data-set-billing]'), ch = JSON.parse(sel.dataset.billing)[sel.value]; let n = 0;
+    for (const [k, v] of Object.entries(ch)) {
+      const el = document.querySelector(`[data-key="${CSS.escape(k)}"]:not([disabled])`); if (!el) continue;
+      el.value = String(v ?? ''); n++;
+    }
+    dirty(); $('#set-billing-note').textContent = `Filled ${n} setting(s) for ${sel.selectedOptions[0].textContent}. Nothing is saved yet: Review changes, then Save.`; return; }
   if (d.act === 'set-profile') {   // F-6: fill the form from the profile; Review changes + Save stay the human step
     const sel = $('[data-set-profile]'), cost = $('[data-set-cost]').value, ch = JSON.parse(sel.dataset.profiles)[sel.value][cost]; let n = 0;
     for (const [k, v] of Object.entries(ch)) {

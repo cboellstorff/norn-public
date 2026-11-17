@@ -7,6 +7,7 @@
 import { PROVIDER_CLASSES, PROVIDER_CAP_DEFAULT, capKey, BUILTIN } from './executors.mjs';
 import { ADAPTERS } from './harness/index.mjs';
 import { FLOOR_MODELS, floorOf, floorText, modelBelow, effortBelow, claudeRank } from './floor.mjs';
+import { BILLING_NAMES, isApi, usdCap } from './billing.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -128,6 +129,8 @@ export const SETTINGS=[
   S('iteration','policy.iteration.wall_time_multiplier','Stop a run at (x its time budget)',num(1,5),'A run past this multiple of its brief\'s time budget stops and reports.','2','Higher lets stuck runs burn longer.',[CHECKIN]),
   S('budget','desired_burn_pct_per_h','Desired burn (%/h)',num(0,5),'Target weekly-usage burn rate the controller steers to.','0.40','Higher finishes sooner but reaches the guard before reset.',[CHECKIN]),
   S('budget','usage_rate_cap_pct_per_h','Rate cap (%/h)',num(0,5),'Above this rate STATUS says RATE_OK=0 and check-ins start nothing new.','0.43','Higher lets bursts through.',['status.ps1 (RATE_OK)']),
+  S('budget','billing','Billing',en(BILLING_NAMES),'How the Claude account is paid for. A plan (pro, max-5x, max-20x, ultra) has a weekly limit: the weekly guard and the rate cap apply. api = pay per token: no weekly limit, no calibration; the daily $ cap below is the only usage hold.','your plan','A plan mode on an API account holds work for a calibration that never comes; api on a plan account lets the week run out.',[CHECKIN,'usage guard (queue fill)','dashboard Usage']),
+  S('budget','api_usd_per_day','API daily cap ($)',num(0,100000),'API billing only: no new Claude work once the Claude runs of the last 24 h cost this much (the CLI\'s own cost of each ended run). 0 = no cap.','set one','No cap = nothing stops the spend but the worker cap.',['usage guard (queue fill)','dashboard Usage']),
   S('budget','weekly_stop_pct','Weekly guard (%)',num(0,100),'No new Claude worker once weekly usage reaches this.','95','Higher leaves no room for owner sessions before reset.',[CHECKIN,'dashboard Usage tab']),
   S('budget','reserve_pct_for_doors','Reserve for your own sessions (%)',num(0,50),'Weekly usage kept back for work you run yourself (installs, merges).','5','Higher idles workers earlier in the week.',[CHECKIN]),
   S('budget','reset','Weekly reset',{type:'text',pattern:'^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2} local$'},'When the weekly window resets (local time).','from claude.ai usage page','—',['status.ps1','dashboard countdown']),
@@ -218,7 +221,7 @@ export const SECTIONS=[
   {id:'files',label:'Project & files',help:'Where each setting is stored and the generated policy lines.',info:true,subs:[
     {id:'sources',label:'Source files'},{id:'targets',label:'Policy targets'}]}];
 export const SECTION_RULES=[
-  [/^(desired_burn_pct_per_h|usage_rate_cap_pct_per_h|weekly_stop_pct|reserve_pct_for_doors|reset)$/,'workers/usage'],
+  [/^(billing|api_usd_per_day|desired_burn_pct_per_h|usage_rate_cap_pct_per_h|weekly_stop_pct|reserve_pct_for_doors|reset)$/,'workers/usage'],
   [/^(calib_pct|calib_time_utc)$/,'workers/calibration'],
   [/^(cacheR_per_pct|policy\.agents\.max_lane_writers)$/,'advanced/danger'],
   [/^(max_claude_workers|policy\.dispatch_window\.max)$/,'workers/claude'],
@@ -279,12 +282,14 @@ export const MACHINE_DEFAULTS={desired_burn_pct_per_h:0.4,reserve_pct_for_doors:
 // (META-OOTB-POLISH F-6: engine/presets/profiles/try-it.json, engine/lib/profiles.mjs)
 // the caps the scheduler needs before it may start check-ins unattended (`norn sched install` refuses while one is unset)
 export const REQUIRED_CAPS=['max_claude_workers','max_codex','weekly_stop_pct','usage_rate_cap_pct_per_h'];
-export const capsMissing=b=>REQUIRED_CAPS.filter(k=>!Number.isFinite(b?.[k]));
+// API billing (billing.mjs) has no weekly limit: its weekly guard and rate cap are not needed
+export const API_FREE_CAPS=['weekly_stop_pct','usage_rate_cap_pct_per_h'];
+export const capsMissing=b=>REQUIRED_CAPS.filter(k=>!Number.isFinite(b?.[k])&&!(isApi(b)&&API_FREE_CAPS.includes(k)));
 // a cap as text: an unset cap is no limit (runs.mjs capFull) and says so - never an empty string
 export const capText=v=>(v===undefined||v===null||v===''?'unset (no limit)':String(v));
 // META-OOTB-POLISH F-6: the Settings keys a newcomer decides first (the Settings "basic" view): caps, weekly stop, check-in model /
 // effort, check-in interval
-export const BASIC_KEYS=['max_claude_workers','max_codex','weekly_stop_pct','usage_rate_cap_pct_per_h','checkin_model','checkin_effort','policy.cadence.checkin_interval_min'];
+export const BASIC_KEYS=['billing','max_claude_workers','max_codex','weekly_stop_pct','usage_rate_cap_pct_per_h','checkin_model','checkin_effort','policy.cadence.checkin_interval_min'];
 export const scopeOf=k=>k.startsWith('rules.')?'file':k.startsWith('policy.')?'project':'machine';
 // merged view <-> the two files: budget = machine keys only, policy = the project policy object
 export const merged=(budget,policy)=>({...budget,policy:policy??{}});
@@ -395,7 +400,7 @@ export function generatedLines(b,extra={}){const f=withDefaults(b),p=f.policy,c=
     'iteration':`D. Controller: a stage past ~${it.escalation_multiplier}x its round estimate is escalated (first: ${it.escalation_action}${it.escalation_action==='raise effort'?` to ${it.escalation_effort}`:''}; Opus xhigh / Fable) or re-scoped, never left to grind.`,
     'speed_mode':`SPEED MODE switches (dashboard Settings): A ${onoff(p.speed_mode.A)}, B ${onoff(p.speed_mode.B)}, C ${onoff(p.speed_mode.C)}, D ${onoff(p.speed_mode.D)} - an OFF item does not apply.`,
     'executors':`POLICY (dashboard Settings, project policy.executors; wins over the table): ${exs}. Critical lanes [${p.critical_lanes.join(', ')}] at ${p.critical_effort}. Own-account executors on: ${(extra.enabled||[]).join(', ')||'none'}.${ranks}${floorOf(f)?` Worker minimum: ${floorText(floorOf(f))} (lower routes are raised at launch).`:''}`,
-    'checkin':`POLICY (generated from the machine budget + project policy on Save): caps ${capText(f.max_claude_workers)} Claude / ${capText(f.max_codex)} Codex (${capText(f.max_astra)} Astra, ${capText(f.max_sol)} Sol), 1 writer per lane; weekly guard ${capText(f.weekly_stop_pct)} %, reserve ${f.reserve_pct_for_doors} % for doors, desired burn ${f.desired_burn_pct_per_h} %/h (cap ${capText(f.usage_rate_cap_pct_per_h)}); default round estimate ${it.round_estimate_default}, escalate past ${it.escalation_multiplier}x (${it.escalation_action}); stop runs at ${it.wall_time_multiplier}x their time budget; critical lanes [${p.critical_lanes.join(', ')}] at ${p.critical_effort}; fallbacks: Claude over guard -> ${p.fallbacks.claude_over_guard}, Codex down -> ${p.fallbacks.codex_down}, Fable unavailable -> ${p.fallbacks.fable_unavailable}; own-account executors on: ${(extra.enabled||[]).join(", ")||"none"}; SPEED MODE A ${onoff(p.speed_mode.A)} B ${onoff(p.speed_mode.B)} C ${onoff(p.speed_mode.C)} D ${onoff(p.speed_mode.D)}.`};
+    'checkin':`POLICY (generated from the machine budget + project policy on Save): caps ${capText(f.max_claude_workers)} Claude / ${capText(f.max_codex)} Codex (${capText(f.max_astra)} Astra, ${capText(f.max_sol)} Sol), 1 writer per lane; ${isApi(f)?`API billing: no weekly limit, ${usdCap(f)===null?'no daily $ cap':`daily cap $${usdCap(f)}`}`:`weekly guard ${capText(f.weekly_stop_pct)} %`}, reserve ${f.reserve_pct_for_doors} % for doors, desired burn ${f.desired_burn_pct_per_h} %/h (cap ${capText(f.usage_rate_cap_pct_per_h)}); default round estimate ${it.round_estimate_default}, escalate past ${it.escalation_multiplier}x (${it.escalation_action}); stop runs at ${it.wall_time_multiplier}x their time budget; critical lanes [${p.critical_lanes.join(', ')}] at ${p.critical_effort}; fallbacks: Claude over guard -> ${p.fallbacks.claude_over_guard}, Codex down -> ${p.fallbacks.codex_down}, Fable unavailable -> ${p.fallbacks.fable_unavailable}; own-account executors on: ${(extra.enabled||[]).join(", ")||"none"}; SPEED MODE A ${onoff(p.speed_mode.A)} B ${onoff(p.speed_mode.B)} C ${onoff(p.speed_mode.C)} D ${onoff(p.speed_mode.D)}.`};
 }
 const MARK=/<!-- policy:([a-z_.]+) -->\s*$/;
 export function rewriteMarked(text,lines){const eol=text.includes('\r\n')?'\r\n':'\n',changed=[],unknown=[];
