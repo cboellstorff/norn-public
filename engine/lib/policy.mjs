@@ -238,6 +238,7 @@ export const SECTION_RULES=[
   [/^policy\.iteration\./,'agents/iteration'],
   [/^policy\.mail\./,'agents/iteration'],
   [/^policy\.dod\./,'agents/iteration'],
+  [/^policy\.overlap\./,'agents/iteration'],
   [/^policy\.instructions\./,'agents/iteration'],
   [/^policy\.slop\./,'voice/switch'],
   [/^policy\.voice\./,'voice/popups'],
