@@ -19,7 +19,7 @@ export const MACHINE_SCHEMA = readSchema('machine.schema.json');
 export const fwd = p => String(p).replace(/\\/g, '/');
 // The canonical path: realpath of the deepest existing ancestor + the rest (a path need not exist yet). A path as given may name the
 // same place as git's / the OS's answer in another spelling - a Windows 8.3 short name (the hosted runners' TEMP is
-// C:\Users\RUNNER~1\...), a junction, a symlink (macOS /var -> /private/var): compare paths by this, never raw (CI-RED-7E52345).
+// under the user dir's short name RUNNER~1), a junction, a symlink (macOS /var -> /private/var): compare paths by this, never raw (CI-RED-7E52345).
 export function realPath(p) {
   const abs = path.resolve(String(p)), rest = [];
   for (let cur = abs; ;) {
