@@ -6,7 +6,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { startRun, liveRuns, stopOrphans, fillQueue, STALE_MS } from './runs.mjs';
+import { startRun, liveRuns, stopOrphans, fillQueue, readiness, STALE_MS } from './runs.mjs';
+import { trackHold, holdNoticeDue, noticeMin } from './holds.mjs';
 import { writeStatus } from './status.mjs';
 import { tryDigest } from './digest.mjs';
 import { providersOf, executorInfo } from './executors.mjs';
@@ -18,6 +19,7 @@ import { handleRoutineEnds, checkinPolicy, laneLevel, debounceOf } from './check
 import { watchProbe } from './watch.mjs';
 import { MACHINE_DEFAULTS, HARNESS_EXECUTORS, capText } from './policy.mjs';
 import { profileOf, memoryOf, memoryEnv, knownAgents } from './launchpolicy.mjs';
+import { knownExecutors, knownModels, knownEfforts } from './launchargs.mjs';
 import { BUILTIN } from './executors.mjs';
 import { ledgerStep } from './ledger.mjs';
 import { tickMergeq, mqProbe, spawnDetached } from './mergeq.mjs';
@@ -26,6 +28,7 @@ import { closeLandedQuestions } from './deliverables.mjs';
 import { tickSlop } from './slop/daily.mjs';
 import { checkinCv } from './cv.mjs';
 import { ciProbe } from './ciwatch.mjs';
+import { projectOverlap } from './overlap.mjs';
 import { guardWatch, guardProbe, guardPolicy } from './guard.mjs';
 import { floorOf, floorText } from './floor.mjs';
 import { isApi, usdCap } from './billing.mjs';
@@ -47,6 +50,14 @@ export function policyLine(B = {}) {
     + (floorOf(B) ? ` WORKER MINIMUM: every worker run (merges and helpers too) uses ${floorText(floorOf(B))}; never pass a lower --model / --effort (the launcher raises it anyway).` : '');
 }
 
+// GAP-4: the launch line's valid values -> { executors, models, efforts } (the words CHECKIN.md shows; the test executor fake left out)
+export function launchValues(p, budget = {}) {
+  const exs = knownExecutors(p, { fake: false });
+  const models = exs.map(x => { const m = knownModels(x, { project: p, budget }); return `${x}: ${m ? m.join(', ') : 'the model of its entry (leave --model out)'}`; }).join('; ');
+  const efforts = [...new Set(exs.flatMap(x => knownEfforts(x) || []))];
+  return { executors: exs.join(' | '), models, efforts: efforts.join(' | ') || 'none' };
+}
+
 /** Fill engine/prompts/CHECKIN.md (or o.template: CHECKIN-MINOR.md) + the project's checkin_extra -> state/<NAME>.rendered.md; returns that path. */
 export function renderCheckin(p, { budgetFile, budget = {}, statusFile = path.join(p.state, 'STATUS.md'), metaRoot = path.join(ENGINE, '..'), template = CHECKIN_PROMPT, wake = '(not given)', cv = '' } = {}) {
   const v = {
@@ -54,6 +65,7 @@ export function renderCheckin(p, { budgetFile, budget = {}, statusFile = path.jo
     meta_root: fwd(metaRoot), status: fwd(statusFile), budget: fwd(budgetFile || '(none)'),
     ledger: fwd(p.ledger || '(none)'), briefs_dir: fwd(p.briefs_dir || p.root), policy: policyLine(budget),
     agents: knownAgents({ claudeDir: process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), project: p }).join(', ') || 'none: leave --agent out',
+    ...launchValues(p, budget),   // GAP-4: the values `norn run` takes, on the launch line (launchargs.mjs refuses any other)
     rules: (p.rules_read_whole || []).map(fwd).join(', ') || '(none)', wake,
     paths: [['ROOT', p.root], ['STATE', p.state], ['BRIEFS', p.briefs_dir], ['LEDGER', p.ledger]].filter(([, x]) => x).map(([k, x]) => `${k}=${fwd(x)}`).join('  '),
   };
@@ -130,6 +142,12 @@ export function tick(o) {
       const n = authNoticeDue(o.project.state, { held });
       if (n) r = { ...r, notice: n };
     } catch { /* a notice never fails the tick */ }
+    // GAP-1 (holds.mjs): the one owner notice of a hold of ALL queued work past policy.holds.notice_min (the caller sends it, class alert)
+    try {
+      let status = ''; try { status = fs.readFileSync(path.join(o.project.state, 'STATUS.md'), 'utf8'); } catch { /* no words for the reset */ }
+      const h = holdNoticeDue(o.project.state, { min: noticeMin(o.project.policy), status, project: o.project.name });
+      if (h) r = { ...r, hold_notice: h };
+    } catch { /* a notice never fails the tick */ }
     return r;
   }
   finally {
@@ -141,11 +159,13 @@ export function tick(o) {
     }
   }
 }
+// GAP-1 (holds.mjs): the hold episode of ALL queued work, from the dry fill walk after the fill (the PAUSED exit too); never fails the tick
+function holdStep(state, tag) { try { trackHold(state, readiness(state)); } catch (e) { tickLog(state, `${tag}: hold: ${e.message}`); } }
 function tickPass(o, g = {}) {
   const p = o.project, state = p.state, staleMs = o.staleMs ?? STALE_MS;
   const paused = [path.join(path.dirname(path.resolve(state)), 'PAUSED'), path.join(state, 'PAUSED')];
   const tag = `tick ${p.name}${o.reason ? ' (' + o.reason + ')' : ''}`;
-  if (paused.some(f => fs.existsSync(f))) { notePaused(state); return { code: 0, msg: `${tag}: PAUSED - exit before status or check-in` }; }
+  if (paused.some(f => fs.existsSync(f))) { notePaused(state); holdStep(state, tag); return { code: 0, msg: `${tag}: PAUSED - exit before status or check-in` }; }
   fs.mkdirSync(state, { recursive: true });
   const lockF = path.join(state, 'tick.lock');
   const held = takeLock(lockF, `pid ${process.pid} start ${new Date().toISOString()} reason ${o.reason || '-'}`);
@@ -155,6 +175,7 @@ function tickPass(o, g = {}) {
     // META-GUARD R1: the usage watch before the status - a new GRD alarm is in this tick's digest and wakes the check-in (gate probe); never fails the tick
     try { const w = guardWatch(state, p, { projectsDir: o.machine?.claude?.projects_dir }); g.raised = w.raised; g.push = guardPolicy(p.policy).push; } catch (e) { tickLog(state, `${tag}: guard: ${e.message}`); }
     for (const f of fillQueue(state)) tickLog(state, `${tag}: queue: ${f.queued} -> STARTED ${f.next}`);   // a due not_before or a freed slot (META-GT12)
+    holdStep(state, tag);   // GAP-1: before the status, so this tick's digest carries the hold row
     // META-GTP-MERGEQ piece 5: the merge queue right after the fill - a detached `norn mergeq --run` (code only; a dry tick only with o.spawnMergeq)
     if (o.mergeq !== false && (!o.dry || o.spawnMergeq)) { const m = tickMergeq(p, state, { metaCmd: META_CMD, spawnFn: o.spawnMergeq }); if (m) tickLog(state, `${tag}: ${m}`); }
     // META-UX-BUILD S7: the fixer of an active Fix all directive starts by code - a detached `norn fix start DIR-n --queue` (a dry tick only with o.spawnFix)
@@ -167,6 +188,8 @@ function tickPass(o, g = {}) {
     // META-CHECKIN-DIET R1: routine ends (policy.checkin.routine) are handled here by code, each a launcher review record - no model
     try { for (const x of handleRoutineEnds(state, p, { metaCmd: META_CMD, cli: o.cli, pushed: o.pushed })) tickLog(state, `${tag}: routine ${x.kind} ${x.id}: ${x.ok ? x.note : 'left for the check-in - ' + x.note}`); }
     catch (e) { tickLog(state, `${tag}: routine ends failed: ${e.message}`); }
+    // GAP-12: the overlap check of the running lanes (fetch origin / gh at most every 10 min; overlap.mjs) before the digest reads it
+    if (o.overlap !== false && !o.dry) projectOverlap(p);
     // a merge / batch / park question whose deliverable landed meanwhile is stale: withdrawn before the digest (never fails the tick)
     if (!o.dry) try { for (const c of closeLandedQuestions(state, { project: p })) tickLog(state, `${tag}: question ${c.q} withdrawn - ${c.why}`); } catch (e) { tickLog(state, `${tag}: stale questions: ${e.message}`); }
     const start = new Date().toISOString();

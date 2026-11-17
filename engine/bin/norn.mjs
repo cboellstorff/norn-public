@@ -15,11 +15,12 @@ import { loadPlan, formatPlan } from '../lib/plan.mjs';
 import { instructionsView, formatInstructions, formatSuggest, paragraphs, applySuggestion, discover } from '../lib/instructions.mjs';
 import { auditScope, auditPrompt, auditStamp, writeStamp, auditsDir, auditsView, AUDIT_MODEL, AUDIT_EFFORT } from '../lib/audit.mjs';
 import { FIX_LANE, fixBatch, fixPlan, fixerBrief, fixerPrompt, fixerDir, findingsFile, readRunBrief } from '../lib/fixer.mjs';
+import { resultDir, writeResult, ResultError } from '../lib/result.mjs';
 import { openCards } from '../lib/rules.mjs';
 import os from 'node:os';
 import { readyGate } from '../lib/dod.mjs';
 import { critiqueHolds, critiqueSkip, critiqueFiles, critiquePrompt, classExecutor } from '../lib/critique.mjs';
-import { startRun, stopRun, requeueRun, fillQueue, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt } from '../lib/runs.mjs';
+import { startRun, stopRun, requeueRun, fillQueue, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf } from '../lib/runs.mjs';
 import { parseAfter, parseInputs, AfterError, makeEval, readyWords } from '../lib/after.mjs';
 import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../lib/epics.mjs';
 import { loadRoadmap, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError } from '../lib/roadmap.mjs';
@@ -27,6 +28,7 @@ import { scan, importLegacy, renderImport, adoptStart, adoptDecide, adoptApply, 
 import { loadFlow, startFlow, flowStatus, resumeFlow, FlowError, FLOWS_DIR } from '../lib/flows.mjs';
 import { providersOf, typedExe, executorInfo } from '../lib/executors.mjs';
 import { launchParts, refillOf, agentRefusal } from '../lib/launchpolicy.mjs';
+import { launchArgsRefusal } from '../lib/launchargs.mjs';
 import { loginCommand } from '../lib/authguard.mjs';
 import { presetExe } from '../lib/presets.mjs';
 import { capsMatrix, formatCapsMatrix } from '../lib/harness/index.mjs';
@@ -35,6 +37,8 @@ import { runProbe } from '../lib/probe.mjs';
 import { writeStatus, weeklyEstimate, accountCacheR, crTotal } from '../lib/status.mjs';
 import { weekStart, parseReset } from '../lib/cost.mjs';
 import { digest, tryDigest } from '../lib/digest.mjs';
+import { running } from '../lib/legacy.mjs';
+import { projectOverlap, overlapOn, overlapText } from '../lib/overlap.mjs';
 import { renderDigest } from '../lib/views.mjs';
 import { tick, quietFlag } from '../lib/tick.mjs';
 import { POLICY_DEFAULTS, withDefaults, applySettings, floorChanges, merged, split, writeBudget, capsMissing, slopOn } from '../lib/policy.mjs';
@@ -47,6 +51,7 @@ import { remoteSetup, remoteOff } from '../lib/remote.mjs';
 import { fwd } from '../lib/config.mjs';
 import { newLane, lanePaths, LaneError } from '../lib/lanenew.mjs';
 import { renderMergeBrief, shotsMode, briefMarker } from '../lib/mergebrief.mjs';
+import { landProject, landLine, LAND_EXIT } from '../lib/mergeland.mjs';
 import { isMergeStage } from '../lib/usageguard.mjs';
 import { delegateStart, delegateWait, ASK_MAX_S } from '../lib/delegate.mjs';
 import { askStart, askWait } from '../lib/ask.mjs';
@@ -70,12 +75,13 @@ import { slopCmd } from '../lib/slop/cli.mjs';
 import { testsCmd } from '../lib/testscli.mjs';
 import { openBlocks, findingLine } from '../lib/slop/host.mjs';
 import { scopeCheck, denyJson } from '../lib/scope.mjs';
-import { BILLING_MODES, BILLING_NAMES, billingChanges, billingLine, refreshQueued, isApi, usdCap } from '../lib/billing.mjs';
+import { dupOf, dupMessage } from '../lib/dupdirs.mjs';
+import { BILLING_MODES, BILLING_NAMES, billingChanges, billingLine, isApi, usdCap } from '../lib/billing.mjs';
 
 const USAGE = {
   'add question': 'norn rec add question --lane L --title T [--body TEXT | --body-file F] [--option "key|text|cost"]... [--recommend "key|why"] [--class i..v] [--blocks a,b] [--source S] [--owner-only]',
   'add decision': 'norn rec add decision --lane L --question Q --choice C --why W [--cost C] [--source S] [--answers Q-n --owner-words "<owner words, verbatim>" | --not-an-answer] [--notify] [--on-runs RUN-1,RUN-2]    (exit 3 = an owner pick on a lane with an open Q: name it with --answers, or --not-an-answer)',
-  'add directive': 'norn rec add directive --text T --via dashboard|talk|chat [--scope a,b] [--expires UTC]    (owner contexts only)',
+  'add directive': 'norn rec add directive --text T --via dashboard|talk|chat [--scope a,b] [--expires UTC] [--new]    (owner contexts only; exit 3 = it restates an active DIR: supersede that one, or --new to create anyway)',
   'add waiver': 'norn rec add waiver --rule K2 --scope <fingerprint | path glob> --why W [--until ISO]    (owner / controller: a slop finding that may stay)',
   'add lane': 'norn rec add lane --name N [--worktree W] [--notes F] [--branch B] [--brief-dir D] [--stage S] [--round-estimate R] [--executor-hint E] [--item RM-n (links lane:N to the roadmap item)]',
   answer: 'norn rec answer Q-n --text "<owner words>" --via dashboard|chat [--choice key]  |  norn rec answer Q-n --from DEC-m (the owner words the DEC recorded; + apply)  |  norn rec answer --each "Q-50=a,Q-51=b" --text "<owner words>" --via chat',
@@ -99,7 +105,7 @@ const COMMON = ['state', 'project', 'as'];
 const FLAGS = {
   'add question': ['lane', 'title', 'body', 'body-file', 'option*', 'recommend', 'class', 'blocks', 'source', 'owner-only!'],
   'add decision': ['lane', 'question', 'choice', 'why', 'cost', 'source', 'answers', 'owner-words', 'not-an-answer!', 'notify!', 'on-runs'],
-  'add directive': ['text', 'via', 'scope', 'expires'],
+  'add directive': ['text', 'via', 'scope', 'expires', 'new!'],
   'add waiver': ['rule', 'scope', 'why', 'until'],
   'add lane': ['name', 'worktree', 'notes', 'branch', 'brief-dir', 'stage', 'round-estimate', 'executor-hint', 'item'],
   answer: ['text', 'via', 'choice', 'each', 'from'], apply: ['refs'], 'not-an-answer': ['q', 'why'], supersede: ['by', 'why'], withdraw: ['why'], reopen: [],
@@ -178,7 +184,7 @@ const order = (a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) 
 const title = i => i.data.title ?? i.data.question ?? i.data.text ?? i.data.lane ?? i.data.name ?? i.data.kind ?? '';
 
 function warnViews(v, err) {
-  for (const p of v.refused) err(`warning: hand-edited view ${p} was NOT regenerated - run \`norn rec import-edits\` or revert it`);
+  for (const p of v.refused) err(`warning: hand-edited view ${p} was NOT regenerated - the dashboard Inbox offers "Let Norn take it back" (a .bak keeps your text) or "Keep my version"; or revert it`);
 }
 
 // NORN-WATCH S3: one chat reply -> named Q answers. One answer event per Q (all-or-nothing), mapped_from = the shared owner text,
@@ -380,15 +386,21 @@ const afterOf = (s, parse = parseAfter) => { try { return parse(s); } catch (e) 
 // OOTB-R2 N-2: a relative --brief / --notes is the caller's (cwd), not the lane worktree's the worker runs in ('-' = no brief file)
 const callerPath = f => (f && f !== '-' ? path.resolve(f) : f);
 // META-MERGE-MARKER (DEC-275 / DEC-285 / DEC-287): a MERGE run's notes = the NOTES file its brief names (its meta-merge marker, written
-// by norn merge-brief --notes) - the worker writes its end marker there; a --notes naming another file is refused (one home)
+// by norn merge-brief --notes) - the worker writes its log there; a --notes naming another file is refused (one home)
 function briefNotes(flags, brief) {
   if (!isMergeStage(flags.stage) || !brief || brief === '-') return null;
   let m = null;
   try { m = briefMarker(fs.readFileSync(brief, 'utf8')); } catch { return null; }
   if (!m?.notes) return null;
   const own = path.resolve(m.notes), given = callerPath(flags.notes);
-  if (given && normWt(given) !== normWt(own)) throw new RunError(`--notes ${fwd(given)}: the MERGE brief ${fwd(brief)} names notes ${fwd(own)} (its worker writes its end marker there) - drop --notes or pass that file`);
+  if (given && normWt(given) !== normWt(own)) throw new RunError(`--notes ${fwd(given)}: the MERGE brief ${fwd(brief)} names notes ${fwd(own)} (its worker writes its notes there) - drop --notes or pass that file`);
   return own;
+}
+// GAP-6: a MERGE brief names the run's merge worktree (runs.mergeSpec makes it the run's worktree whatever --worktree says):
+// with no --worktree and no lane default it is the worktree
+function briefMergeWt(flags, brief) {
+  if (!isMergeStage(flags.stage) || !brief || brief === '-') return null;
+  try { return briefMarker(fs.readFileSync(brief, 'utf8'))?.merge_wt || null; } catch { return null; }
 }
 // the launch spec of one run from the norn run flags (shared by norn run and norn flow; META-GTP-FLOW piece 2)
 function runSpec(flags, env, { project, state, locks }) {
@@ -417,8 +429,7 @@ function runSpec(flags, env, { project, state, locks }) {
   const o = {
     state, locksDir: locks, executor: ex, lane: flags.lane, brief: callerPath(flags.brief), project: project?.name,
     ...(project && subdirOf(project) ? { subdir: subdirOf(project) } : {}),   // a monorepo project: the scope guard keeps a run without Scope: inside it
-    main_checkout: project ? (project.deliverables?.repo || project.root) : undefined,   // META-MERGELOCK: a MERGE run's main checkout lock (runs.writeTrees) when its brief has no marker
-    worktree: flags.worktree || late(project?.lane_defaults?.worktree), notes: briefNotes(flags, callerPath(flags.brief)) || callerPath(flags.notes) || late(project?.lane_defaults?.notes),
+    worktree: flags.worktree || late(project?.lane_defaults?.worktree) || briefMergeWt(flags, callerPath(flags.brief)), notes: briefNotes(flags, callerPath(flags.brief)) || callerPath(flags.notes) || late(project?.lane_defaults?.notes),
     after: afterOf(flags.after), inputs: afterOf(flags.inputs, parseInputs), epic: flags.epic, priority: flags.priority,
     labels: labelsOf(flags.labels), node_labels: servedLabels(machine),   // META-GTP-FED piece 1
     caller: flags.as || env.META_ROLE,   // META-CONTROLLER C4: a check-in's run on a held lane is refused (runs.heldRefusal)
@@ -433,11 +444,19 @@ function runSpec(flags, env, { project, state, locks }) {
       slop: { enabled: slopOn(project?.policy) } },   // META-BETA-PREP (DIR-52): the run-end slop check obeys the project's one switch
     // the nudge waits while these exist: the project's QUIET flag (common-rules.txt line 1) and its GPU lock file (gpu_lock.ps1)
     quiet: project ? quietFlag(project) : undefined, gpu_lock: project?.gpu_lock_file,
-    budget, paused: [path.join(path.dirname(path.resolve(state)), 'PAUSED'), path.join(state, 'PAUSED')], statusFile: path.join(state, 'STATUS.md'),
+    budget, budget_file: path.resolve(bf),   // GAP-2: the fill reads the budget of NOW from here (runs.mjs liveBudget); budget = the copy for a resume
+    paused: [path.join(path.dirname(path.resolve(state)), 'PAUSED'), path.join(state, 'PAUSED')], statusFile: path.join(state, 'STATUS.md'),
     ledger: project?.ledger, projectsDir: machine?.claude?.projects_dir, ...(ledgerConfig(machine, { metaRoot: root, machineFile: mf }) ? { git_ledger: ledgerConfig(machine, { metaRoot: root, machineFile: mf }) } : {}),
     tick: flags['no-tick'] || env.META_NO_TICK ? null : [process.execPath, fileURLToPath(import.meta.url), 'tick', '--reason', 'exit', ...(project ? ['--project', project.file] : []), '--state', state],
+    // GAP-12: a lane start refreshes the overlap check (detached, by the supervisor); no project / policy off / no tick (tests) = none
+    overlap: !project || !overlapOn(project.policy) || flags['no-tick'] || env.META_NO_TICK ? null : [process.execPath, fileURLToPath(import.meta.url), 'overlap', '--project', project.file, '--state', state, '--force'],
     ...(env.META_HB_MS ? { hbMs: Number(env.META_HB_MS) } : {}),
   };
+  // GAP-4: every value a caller can invent (executor, model, effort, stage, lane, round, budget-min, brief; a check-in's paths) checked
+  // against what exists before the run starts or queues - the refusal names the valid choices (launchargs.mjs)
+  const bad = launchArgsRefusal({ executor: ex, model: flags.model, effort: flags.effort, stage: flags.stage, lane: flags.lane, round: flags.round, budgetMin: flags['budget-min'],
+    brief: o.brief, worktree: o.worktree, notes: o.notes, project, budget, state, caller: o.caller });
+  if (bad) throw new RunError(bad);
   if (!o.worktree) throw new RunError('--worktree is required (no project lane_defaults.worktree)');
   if (!o.brief) throw new RunError('--brief is required');
   return o;
@@ -498,7 +517,7 @@ function runCmd(argv, env, out, err) {
       // ended when its supervisor is gone (as fednode.mjs waits; 120 s = only a hung supervisor's net)
       const sup = loadState(state).items[r.run]?.end?.supervisor_pid;
       for (let t0 = Date.now(); sup && Date.now() - t0 < 120000;) {
-        try { process.kill(sup, 0); } catch (e) { if (e.code !== 'EPERM') break; }
+        if (!running(sup)) break;   // a zombie supervisor (our own unreaped child: this loop blocks the loop) has exited
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
       }
       const it = loadState(state).items[r.run], e = it.end || {};
@@ -553,10 +572,11 @@ const S5_USAGE = {
   status: 'norn status [--project <name | project.json> | --state D] [--machine F] [--budget F] [--out F]',
   tick: 'norn tick [--project <name | project.json>] [--reason R] [--at ISO] [--dry] [--machine F] [--budget F]    (no --project = every project in machine.json; --dry = FAKE claude; --at = wait until then: the debounce tick)',
   runs: 'norn runs [--unreviewed] [--lane L] [--json] [--all-nodes (+ the runs of the federation nodes, read-only: fetched with machine.json ledger.remote, else the fill\'s fed-cache.json)] [--project <name | F> | --state D]  |  norn runs review RUN-n --refs X,Y --as checkin|controller  |  norn runs landed RUN-n --why W [--sha S] --as checkin|controller|owner    (a ruling: the work of the run counts as merged on main where git cannot see it - run:RUN-n:merged / :done conditions on its family are met)',
+  overlap: 'norn overlap [--project <name | project.json>] [--state D] [--force]    (GAP-12: fetch origin (at most every 10 min; --force now) and list each running lane overlaps with the remote branches and open PRs (gh, GitHub); policy.overlap.enabled false = off)',
   digest: 'norn digest [--project F | --state D] [--json | --hook]    (NORN-WATCH S1: the level-triggered resume digest; --hook = a SessionStart hook payload; read-only)',
   sched: 'norn sched show|install|remove [--machine F]    (the machine scheduler, D13; install / remove touch the real OS scheduler)',
 };
-const S5_FLAGS = ['project', 'state', 'machine', 'budget', 'out', 'reason', 'dry!', 'unreviewed!', 'lane', 'json!', 'refs', 'as', 'hook!', 'all-nodes!', 'why', 'sha', 'at'];
+const S5_FLAGS = ['project', 'state', 'machine', 'budget', 'out', 'reason', 'dry!', 'force!', 'unreviewed!', 'lane', 'json!', 'refs', 'as', 'hook!', 'all-nodes!', 'why', 'sha', 'at'];
 function s5Flags(argv) {
   const flags = {}, pos = [];
   for (let i = 0; i < argv.length; i++) {
@@ -641,6 +661,9 @@ function s5Cmd(argv, env, out, err) {
         (r.code ? err : out)(r.msg);
         if (r.notice) flushes.push(import('../lib/notify.mjs').then(({ notify }) => notify({ title: r.notice.title, body: r.notice.body, cls: 'alert', machine: m.machine, state: proj.state, env }))   // META-AUTH: once per outage
           .then(x => out(`tick ${proj.name}: notify: ${r.notice.cls === 'vendor' ? 'vendor outage' : 'login'} notice ${x.sent ? 'sent' : 'recorded'}`), e => err(`tick ${proj.name}: notify (login) failed: ${e.message}`)));
+        // GAP-1: ONE notice per hold of all queued work (holds.mjs: hold.json notified) - the owner must act, so class alert
+        if (r.hold_notice) flushes.push(import('../lib/notify.mjs').then(({ notify }) => notify({ title: r.hold_notice.title, body: r.hold_notice.body, cls: 'alert', machine: m.machine, state: proj.state, env }))
+          .then(x => out(`tick ${proj.name}: notify: hold notice ${x.sent ? 'sent' : 'recorded'}`), e => err(`tick ${proj.name}: notify (hold) failed: ${e.message}`)));
         // META-GUARD R1: one "usage" notice per new GRD alarm - batched into the FYI digest unless policy guard.push
         for (const g of r.guard || []) flushes.push(import('../lib/notify.mjs').then(({ notify, batchHours }) => notify({ title: `${g.run} ${g.cls}`, body: `${g.id}${g.lane ? ' ' + g.lane : ''}: ${g.why}`,
           cls: 'usage', push: !!r.guard_push, batchH: batchHours(proj), machine: m.machine, state: proj.state, env }))
@@ -656,6 +679,21 @@ function s5Cmd(argv, env, out, err) {
       const s = writeStatus({ state, project: project?.name, providers: providersOf(project), budget: m.budget, projectsDir: projectsDirOf(m.machine, env), usageJson: m.machine?.usage || {}, ci: project?.ci,
         cacheFile: path.join(state, 'usage-cache.json'), digest: tryDigest(state, project || {}) }, flags.out || path.join(state, 'STATUS.md'));
       out(s.line);
+      return 0;
+    }
+    if (cmd === 'overlap') {   // GAP-12: refresh the overlap cache (a lane start spawns this; the tick refreshes too) and print it
+      if (pos.length) throw new RunError(`unexpected ${pos[0]}`);
+      if (!project) throw new RunError('overlap needs --project (the repo whose origin is compared)');
+      if (!overlapOn(project.policy)) { out(`overlap ${project.name}: the overlap check is off (policy.overlap.enabled false)`); return 0; }
+      const c = projectOverlap({ ...project, state }, { force: !!flags.force });
+      if (!c) { out(`overlap ${project.name}: no repo to compare`); return 0; }
+      if (c.fetch_error) err(`overlap ${project.name}: ${c.fetch_error}`);
+      const ls = Object.values(c.lanes || {});
+      if (!ls.length) out(`overlap ${project.name}: no running lane`);
+      for (const l of ls) {
+        if (!l.overlaps.length) out(`${l.lane}: no overlap (${l.files} changed file${l.files === 1 ? '' : 's'})`);
+        for (const o of l.overlaps) out(`${l.lane}: ${overlapText(o)}: ${o.files.join(', ')}${o.n > o.files.length ? ', ...' : ''}${o.url ? ` ${o.url}` : ''}`);
+      }
       return 0;
     }
     if (cmd === 'digest') {
@@ -790,14 +828,14 @@ function smokeCmd(argv, env, out, err) {
 }
 
 // ---------- billing modes: norn billing [<mode>] [--usd-per-day N|off] (how the Claude account is paid for -> the usage guard) ----------
-const BILLING_USAGE = `usage: norn billing [${BILLING_NAMES.join(' | ')}] [--usd-per-day N | off] [--keep-caps] [--budget F] [--machine F]    (no mode = show the mode in force and the modes; a plan mode sets the weekly guard, the rate cap and the worker cap that fit the plan (--keep-caps: the billing key only); api = pay per token: no weekly guard, no calibration, an optional daily $ cap. Queued runs get the new usage keys too.)`;
+const BILLING_USAGE = `usage: norn billing [${BILLING_NAMES.join(' | ')}] [--usd-per-day N | off] [--keep-caps] [--budget F] [--machine F]    (no mode = show the mode in force and the modes; a plan mode sets the weekly guard, the rate cap and the worker cap that fit the plan (--keep-caps: the billing key only); api = pay per token: no weekly guard, no calibration, an optional daily $ cap. Queued runs start under the new mode: the fill reads the budget in force.)`;
 function billingCmd(argv, env, out, err) {
   try {
     const mode = argv[0] && !argv[0].startsWith('--') ? argv[0] : undefined;
     const f = h1Flags(mode === undefined ? argv : argv.slice(1), ['usd-per-day', 'keep-caps!', 'budget', 'machine']);
     const m = machineOf({ budget: f.budget, machine: f.machine }, env), stateRoot = path.join(metaRoot(env), 'state');
     if (mode === undefined && f['usd-per-day'] === undefined) {
-      out(billingLine(m.budget, null, { stateRoot }));
+      out(billingLine(m.budget, null, { stateRoot, projectsDir: projectsDirOf(m.machine, env) }));
       for (const b of BILLING_MODES) out(`  ${b.name === m.budget.billing ? '*' : ' '} ${b.name.padEnd(8)} ${b.label}: ${b.summary}`);
       return 0;
     }
@@ -809,10 +847,9 @@ function billingCmd(argv, env, out, err) {
     let updated;
     try { updated = applySettings(merged(m.budget, {}), floorChanges(merged(m.budget, {}), changes).changes); } catch (e) { if (e.status === 400) throw new Usage(e.message, null); throw e; }   // validated as a Settings save
     writeBudget(m.budgetFile, m.budget, updated);
-    const B = { ...m.budget, ...split(updated).budget }, q = refreshQueued(stateRoot, B);
+    const B = { ...m.budget, ...split(updated).budget };   // GAP-2: queued runs read the budget at fill (runs.mjs liveBudget): nothing to rewrite
     out(`billing ${m.budgetFile}: ${Object.entries(changes).map(([k, v]) => `${k} ${v}`).join(', ')}`);
-    if (q.length) out(`queued runs updated: ${q.length} (their usage keys follow the new budget)`);
-    out(billingLine(B, null, { stateRoot }));
+    out(billingLine(B, null, { stateRoot, projectsDir: projectsDirOf(m.machine, env) }));
     if (isApi(B) && usdCap(B) === null) out('note: no daily $ cap - only the worker cap limits spend (norn billing api --usd-per-day N)');
     return 0;
   } catch (e) {
@@ -891,7 +928,7 @@ function notifyCmd(argv, env, out, err) {
 }
 
 // ---------- NORN-WATCH S2: norn merge-brief (the MERGE stage brief; the shots mode from the project policy merge.shots) ----------
-const MERGE_USAGE = 'usage: norn merge-brief --project project.json --lane L --branch B --worktree W --notes F --out F [--ui] [--sha <READY sha>] [--locks D]    (--ui = the branch changes the dash / UI: screenshots; --sha = the staged merge of THAT commit in the main checkout, the lane worktree untouched - required while the lane worktree holds a live run, exit 3)';
+const MERGE_USAGE = 'usage: norn merge-brief --project project.json --lane L --branch B --worktree W --notes F --out F [--ui] [--sha <READY sha>] [--locks D]    (--ui = the branch changes the dash / UI: screenshots; --sha = the staged merge of THAT commit in its merge worktree, the lane worktree untouched - required while the lane worktree holds a live run, exit 3)';
 function mergeBriefCmd(argv, env, out, err) {
   try {
     const f = h1Flags(argv, ['project', 'lane', 'branch', 'worktree', 'notes', 'out', 'sha', 'locks', 'ui!']);
@@ -899,7 +936,7 @@ function mergeBriefCmd(argv, env, out, err) {
     const p = loadProject(f.project, { meta: metaRoot(env) });
     if (!f.sha) {   // META-GTP-MERGEQ piece 0 (DEC-5): the rebase brief is refused while the lane writes
       const w = laneWriter({ state: p.state, locksDir: f.locks || path.join(path.dirname(path.resolve(p.state)), 'locks'), lane: f.lane, worktree: f.worktree });
-      if (w) { out(`REFUSED: merge-brief ${f.lane}: ${w} - the brief would rebase under it; pass --sha <READY sha> (a staged merge in the main checkout)`); return 3; }
+      if (w) { out(`REFUSED: merge-brief ${f.lane}: ${w} - the brief would rebase under it; pass --sha <READY sha> (a staged merge in its merge worktree)`); return 3; }
     }
     // META-SLOP-A: open BLOCK findings of the branch's last slop check hold its merge until fixed (a clean check) or waived;
     // META-BETA-PREP: no hold while the project's SloppaChoppa switch is off (the recorded hold binds again when it is on)
@@ -912,6 +949,25 @@ function mergeBriefCmd(argv, env, out, err) {
     return 0;
   } catch (e) {
     err('error: ' + e.message); err(MERGE_USAGE);
+    return e instanceof Usage || e instanceof ConfigError ? 2 : 1;
+  }
+}
+
+// ---------- GAP-6: norn merge-land (a MERGE run lands its merge worktree on main: fast-forward, short lock, never a force) ----------
+const LAND_USAGE = 'usage: norn merge-land --project project.json --worktree <merge worktree> [--no-push] [--attempts N] [--locks D]    (exit 0 LANDED, 4 REMERGED: main moved and was merged in - re-test, then land again, 3 NOT LANDED: nothing landed)';
+function mergeLandCmd(argv, env, out, err) {
+  try {
+    const f = h1Flags(argv, ['project', 'worktree', 'attempts', 'locks', 'no-push!']);
+    if (!f.project || !f.worktree) throw new Usage('--project and --worktree are required', null);
+    const attempts = f.attempts === undefined ? undefined : Number(f.attempts);
+    if (attempts !== undefined && !(Number.isInteger(attempts) && attempts > 0)) throw new Usage('--attempts wants a whole number > 0', null);
+    const p = loadProject(f.project, { meta: metaRoot(env) });
+    const r = landProject(p, { wt: path.resolve(f.worktree), locksDir: f.locks || path.join(path.dirname(path.resolve(p.state)), 'locks'), run: env.META_RUN_ID || 'merge-land',
+      push: !f['no-push'], attempts });
+    out(landLine(r));
+    return LAND_EXIT[r.status] ?? 1;
+  } catch (e) {
+    err('error: ' + e.message); err(LAND_USAGE);
     return e instanceof Usage || e instanceof ConfigError ? 2 : 1;
   }
 }
@@ -1272,10 +1328,12 @@ Inside a run:
   norn delegate                    hand a side question to a helper run
   norn ask                         ask a run (or a cold helper) a question
   norn mail                        messages between runs, the check-in and the controller
+  norn done                        end your run: write its result (done | stopped | handoff + its hand-off text)
 
 Plumbing:
   norn ready                       what can start now
   norn merge-brief                 write the brief of one staged merge
+  norn merge-land                  land a merge worktree on main (fast-forward, never a force)
   norn gen                         regenerate (or --check) the generated agent files
   norn billing                     how the Claude account is paid for: a plan (weekly limit) or API billing
   norn calib                       record a weekly usage reading
@@ -1288,9 +1346,9 @@ Plumbing:
   norn eval                        replay check-ins against a copy of a state dir`;
 function usageOf(c) {
   const u = { rec: ALL_USAGE, migrate: MIGRATE_USAGE, ...SETUP_USAGE, ...RUN_USAGE, ...S5_USAGE, dash: DASH_USAGE, smoke: 'norn smoke [--keep] [--update-goldens]',
-    calib: CALIB_USAGE, billing: BILLING_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
+    calib: CALIB_USAGE, billing: BILLING_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, 'merge-land': LAND_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
     eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
-    node: NODE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
+    node: NODE_USAGE, done: DONE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
   return u && 'usage: ' + u.replace(/^usage: /, '');
 }
 /**
@@ -1330,7 +1388,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
     return evalCmd(argv.slice(1), { out, err, liveStates: [...live, ...(env.META_STATE ? [env.META_STATE] : [])] });
   }
   if (['run', 'stop', 'requeue', 'hook'].includes(argv[0])) return runCmd(argv, env, out, err);
-  if (['status', 'tick', 'runs', 'sched', 'digest'].includes(argv[0])) return s5Cmd(argv, env, out, err);
+  if (['status', 'tick', 'runs', 'sched', 'digest', 'overlap'].includes(argv[0])) return s5Cmd(argv, env, out, err);
   if (argv[0] === 'migrate') return migrateCmd(argv.slice(1), env, out, err);
   if (['setup', 'doctor', 'project', 'gen'].includes(argv[0])) return setupCmd(argv, env, out, err);
   if (argv[0] === 'dash') return dashCmd(argv.slice(1), env, out, err);
@@ -1341,6 +1399,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'billing') return billingCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'notify') return notifyCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'merge-brief') return mergeBriefCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'merge-land') return mergeLandCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'ledger') return ledgerCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'node') return nodeCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'epic') return epicCmd(argv.slice(1), env, out, err);
@@ -1353,6 +1412,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'instructions') return instructionsCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'audit') return auditCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'fix') return fixCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'done') return doneCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'critique') return critiqueCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'mergeq') return mergeqCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'mail') return mailCmd(argv.slice(1), env, out, err);
@@ -1427,6 +1487,11 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
     if (flags.item) {   // META-ROADMAP S3: --item RM-n (add lane only) - checked before the lane exists
       try { openItem(state, flags.item); } catch (x) { throw new Usage(x.message, cmd); }
       if (!KINDS.item.events.link.roles.includes(by)) throw new Usage(`role ${by} may not link roadmap items`, cmd);
+    }
+    if (cmd === 'add directive') {   // gap #5: a restatement of an active directive is refused (exit 3) unless --new; --new keeps the pair out of the digest
+      const dup = dupOf(st().items, ev.data.text ?? '');
+      if (dup && !flags.new) { err('error: ' + dupMessage(dup)); return 3; }
+      if (dup) ev.data.distinct_from = [dup.id];
     }
     let views = { refused: [] };
     const e = record(state, ev, { views: vpaths, onViews: v => { views = v; } });
@@ -1717,6 +1782,9 @@ function fixCmd(argv, env, out, err) {
     const dec = items[d.data.fixall], stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*$/, '');
     const notes = path.join(fixerDir(state), `${id}-${stamp}.md`), brief = notes.replace(/\.md$/, '.brief.md');
     const text = fixerBrief({ project: project.name, dir: id, dec: dec?.id ?? d.data.fixall, rows, picks: dec?.data?.picks || [], root: project.root });
+    // another directive's fixer holds the lane: refuse before the brief is written (a refused start left an orphan brief per tick)
+    const hold = duplicateOf({ state, lane: FIX_LANE, stage: 'fixer', kind: 'audit' });
+    if (hold) throw new RunRefused(`${id}: fixer ${hold.id} is ${hold.state} (one fixer run at a time): this one starts after it`, 3);
     fs.mkdirSync(fixerDir(state), { recursive: true });
     fs.writeFileSync(brief, text);
     const o = runSpec({ executor: pick.executor, agent: pick.agent, model: pick.model, effort: pick.effort, lane: FIX_LANE, stage: 'fixer', class: 'docs', brief, worktree: project.root, notes, machine: flags.machine, budget: flags.budget, as: flags.as }, env, w);
@@ -1726,6 +1794,38 @@ function fixCmd(argv, env, out, err) {
     return 0;
   } catch (e) {
     if (e instanceof RunError || e instanceof ConfigError || e instanceof RecordError || e instanceof RunRefused) { err('error: ' + e.message); err('usage: ' + FIX_USAGE); return 2; }
+    throw e;
+  }
+}
+// ---------- gap #3: norn done (a run's own result: the ONLY source of its outcome; NOTES are its free-form log) ----------
+const DONE_USAGE = 'norn done [--outcome done|stopped|handoff] [--why "<why>" (stopped: required)] [--handoff-file F | --handoff "<text>" (handoff: required)] [--summary "<one line>"] [--run RUN-n --state D (default: $META_RUN_ID, $META_RUN_STATE)]'
+  + '   (inside a run, as its last step: writes $META_RESULT_DIR = <state>/results/RUN-n/ (result.json, HANDOFF.md); a run that never runs it ends no-result)';
+const fwdSlash = p => String(p).replace(/\\/g, '/');
+function doneCmd(argv, env, out, err) {
+  try {
+    const flags = {};
+    for (let i = 0; i < argv.length; i++) {
+      const a = argv[i];
+      if (!['--outcome', '--why', '--summary', '--handoff', '--handoff-file', '--run', '--state'].includes(a)) throw new RunError(`unexpected ${a}`);
+      if (i + 1 >= argv.length) throw new RunError(`${a} needs a value`);
+      flags[a.slice(2)] = argv[++i];
+    }
+    // a run speaks for itself: inside a run (META_RUN_ID) --run may only repeat its own id
+    if (flags.run && env.META_RUN_ID && flags.run !== env.META_RUN_ID) throw new RunError(`--run ${flags.run}: a run ends itself only (META_RUN_ID=${env.META_RUN_ID})`);
+    const run = flags.run || env.META_RUN_ID, state = flags.state || env.META_RUN_STATE;
+    if (!run) throw new RunError('no run: give --run RUN-n (inside a run, $META_RUN_ID names it)');
+    if (!state) throw new RunError('no state: give --state D (inside a run, $META_RUN_STATE names it)');
+    if (!fs.existsSync(path.join(state, 'runs', `${run}.spec.json`))) throw new RunError(`${run} is not a run of ${fwdSlash(state)} (no runs/${run}.spec.json)`);
+    if (flags.handoff !== undefined && flags['handoff-file'] !== undefined) throw new RunError('--handoff and --handoff-file: give one');
+    let handoff = flags.handoff;
+    if (flags['handoff-file'] !== undefined) { try { handoff = fs.readFileSync(flags['handoff-file'], 'utf8'); } catch (e) { throw new RunError(`--handoff-file ${flags['handoff-file']}: ${e.code || e.message}`); } }
+    // the supervisor's directory when it is this run's (META_RESULT_DIR), else the state's
+    const dir = (env.META_RESULT_DIR && env.META_RUN_ID === run ? env.META_RESULT_DIR : null) || resultDir(state, run);
+    const r = writeResult(dir, { run, outcome: flags.outcome, why: flags.why, summary: flags.summary, handoff });
+    out(`${run} ${r.outcome.toUpperCase()}${r.why ? `: ${r.why}` : ''} -> ${fwdSlash(path.join(dir, 'result.json'))}${r.handoff ? ` + ${r.handoff}` : ''}`);
+    return 0;
+  } catch (e) {
+    if (e instanceof RunError || e instanceof ResultError) { err('error: ' + e.message); err('usage: ' + DONE_USAGE); return 2; }
     throw e;
   }
 }

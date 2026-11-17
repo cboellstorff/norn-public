@@ -9,7 +9,7 @@
 //   a knot is marked for MARK s instead.
 
 export const PULSE = 0.7, SPARK = 1.1, MOTE = 1.6, GLOW = 2.5, MAXA = 2.6, MARK = 2, LAG = 3, KEEP = 120;
-const RANK = { running: 0, handoff: 1, stopped: 1, bad: 1, needs: 1, parked: 2, 'no-marker': 2, done: 3, idle: 4 };
+const RANK = { running: 0, handoff: 1, stopped: 1, bad: 1, needs: 1, parked: 2, 'no-result': 2, done: 3, idle: 4 };
 
 // ---------- /api/map -> graph -> weave (lanes in band order, running first; their run knots latest-first; the controller) ----------
 export function graphOf(map) {

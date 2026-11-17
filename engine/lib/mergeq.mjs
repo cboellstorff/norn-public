@@ -12,7 +12,7 @@ import { spawn } from 'node:child_process';
 import { makeGit, globToRe } from './dlvgit.mjs';
 import { pathKey } from './config.mjs';
 import { acquireLock, laneWriter, killTree } from './runs.mjs';
-import { renderBatchBrief, suiteMode } from './mergebrief.mjs';
+import { renderBatchBrief, suiteMode, briefMarker } from './mergebrief.mjs';
 import { spawnOutside } from './jobguard.mjs';
 import { openBlocks } from './slop/host.mjs';
 import { slopOn } from './policy.mjs';
@@ -319,7 +319,7 @@ function fixAsk(stateDir, rec, res, { cfg, git }) {
     `2. Run the gate \`${gateText(cfg.gate)}\` and reproduce the red; fix its CAUSE in the branch, red-first (never loosen a test, never a skip by name).`,
     `   ${k > 1 ? `The red may be an interaction with ${rec.members.slice(0, k - 1).map(m => m.branch).join(', ')} (merged before it in the batch): merge those too to reproduce.` : 'It is red on the target with this branch alone.'}`,
     `3. Commit, push \`${cfg.remote} ${c.branch}\` - no force-push. Do not merge to ${rec.into}; the merge queue re-batches the new tip.`,
-    `NOTES ${notes}: the red, its cause, the fix, the gate result; last line \`## DONE\`, \`## STOPPED: <why>\` or \`## HANDOFF\`.`, ''].join('\n'));
+    `NOTES ${notes}: the red, its cause, the fix, the gate result. End with \`norn done\` (or \`--outcome stopped --why "<why>"\` / \`--outcome handoff --handoff-file F\`).`, ''].join('\n'));
   return { id: c.id, branch: c.branch, sha: c.sha, brief, notes, worktree: wtPath,
     run: ['run', '--executor', 'claude', '--lane', c.lane || c.branch.split('/').pop(), '--stage', 'fix-mq', '--brief', brief, '--notes', notes, '--worktree', wtPath || '<the lane worktree>', '--queue'] };
 }
@@ -342,10 +342,12 @@ function finish(stateDir, rec, k, { cfg, project, git }) {
   rec.notes = fwd(path.join(mqDir(stateDir), `batch-${rec.n}-MERGE-NOTES.md`));
   rec.brief = fwd(path.join(mqDir(stateDir), `batch-${rec.n}-MERGE-brief.md`));
   const gl = [...rec.runs].reverse().find(r => r.ok && (r.prefix === rec.members.length || r.prefix === k));
-  fs.writeFileSync(rec.brief, renderBatchBrief(project, { n: rec.n, tip: rec.merge_tip, base: rec.base, gate: cfg.gate.cmd, gate_log: gl?.log, retried: rec.result === 'flaky',
-    scratch: cfg.scratch, notes: rec.notes, ui: rec.ui, members: rec.merge_members }));
+  const text = renderBatchBrief(project, { n: rec.n, tip: rec.merge_tip, base: rec.base, gate: cfg.gate.cmd, gate_log: gl?.log, retried: rec.result === 'flaky',
+    scratch: cfg.scratch, notes: rec.notes, ui: rec.ui, members: rec.merge_members });
+  fs.writeFileSync(rec.brief, text);
   rec.status = 'green';
-  rec.dispatch = ['run', '--lane', 'mq', '--stage', 'MERGE', '--brief', rec.brief, '--worktree', cfg.repo, '--notes', rec.notes, '--executor', 'claude', '--queue'];
+  // GAP-6: the batch MERGE works in its own merge worktree (the brief's marker names it) and lands with norn merge-land
+  rec.dispatch = ['run', '--lane', 'mq', '--stage', 'MERGE', '--brief', rec.brief, '--worktree', briefMarker(text).merge_wt, '--notes', rec.notes, '--executor', 'claude', '--queue'];
 }
 
 // META-SLOP-A (Fable: Norn's own mess is fixed in Norn): a batch that landed or was abandoned leaves no mq/batch-<n> behind
@@ -368,7 +370,7 @@ const WHY = {
 
 /**
  * One merge-queue pass (the tick runs it after the fill; code only): auto-update every idle branch, then - where a FAST gate is
- * declared and batching is on - one batch at a time machine-wide (the main checkout's worktree lock): build, gate, retry once,
+ * declared and batching is on - one batch at a time machine-wide (the scratch worktree's lock): build, gate, retry once,
  * bisect, write the batch MERGE brief / the culprit's fix ask, apply the kill criterion. Returns { updates, batch, fix, why }.
  * o: { stateDir, project, locksDir, git, now, acquire (runs.acquireLock), gateRunner (runGate), hbMs }
  */
@@ -400,11 +402,10 @@ async function mergeqPass({ stateDir, project = {}, locksDir, git = makeGit(), n
     open[open.status + '_at'] = new Date(now).toISOString();
     writeJ(batchFile(stateDir, open.n), open);
   }
-  let lock, slock;
-  try { lock = acquire(locksDir, cfg.repo, { run: 'mergeq' }); } catch (e) { return { ...out, why: `no batch now: the main checkout: ${e.message}` }; }
+  let slock;
+  try { slock = acquire(locksDir, cfg.scratch, { run: 'mergeq' }); } catch (e) { return { ...out, why: `no batch now: the scratch worktree: ${e.message}` }; }
   try {
-    try { slock = acquire(locksDir, cfg.scratch, { run: 'mergeq' }); } catch (e) { return { ...out, why: `no batch now: the scratch worktree: ${e.message}` }; }
-    const hb = setInterval(() => { lock.refresh(); slock.refresh(); }, hbMs);
+    const hb = setInterval(() => { slock.refresh(); }, hbMs);
     try {
       let { rows } = mergeQueue({ stateDir, project, now, git });
       // MQ-STARVE: the last batch found its target red at a base that is still the target's tip -> the rows that fix it go first
@@ -465,7 +466,7 @@ async function mergeqPass({ stateDir, project = {}, locksDir, git = makeGit(), n
       dropBatchBranch(stateDir, rec, { cfg, git });   // red / main-red with no green prefix, or an integration push: over now
       return { ...out, batch: rec, why: WHY[res.status](rec, m2) + (m2.batching.off ? `; batching now OFF: ${m2.batching.why}` : '') };
     } finally { clearInterval(hb); }
-  } finally { slock?.release(); lock.release(); }
+  } finally { slock.release(); }
 }
 
 /** the kill switch: off (with why) / on (resets the unpinned count). Returns the mq state. */

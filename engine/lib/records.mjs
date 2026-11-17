@@ -380,7 +380,10 @@ function validateData(kind, ev, d, target, st, by) {
     }
   }
   if (kind === 'directive') {
-    if (ev === 'create') { str(d.text, 'text'); via(d.via, ['dashboard', 'talk', 'chat', 'cli']); list(d.scope, 'scope'); str(d.expires_utc, 'expires_utc', { req: false }); }
+    if (ev === 'create') {
+      str(d.text, 'text'); via(d.via, ['dashboard', 'talk', 'chat', 'cli']); list(d.scope, 'scope'); str(d.expires_utc, 'expires_utc', { req: false });
+      list(d.distinct_from, 'distinct_from');   // gap #5: the active DIRs this one was created next to on purpose (--new): no duplicate row
+    }
     if (ev === 'done') list(d.refs, 'refs', { req: true });
     if (ev === 'supersede') {
       str(d.why, 'why');
@@ -454,7 +457,7 @@ function validateData(kind, ev, d, target, st, by) {
     // META-GTP-FLOW piece 2: the flow step a run is (norn flow start / resume): { name, step, vars: { k: string } }
     if ((ev === 'start' || ev === 'queue') && d.flow !== undefined && !(d.flow && typeof d.flow.name === 'string' && typeof d.flow.step === 'string'
       && d.flow.vars && typeof d.flow.vars === 'object' && Object.values(d.flow.vars).every(v => typeof v === 'string'))) fail('flow must be { name, step, vars: { k: string } }');
-    if (ev === 'end') { oneOf(d.outcome, 'outcome', ['done', 'stopped', 'handoff', 'no-marker', 'crash', 'limit', 'auth', 'nudged', ...(target?.data?.kind === 'interactive' ? ['ended'] : []),...(by === 'migration' ? ['legacy'] : [])]); if (d.exit !== null && !Number.isInteger(d.exit)) fail('exit must be an integer or null'); }
+    if (ev === 'end') { oneOf(d.outcome, 'outcome', ['done', 'stopped', 'handoff', 'no-result', 'crash', 'limit', 'auth', 'nudged', ...(target?.data?.kind === 'interactive' ? ['ended'] : []),...(by === 'migration' ? ['legacy'] : [])]); if (d.exit !== null && !Number.isInteger(d.exit)) fail('exit must be an integer or null'); }
     if (ev === 'review') list(d.refs, 'refs');
     if (ev === 'resume' && !d.next === !d.refused) fail('resume needs exactly one of next / refused');
     if (ev === 'fill') str(d.next, 'next');
@@ -794,7 +797,7 @@ function recordCtx(stateDir, evIn, opts) {
     if (kind === 'decision' && ev.ev === 'create' && caller !== 'migration') {
       const d = ev.data || {}, g = ownerPickGuard(st.items, d);
       // NORN-WATCH S3 + META-CHECKIN-GUARDS R1 guard B (checkinguards.ownerOnlyRefusal, the grader's too): an open owner_only Q is
-      // ruled by the owner only (DIR-47 covers every other Q) - exit 7, noted on the writer's run (the Agents tab shows it)
+      // ruled by the owner only (DIR-47 covers every other Q) - exit 7, noted on the writer's run (the Runs page shows it)
       const oo = d.answers ? ownerOnlyRefusal(st.items[d.answers], caller) : null;
       if (oo) throw Object.assign(new RecordError(oo, OWNER_ONLY_EXIT), { refusal: { guard: 'owner-only', lane: d.lane ?? null, answers: d.answers } });
       if (g) throw new RecordError(`${g.id} is open on lane ${d.lane} - pass --answers ${g.id} or --not-an-answer`, 3);
@@ -844,7 +847,7 @@ function recordCtx(stateDir, evIn, opts) {
 }
 /**
  * META-CHECKIN-GUARDS R1: a guard's refusal noted on the refused writer's own RUNNING run (env META_RUN_ID, when it belongs to this
- * state: launchedHere) as a run `refuse` event - nothing else happened, the next tick and the Agents tab see it. No run = no note.
+ * state: launchedHere) as a run `refuse` event - nothing else happened, the next tick and the Runs page see it. No run = no note.
  */
 export function noteRefusal(stateDir, why, { guard, ...extra }, env = process.env) {
   const id = env.META_RUN_ID;

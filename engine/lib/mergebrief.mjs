@@ -4,10 +4,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { mergeParallel, mergeWtPath } from './mergewt.mjs';
 
 const ENGINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const MERGE_TEMPLATE = path.join(ENGINE, 'prompts', 'MERGE.md');
 export const MERGE_SHA_TEMPLATE = path.join(ENGINE, 'prompts', 'MERGE-SHA.md');   // META-GTP-MERGEQ piece 0: the staged merge (--sha)
+// GAP-6: every MERGE brief merges in the run's own merge worktree (mergewt.mjs) and lands by `norn merge-land` (mergeland.mjs)
 export const SHOTS_MODES = ['after', 'before'];
 const fwd = p => String(p).replace(/\\/g, '/');
 
@@ -41,16 +43,19 @@ function suiteText(p, rebase, dir) {
   const [what, where, abort, smoke] = rebase ? ["step 1's rebase", dir, '', 4] : ["step 2's merge", `${dir} on the uncommitted merge`, `\`git -C ${dir} merge --abort\`, `, 5];
   return {
     ran: 'suite skipped (policy merge.suite = skip), conflicted-area tests <the test files run, or none>',
-    step: `SUITE SKIPPED (project policy merge.suite = skip): never \`node engine/bin/ci-suite.mjs\`. If ${what} had conflicts, run\n   only the test files of the conflicted areas in ${where} (\`node --test <file>\` each: the tests/*.test.mjs of the conflicted\n   code; name them); a red there = ${abort}\`## STOPPED: red in a conflicted area\`, nothing merged. A clean ${rebase ? 'rebase' : 'merge'} runs no test\n   (the smoke of step ${smoke} always runs).`,
+    step: `SUITE SKIPPED (project policy merge.suite = skip): never \`node engine/bin/ci-suite.mjs\`. If ${what} had conflicts, run\n   only the test files of the conflicted areas in ${where} (\`node --test <file>\` each: the tests/*.test.mjs of the conflicted\n   code; name them); a red there = ${abort}\`norn done --outcome stopped --why "red in a conflicted area"\`, nothing merged. A clean ${rebase ? 'rebase' : 'merge'} runs no test\n   (the smoke of step ${smoke} always runs).`,
   };
 }
 
 // META-GTP-MERGEQ piece 0: the last line of every rendered MERGE brief says what it does to the lane worktree, for `norn run
 // --stage MERGE` (runs.mjs mergeStageRefusal): rebase = the brief rebases + pushes in the lane worktree (refused while that
-// worktree holds a live run); staged = it merges one tested commit in the main checkout and never touches the lane worktree.
+// worktree holds a live run); staged = it merges one tested commit and never touches the lane worktree. GAP-6: every brief names
+// its merge worktree (merge_wt), the repo whose merge slots it takes and how many there are (policy.merge.parallel) and its main
+// branch + remote - runs.mjs mergeSpec / writeTrees / the slot locks read them here.
 const MARK_RE = /^<!-- meta-merge (\{.*\}) -->$/m;
 const marker = m => `\n<!-- meta-merge ${JSON.stringify(Object.fromEntries(Object.entries(m).filter(([, v]) => v !== undefined)))} -->\n`;
-/** the meta-merge marker of a brief text: { mode: rebase | staged, lane, branch, worktree, sha?, main (the main checkout it writes; META-MERGELOCK), notes (the NOTES file the brief names = the run's notes; META-MERGE-MARKER) } | null (a hand-written brief) */
+/** the meta-merge marker of a brief text: { mode: rebase | staged, lane, branch, worktree, sha?, merge_wt + repo + slots + main_branch + remote
+ *  (GAP-6: the merge's own worktree, the repo it lands on, policy.merge.parallel, its main branch), notes (the NOTES file the brief names = the run's notes; META-MERGE-MARKER) } | null (a hand-written brief) */
 export function briefMarker(text) {
   const m = String(text ?? '').match(MARK_RE);
   if (!m) return null;
@@ -59,55 +64,69 @@ export function briefMarker(text) {
 export const SHA_RE = /^[0-9a-f]{7,40}$/;
 const fill = (file, v) => fs.readFileSync(file, 'utf8').replace(/\{\{(\w+)\}\}/g, (_, k) => { if (!(k in v)) throw new Error(`${path.basename(file)}: unknown placeholder {{${k}}}`); return v[k]; });
 
-/** o: { lane, branch, worktree, notes, ui (the branch changes the dash / UI), sha (piece 0: the staged merge of THAT commit in the
- *  main checkout; the lane worktree is only named, never written) }. Returns the brief text. */
+/** o: { lane, branch, worktree, notes, ui (the branch changes the dash / UI), sha (piece 0: the staged merge of THAT commit; the
+ *  lane worktree is only named, never written) }. p needs its state dir (the merge worktree lives there). Returns the brief text. */
 export function renderMergeBrief(p, o) {
   for (const k of ['lane', 'branch', 'notes', ...(o?.sha ? [] : ['worktree'])]) if (!o?.[k]) throw new Error(`merge brief: ${k} is required`);
   if (o.sha !== undefined && !SHA_RE.test(String(o.sha))) throw new Error(`merge brief: --sha must be a commit id (7-40 hex), got ${o.sha}`);
   if (o.sha) return renderStaged(p, o);
+  const wt = mergeWt(p, o);
   const mode = shotsMode(p), metaRoot = fwd(p.meta || path.join(ENGINE, '..')), st = suiteStep(p, true, fwd(o.worktree), metaRoot);
   const shotsDir = fwd(path.join(path.dirname(o.notes), 'shots'));
   const shots = !o.ui ? 'Shots: no dash / UI change: no screenshots (the notice names the merge only).'
     : mode === 'after'
       ? `SHOTS AFTER (project policy merge.shots = after): take offscreen screenshots of every changed dash / UI view with \`norn shot\` (\`node "${metaRoot}/engine/bin/norn.mjs" shot <url> --out <png> [--phone] [--theme dark]\`; never start a browser by hand) from ${o.worktree} into ${shotsDir}/ (never a gitignored folder of a worktree), then merge on evidence (suite + smoke + shots); the owner sees them in the notice of step 6.`
-      : `SHOTS BEFORE (project policy merge.shots = before): take offscreen screenshots of every changed dash / UI view with \`norn shot\` (\`node "${metaRoot}/engine/bin/norn.mjs" shot <url> --out <png> [--phone] [--theme dark]\`; never start a browser by hand) from ${o.worktree} into ${shotsDir}/, send them (\`norn notify --title "shots before merge ${o.branch}" --file <shot>\` per shot), write NOTES and end \`## STOPPED: shots sent before the merge\` - do NOT do steps 4-6; the check-in re-briefs the merge once the owner answered.`;
+      : `SHOTS BEFORE (project policy merge.shots = before): take offscreen screenshots of every changed dash / UI view with \`norn shot\` (\`node "${metaRoot}/engine/bin/norn.mjs" shot <url> --out <png> [--phone] [--theme dark]\`; never start a browser by hand) from ${o.worktree} into ${shotsDir}/, send them (\`norn notify --title "shots before merge ${o.branch}" --file <shot>\` per shot), write NOTES and end \`norn done --outcome stopped --why "shots sent before the merge"\` - do NOT do steps 4-6; the check-in re-briefs the merge once the owner answered.`;
   const v = {
     lane: o.lane, branch: o.branch, worktree: fwd(o.worktree), notes: fwd(o.notes), project: p.name, main: p.deliverables?.main || 'main',
     main_checkout: fwd(p.deliverables?.repo || p.root), meta_root: metaRoot, norn: `node "${metaRoot}/engine/bin/norn.mjs"`, meta: `node "${metaRoot}/engine/bin/norn.mjs"`, shots, suite: st.step, suite_ran: st.ran,
     shot_flag: o.ui && mode === 'after' ? `; then send up to 3 key shots (the changed views, dark first) as attachments, one \`node "${metaRoot}/engine/bin/norn.mjs" notify --class merge --title "<view>" --file <shot>\` each - the phone cannot open a local path; the shots folder path may follow in the body` : '',
+    ...wt.v(metaRoot),
   };
-  return fill(MERGE_TEMPLATE, v) + marker({ mode: 'rebase', lane: o.lane, branch: o.branch, worktree: fwd(o.worktree), main: v.main_checkout, notes: v.notes });
+  return fill(MERGE_TEMPLATE, v) + marker({ mode: 'rebase', lane: o.lane, branch: o.branch, worktree: fwd(o.worktree), ...wt.m, notes: v.notes });
 }
 
-// the staged merge (MERGE-SHA.md): the suite and the shots run on the merged tree in the main checkout
+// GAP-6: the merge worktree of one merge of project p (key: the lane, + the commit of a staged merge) -> { wt, v (the template
+// values), m (the marker fields) }
+function mergeWt(p, o, key = o.lane) {
+  if (!p?.state) throw new Error(`merge brief: project ${p?.name ?? '?'} has no state dir (its merge worktree lives there)`);
+  const wt = mergeWtPath(p.state, key, o.sha), repo = fwd(p.deliverables?.repo || p.root);
+  return { wt, m: { merge_wt: wt, repo, slots: mergeParallel(p), main_branch: p.deliverables?.main || 'main', remote: p.deliverables?.remote || 'origin' },
+    v: metaRoot => ({ merge_wt: wt, land: `node "${metaRoot}/engine/bin/norn.mjs" merge-land --project ${p.file ? fwd(p.file) : '<project.json>'} --worktree ${wt}` }) };
+}
+
+// the staged merge (MERGE-SHA.md): the merge, the suite and the shots in the run's merge worktree, landed by norn merge-land
 function renderStaged(p, o) {
-  const mode = shotsMode(p), metaRoot = fwd(p.meta || path.join(ENGINE, '..')), mainCo = fwd(p.deliverables?.repo || p.root);
-  const shotsDir = fwd(path.join(path.dirname(o.notes), 'shots')), sha = String(o.sha), st = suiteStep(p, false, mainCo, metaRoot);
+  const mode = shotsMode(p), metaRoot = fwd(p.meta || path.join(ENGINE, '..')), mainCo = fwd(p.deliverables?.repo || p.root), wt = mergeWt(p, o), at = wt.wt;
+  const shotsDir = fwd(path.join(path.dirname(o.notes), 'shots')), sha = String(o.sha), st = suiteStep(p, false, at, metaRoot);
   const shots = !o.ui ? 'Shots: no dash / UI change: no screenshots (the notice names the merge only).'
     : mode === 'after'
-      ? `SHOTS AFTER (project policy merge.shots = after): after step 5's commit and before the push, take offscreen screenshots of every changed dash / UI view with \`norn shot\` (\`node "${metaRoot}/engine/bin/norn.mjs" shot <url> --out <png> [--phone] [--theme dark]\`; never start a browser by hand) from ${mainCo} into ${shotsDir}/; the owner sees them in the notice of step 7.`
-      : `SHOTS BEFORE (project policy merge.shots = before): take offscreen screenshots of every changed dash / UI view with \`norn shot\` (\`node "${metaRoot}/engine/bin/norn.mjs" shot <url> --out <png> [--phone] [--theme dark]\`; never start a browser by hand) from ${mainCo} (the uncommitted merge) into ${shotsDir}/, send them (\`norn notify --title "shots before merge ${o.branch}" --file <shot>\` per shot), then \`git -C ${mainCo} merge --abort\`, write NOTES and end \`## STOPPED: shots sent before the merge\` - do NOT do steps 5-7; the check-in re-briefs the merge once the owner answered.`;
+      ? `SHOTS AFTER (project policy merge.shots = after): after step 5's commit and before the land, take offscreen screenshots of every changed dash / UI view with \`norn shot\` (\`node "${metaRoot}/engine/bin/norn.mjs" shot <url> --out <png> [--phone] [--theme dark]\`; never start a browser by hand) from ${at} into ${shotsDir}/; the owner sees them in the notice of step 7.`
+      : `SHOTS BEFORE (project policy merge.shots = before): take offscreen screenshots of every changed dash / UI view with \`norn shot\` (\`node "${metaRoot}/engine/bin/norn.mjs" shot <url> --out <png> [--phone] [--theme dark]\`; never start a browser by hand) from ${at} (the uncommitted merge) into ${shotsDir}/, send them (\`norn notify --title "shots before merge ${o.branch}" --file <shot>\` per shot), then \`git -C ${at} merge --abort\`, write NOTES and end \`norn done --outcome stopped --why "shots sent before the merge"\` - do NOT do steps 5-7; the check-in re-briefs the merge once the owner answered.`;
   const v = {
     lane: o.lane, branch: o.branch, worktree: o.worktree ? fwd(o.worktree) : '(the lane worktree)', notes: fwd(o.notes), project: p.name, main: p.deliverables?.main || 'main',
     main_checkout: mainCo, meta_root: metaRoot, norn: `node "${metaRoot}/engine/bin/norn.mjs"`, meta: `node "${metaRoot}/engine/bin/norn.mjs"`, shots, sha, sha_short: sha.slice(0, 7), suite: st.step, suite_ran: st.ran,
     shot_flag: o.ui && mode === 'after' ? `; then send up to 3 key shots (the changed views, dark first) as attachments, one \`node "${metaRoot}/engine/bin/norn.mjs" notify --class merge --title "<view>" --file <shot>\` each - the phone cannot open a local path; the shots folder path may follow in the body` : '',
+    ...wt.v(metaRoot),
   };
-  return fill(MERGE_SHA_TEMPLATE, v) + marker({ mode: 'staged', lane: o.lane, branch: o.branch, worktree: o.worktree ? fwd(o.worktree) : undefined, sha, main: mainCo, notes: v.notes });
+  return fill(MERGE_SHA_TEMPLATE, v) + marker({ mode: 'staged', lane: o.lane, branch: o.branch, worktree: o.worktree ? fwd(o.worktree) : undefined, sha, ...wt.m, notes: v.notes });
 }
 
-// META-GTP-MERGEQ piece 3: the ONE MERGE stage of a green merge-queue batch (MERGE-BATCH.md): fast-forward main to the gated tip.
+// META-GTP-MERGEQ piece 3: the ONE MERGE stage of a green merge-queue batch (MERGE-BATCH.md): land the gated tip on main from the run's
+// merge worktree (GAP-6: <state>/mq/merge-mq-batch-<n>, norn merge-land).
 // b: { n, tip, base, gate (cmd), gate_log, retried, scratch, notes, ui, members: [{ id, branch, lane, sha, merge }] }
 export const MERGE_BATCH_TEMPLATE = path.join(ENGINE, 'prompts', 'MERGE-BATCH.md');
 export function renderBatchBrief(p, b) {
   for (const k of ['n', 'tip', 'base', 'gate', 'scratch', 'notes']) if (b?.[k] === undefined || b[k] === '') throw new Error(`batch brief: ${k} is required`);
   if (!b.members?.length) throw new Error('batch brief: no members');
   const mode = shotsMode(p), metaRoot = fwd(p.meta || path.join(ENGINE, '..')), mainCo = fwd(p.deliverables?.repo || p.root), batch = `batch-${b.n}`;
+  const wt = mergeWt(p, {}, `mq-${batch}`), at = wt.wt;
   const full = suiteMode(p) === 'full';   // skip: mergeq ran no gate (its members merge clean: no conflicted area to test)
   const shotsDir = fwd(path.join(path.dirname(b.notes), 'shots'));
   const shots = !b.ui ? 'Shots: no dash / UI change in the batch: no screenshots (the notice names the merge only).'
     : mode === 'after'
-      ? `SHOTS AFTER (project policy merge.shots = after): after step 3's fast-forward (the main checkout = the batch tip) and before step 4's push, take offscreen screenshots of every changed dash / UI view with \`norn shot\` (\`node "${metaRoot}/engine/bin/norn.mjs" shot <url> --out <png> [--phone] [--theme dark]\`; never start a browser by hand) from ${mainCo} into ${shotsDir}/; the owner sees them in the notice of step 5.`
-      : `SHOTS BEFORE (project policy merge.shots = before): \`git -C ${mainCo} worktree add --detach ${shotsDir}/tree ${b.tip}\`, take offscreen screenshots of every changed dash / UI view with \`norn shot\` (\`node "${metaRoot}/engine/bin/norn.mjs" shot <url> --out <png> [--phone] [--theme dark]\`; never start a browser by hand) from it into ${shotsDir}/, \`git -C ${mainCo} worktree remove --force ${shotsDir}/tree\`, send them (\`norn notify --title "shots before merge ${batch}" --file <shot>\` per shot), write NOTES and end \`## STOPPED: shots sent before the merge\` - do NOT do steps 3-5.`;
+      ? `SHOTS AFTER (project policy merge.shots = after): after step 1's checkout (the merge worktree = the batch tip) and before step 4's land, take offscreen screenshots of every changed dash / UI view with \`norn shot\` (\`node "${metaRoot}/engine/bin/norn.mjs" shot <url> --out <png> [--phone] [--theme dark]\`; never start a browser by hand) from ${at} into ${shotsDir}/; the owner sees them in the notice of step 5.`
+      : `SHOTS BEFORE (project policy merge.shots = before): take offscreen screenshots of every changed dash / UI view with \`norn shot\` (\`node "${metaRoot}/engine/bin/norn.mjs" shot <url> --out <png> [--phone] [--theme dark]\`; never start a browser by hand) from ${at} (the batch tip) into ${shotsDir}/, send them (\`norn notify --title "shots before merge ${batch}" --file <shot>\` per shot), write NOTES and end \`norn done --outcome stopped --why "shots sent before the merge"\` - do NOT do steps 3-5.`;
   const v = {
     batch, count: String(b.members.length), project: p.name, main: p.deliverables?.main || 'main', main_checkout: mainCo, meta_root: metaRoot,
     norn: `node "${metaRoot}/engine/bin/norn.mjs"`, meta: `node "${metaRoot}/engine/bin/norn.mjs"`,   // meta = the old name (META-NAME-W3)
@@ -117,6 +136,7 @@ export function renderBatchBrief(p, b) {
     tip: b.tip, base: b.base, base_short: String(b.base).slice(0, 7), gate_log: fwd(b.gate_log || '-'), scratch: fwd(b.scratch), notes: fwd(b.notes), shots,
     members: b.members.map(m => `- ${m.id} ${m.branch} (lane ${m.lane ?? '-'}) at ${String(m.sha).slice(0, 7)}: merge commit ${m.merge}; revert: \`git -C ${mainCo} revert -m 1 ${m.merge}\``).join('\n'),
     shot_flag: b.ui && mode === 'after' ? `; then send up to 3 key shots (the changed views, dark first) as attachments, one \`node "${metaRoot}/engine/bin/norn.mjs" notify --class merge --title "<view>" --file <shot>\` each` : '',
+    ...wt.v(metaRoot),
   };
-  return fill(MERGE_BATCH_TEMPLATE, v) + marker({ mode: 'staged', lane: 'mq', branch: `mq/${batch}`, sha: b.tip, main: mainCo, notes: fwd(b.notes) });
+  return fill(MERGE_BATCH_TEMPLATE, v) + marker({ mode: 'staged', lane: 'mq', branch: `mq/${batch}`, sha: b.tip, ...wt.m, notes: fwd(b.notes) });
 }

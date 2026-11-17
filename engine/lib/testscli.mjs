@@ -10,6 +10,7 @@ import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { gitHistory, summarize, mergeCheck, leanGate, leafNames, mutationMatrix, addTrial, neverFailing, duplicates, slowest } from './testlean.mjs';
 import { crossings } from './advisory.mjs';
+import { subdirOf, inDir } from './monorepo.mjs';
 
 export const TESTS_USAGE = 'usage: norn tests measure [--no-coverage] | history [--points N] | check --base REF | mutation --report R --kills K --tests a,b [--label L] [--wall S] | lean | gate --base REF [--restore]    '
   + '[--project P | --state D] [--repo DIR] [--json]   (check = the merge-time advisories, exit 0; gate exit 1 = the wave lost coverage or a mutant\'s last killer)';
@@ -43,7 +44,8 @@ function runMeasure(repo, files, { coverage = true, log } = {}) {
   fs.rmSync(tmp, { recursive: true, force: true });
   return { measure, status: r.status };
 }
-const changedTests = (repo, base, filter = 'AMD') => git(repo, ['diff', '--name-only', `--diff-filter=${filter}`, base, '--', 'tests']).split('\n').map(fwd).filter(f => TEST_GLOB.test(f));
+// --relative: from a monorepo project's folder the names are relative to it (as tests/x.test.mjs), never the repo's top
+const changedTests = (repo, base, filter = 'AMD') => git(repo, ['diff', '--name-only', '--relative', `--diff-filter=${filter}`, base, '--', 'tests']).split('\n').map(fwd).filter(f => TEST_GLOB.test(f));
 
 /** o: { env, out, err, where(flags) -> { project, state } } */
 export function testsCmd(argv, { out = console.log, err = console.error, where } = {}) {
@@ -54,7 +56,9 @@ export function testsCmd(argv, { out = console.log, err = console.error, where }
   let w;
   try { w = where(f); } catch (e) { err('error: ' + e.message); return 2; }
   const dir = path.join(w.state, 'tests');
-  const repo = fwd(git(f.repo || w.project?.root || process.cwd(), ['rev-parse', '--show-toplevel']));
+  // gap #7: a monorepo project (project.subdir; not with an explicit --repo) measures its own folder: its tests/, its history
+  const top = fwd(git(f.repo || w.project?.root || process.cwd(), ['rev-parse', '--show-toplevel']));
+  const repo = !f.repo && subdirOf(w.project) ? fwd(inDir(top, subdirOf(w.project))) : top;
   const sha = () => git(repo, ['rev-parse', '--short=12', 'HEAD']);
   const print = (v, text) => (f.json ? out(JSON.stringify(v, null, 1)) : text.forEach(l => out(l)));
 

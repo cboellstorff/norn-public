@@ -23,7 +23,7 @@ const fwd = p => String(p).replace(/\\/g, '/');
 const norm = p => { const a = fwd(path.resolve(p)).replace(/\/+$/, ''); return WIN ? a.toLowerCase() : a; };
 const under = (p, root) => p === root || p.startsWith(root + '/');
 const isMerge = spec => String(spec.stage ?? '').toUpperCase() === 'MERGE';
-// a check-in works in the main checkout and a MERGE stage run lands the batch there: both push main; a lane run never does
+// a check-in works in the main checkout and a MERGE stage run lands its merge (norn merge-land): both push main; a lane run never does
 const mayPushMain = spec => isMerge(spec) || spec.kind === 'checkin';
 
 export const refusalsFile = state => path.join(state, 'scope', 'refusals.jsonl');
@@ -221,7 +221,7 @@ const readSpec = (state, run) => JSON.parse(fs.readFileSync(path.join(state, 'ru
 export function scopeCheck({ state, run, payload, env = process.env }) {
   let why, spec = null;
   try { spec = readSpec(state, run); why = checkTool(payload, scopeOf(spec), env); }
-  catch (e) { why = `Norn's scope hook cannot read this run's spec (${run}: ${e.code || e.message}), so it cannot tell what you may touch: end with ## STOPPED and say so in your NOTES`; }
+  catch (e) { why = `Norn's scope hook cannot read this run's spec (${run}: ${e.code || e.message}), so it cannot tell what you may touch: end with \`norn done --outcome stopped --why "scope hook cannot read the run spec"\``; }
   if (!why) return { deny: null };
   const tool = String(payload?.tool_name ?? '?'), target = oneLine(payload?.tool_input?.file_path ?? payload?.tool_input?.notebook_path ?? payload?.tool_input?.command ?? '', 200);
   fs.mkdirSync(path.dirname(refusalsFile(state)), { recursive: true });

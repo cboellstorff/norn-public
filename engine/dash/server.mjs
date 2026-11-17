@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash, randomBytes } from 'node:crypto';
+import { resultPath } from '../lib/result.mjs';
 import { spawn, execFile } from 'node:child_process';
 import { createSessions } from './sessions.mjs';
 import { createFeeds, decodeCursor } from './feed.mjs';
@@ -15,7 +16,7 @@ import { createChat, readThread, threadFile, threadFlushed, threadState, chatCos
 import { ActError, showRoots, outboxDir } from '../lib/chatact.mjs';
 import { genWhyNot } from '../lib/setup.mjs';
 import { profileChoices, profileChanges, getProfile, loadProfiles, COSTS } from '../lib/profiles.mjs';
-import { billingOf, spendDay, usdCap, billingChoices, refreshQueued, USAGE_KEYS } from '../lib/billing.mjs';
+import { billingOf, spendDay, spendBreakdown, usdCap, billingChoices } from '../lib/billing.mjs';
 import { floorOf } from '../lib/floor.mjs';
 import { settingsView, applySettings, generatedLines, rewriteMarked, withDefaults, merged, split, SECTIONS, writeBudgetAsync, atomicWriteAsync as atomicA, onlyChanged, floorChanges, retiredExecutors, capOfExecutor, getPath } from '../lib/policy.mjs';
 import { recordAsync, loadState, loadStateAsync, recordsFile, readEvents, RecordError, KINDS, writeOrigin } from '../lib/records.mjs';
@@ -25,6 +26,7 @@ import { ADAPTERS, harnessOf } from '../lib/harness/index.mjs';
 import { writeViewsAsync, renderQuestions, renderDirectives } from '../lib/views.mjs';
 import { hbPath, stopRunAsync, requeueRun, queueOf, STALE_MS } from '../lib/runs.mjs';
 import { lanesView } from '../lib/lanes.mjs';
+import { overlapFile, overlapOn } from '../lib/overlap.mjs';
 import { agentsTree, primeAgents, shownRunIds } from '../lib/agents.mjs';
 import { ctxView } from '../lib/ctxlimit.mjs';
 import { mapGraph } from '../lib/map.mjs';
@@ -41,10 +43,12 @@ import { lanePaths } from '../lib/lanenew.mjs';
 import { loadMachine, loadProject, ConfigError } from '../lib/config.mjs';
 const FIRST_LANE = 'first';   // META-OOTB F-1: the lane the first-task box opens
 import { runName } from '../lib/names.mjs';
+import { readHoldAsync, holdItem, noticeMin } from '../lib/holds.mjs';
+import { handEdits, takeBack, keepEdit } from '../lib/handedits.mjs';
 import { notify as sendNotice, batchHours, ntfyServer, defaultTransport as notifyTransport } from '../lib/notify.mjs';
 import { costRollup, accountUsage, weekStart, nextReset, parseReset } from '../lib/cost.mjs';
 import { Worker } from 'node:worker_threads';
-import { snap, newSnap, readText, readTextA, existsA, existsS, statS, statA, readdirS, readdirA, prime, forget } from '../lib/fsnap.mjs';
+import { snap, newSnap, readText, readTextA, existsA, existsS, statS, statA, readdirS, readdirA, prime, forget, readJsonS } from '../lib/fsnap.mjs';
 import { ART_FILES } from './norn/assets.mjs';
 import { homeEvents } from './home.mjs';
 import { parseLedgerLine } from './ledger.mjs';
@@ -52,10 +56,12 @@ import { insViewFile } from '../lib/guard-scan.mjs';
 import { insSummary, insPart } from './insparts.mjs';
 import { guardSummary, guardPart, chipView, fixSheet, fixPick } from './guardparts.mjs';
 import { SUB_CAP } from './subviews.mjs';
+import { isNeed, needsYou } from './terms.mjs';
 import { docsList as docsListOf } from './docparts.mjs';
 import { paragraphs } from '../lib/instructions.mjs';
 import { openCardsAsync } from '../lib/rules.mjs';
 import { auditsView, acceptText, auditFiles } from '../lib/audit.mjs';
+import { dupOf, dupMessage } from '../lib/dupdirs.mjs';
 import { keepFindings, fixPlan, fixBatch, runsFor, fixCards, verdictText, verdictIds, readRunBrief, FIX_LANE } from '../lib/fixer.mjs';
 import { paraMarks } from '../lib/readev.mjs';
 import { testsView, testsFiles } from '../lib/testscli.mjs';
@@ -80,7 +86,7 @@ const NORN = ['palette.mjs', 'pixel.mjs', 'assets.mjs', 'motion.mjs', 'look.mjs'
   'live.mjs', 'stage.mjs', 'weave.mjs', 'mapview.mjs', 'well.mjs', 'tapestry.mjs', 'orc.mjs'];   // META-TEND P6: SloppaChoppa's stage   // S2: the Map (the Well / the Tapestry)
 const TYPES = { js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', woff2: 'font/woff2', png: 'image/png' };
 const typeOf = f => TYPES[f.split('.').pop()];
-export const TABS = ['home', 'overview', 'inbox', 'lanes', 'agents', 'map', 'roadmap', 'plan', 'records', 'usage', 'tests', 'docs', 'context', 'slop', 'ledger', 'settings'];
+export const TABS = ['home', 'overview', 'inbox', 'work', 'lanes', 'runs', 'map', 'plan', 'roadmap', 'health', 'usage', 'slop', 'tests', 'context', 'history', 'records', 'ledger', 'docs', 'settings'];
 const hash = s => createHash('sha256').update(s).digest('hex');
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const plain = o => o !== null && typeof o === 'object' && !Array.isArray(o);
@@ -237,7 +243,7 @@ export function createDashboard(o) {
   const primeFor = ps => Promise.all(ps.flatMap(p => [
     stAsync(p).then(x => prime({ files: auditFiles(p, x.items), stats: runsOf(x).filter(r => r.state === 'running').map(r => hbPath(p.state, r.id)) })),
     readA(p.file), readA(path.join(p.state, 'STATUS.md')),
-    prime({ files: [authFile(p.state), vendorCacheFile(p.state), ...(p.policy_targets || []), ...RECORD_FILES.filter(f => f !== 'records' && f !== 'runs').map(f => path.join(p.state, f + '.jsonl'))],
+    prime({ files: [authFile(p.state), vendorCacheFile(p.state), overlapFile(p.state), ...(p.policy_targets || []), ...RECORD_FILES.filter(f => f !== 'records' && f !== 'runs').map(f => path.join(p.state, f + '.jsonl'))],
       stats: [...RECORD_FILES.map(f => path.join(p.state, f + '.jsonl')), ...pausedFiles(p), path.join(p.state, 'tick.lock'), p.state, (p.project_dir || p.file) && rulesFile(p), ...(p.docs || []).map(d => d.path)] })])
     .concat(o.budgetFile ? [readA(o.budgetFile, '{}')] : [], o.quietFile ? [readA(o.quietFile)] : [], o.liveUsage ? [readA(o.liveUsage)] : []));
   const pausedFiles = p => [path.join(path.dirname(path.resolve(p.state)), 'PAUSED'), path.join(p.state, 'PAUSED')];
@@ -321,9 +327,9 @@ export function createDashboard(o) {
 
   // ---------- tab data ----------
   // META-HOME-POLISH R1: what needs you in one project (the Home opens on the first that has some); a broken project counts 0
-  // META-TEND P4: what NEEDS you = every Inbox row but answered Qs and model advice (advisory: it blocks nothing, it waits for a tap)
-  const isNeed = i => i.type !== 'answered' && i.type !== 'advice';
-  const needsOf = async p => { try { return (await inbox(p)).filter(isNeed).length; } catch { return 0; } };
+  // META-TEND P4: what NEEDS you = every Inbox row but answered Qs and model advice (advisory: it blocks nothing, it waits for a tap).
+  // UX review 4: the one count is terms.mjs needsYou - Overview, Inbox, Home and the project picker all use it.
+  const needsOf = async p => { try { return needsYou(await inbox(p)); } catch { return 0; } };
   async function inbox(p) {
     const s = await stAsync(p), items = Object.values(s.items), out = [];
     // META-ADOPT A3: ONE needs-you row while a drafted setup has parts to review (not one per missing thing)
@@ -332,6 +338,13 @@ export function createDashboard(o) {
       if (P?.state === 'open' && P.draft && P.undecided.length)
         out.push({ type: 'setup', id: P.id, project: p.name, title: `Review the draft setup (${P.undecided.length} part${P.undecided.length === 1 ? '' : 's'})`, created: P.created });
     }
+    // GAP-1 (holds.mjs): ONE needs-you row while ALL queued work has waited on one machine-level hold past policy.holds.notice_min
+    // (the tick keeps hold.json; it is gone - and the row with it - once the hold clears)
+    { const h = holdItem(await readHoldAsync(p.state), { min: noticeMin(withDefaults(settingsState(p).view).policy), status: await readA(path.join(p.state, 'STATUS.md')), project: p.name });
+      if (h) out.push(h); }
+    // GAP-8 (handedits.mjs): a generated file edited by hand is no longer regenerated - one row each (take it back / keep mine)
+    for (const e of await handEdits(p.state)) if (!e.kept) out.push({ type: 'handedit', id: 'edit-' + path.basename(e.file), project: p.name, file: e.file.replace(/\\/g, '/'), created: e.edited,
+      title: `${path.basename(e.file)} was edited by hand: Norn no longer regenerates it` });
     // OOTB-R2 N-5: runs held for a login that is down = ONE needs-you row per harness, carrying the command the human runs
     for (const h of loginHolds(p.state, items, { entryOf: x => p.executors?.[x] }))
       out.push({ type: 'login', id: 'login-' + h.harness, project: p.name, harness: h.harness, cls: h.cls, command: h.command, runs: h.runs, line: h.line, created: h.since,
@@ -355,7 +368,20 @@ export function createDashboard(o) {
       out.push({ type: 'unreviewed', id: r.id, name: runName(r), project: p.name, lane: r.data.lane ?? null, state: r.state, outcome: r.end?.outcome ?? r.state, why: r.end?.why ?? r.lost?.why ?? r.kill?.why ?? null });
     return out;
   }
-  function lanes(p, all) { return lanesView(st(p), { all, hbAge: hbAge(p) }).map(l => ({ ...l, project: p.name })); }
+  // GAP-12: the overlap cache (overlap.mjs; the tick / a lane start refresh it) on its running lanes - read only, never a fetch here
+  function lanes(p, all) {
+    const ov = overlapOn(p.policy) ? readJsonS(overlapFile(p.state))?.lanes || {} : {};
+    return lanesView(st(p), { all, hbAge: hbAge(p) }).map(l => ({ ...l, project: p.name, ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}) }));
+  }
+  // gap #9: API billing only - one project's $ per lane: today / 7 days / to date (ended runs = the CLI's figure, running = a live estimate)
+  const apiOn = ps => billingOf(withDefaults(settingsState(ps[0]).view))?.type === 'api';
+  const spendOf = p => spendBreakdown(path.dirname(p.state), { projectsDir, projects: [path.basename(p.state)] })[0] ?? { project: p.name, chats: { today: 0, week: 0 }, lanes: [] };
+  function lanesWithSpend(ps, all) {
+    const rows = ps.flatMap(p => lanes(p, all));
+    if (!apiOn(ps)) return rows;
+    const by = new Map(ps.flatMap(p => spendOf(p).lanes.map(g => [`${p.name}|${g.lane}`, g])));
+    return rows.map(l => { const g = by.get(`${l.project}|${l.name}`); return { ...l, usd: g ? { total: g.total, live: g.live, runs: g.runs } : { total: 0, live: 0, runs: 0 } }; });
+  }
   async function agents(p) {
     const s = settingsState(p), m = withDefaults(s.view);
     const talk = (await sessions.list()).filter(r => !r.project || r.project === p.name);
@@ -368,14 +394,14 @@ export function createDashboard(o) {
       .map(n => { const rf = refused(n.id); return { ...n, project: p.name, ...(gc.has(n.id) ? { guard: gc.get(n.id) } : {}), ...(rf.length ? { refused: rf } : {}) }; });
   }
   // the Ledger tab (LEDGER-UX R1): `count` lines (default 100, max 2000) ending `offset` lines before the end ("show older" pages);
-  // runs = the run ids the Agents tab lists, so the tab links only those
+  // runs = the run ids the Runs page lists, so the tab links only those
   async function ledgerPage(p, url) {
     const n = url.searchParams.get('count'), o = url.searchParams.get('offset');
     const count = Math.min(2000, Math.max(1, Number.parseInt(n ?? '', 10) || 100)), offset = Math.max(0, Number.parseInt(o ?? '', 10) || 0);
     const all = p.ledger ? await tail(p.ledger, Infinity) : [], end = Math.max(0, all.length - offset), start = Math.max(0, end - count);
     return { file: p.ledger ?? null, ledger: all.slice(start, end), total: all.length, count, offset, more: start > 0, runs: [...shownRunIds(runsOf(st(p)))] };
   }
-  // the lane -> agent map (LANE-MAP-DESIGN 1): built from the fold + the agents tree the Agents tab already reads
+  // the lane -> agent map (LANE-MAP-DESIGN 1): built from the fold + the agents tree the Runs page already reads
   async function map(p, url) {
     const more = new Set((url.searchParams.get('more') || '').split(',').map(x => x.trim()).filter(Boolean));
     return { project: p.name, ...mapGraph(st(p), { all: url.searchParams.get('all') === '1', more, tree: await agents(p), deliverables: deliverablesOf(p).rows }) };
@@ -439,8 +465,9 @@ export function createDashboard(o) {
     // billing modes (lib/billing.mjs): the mode in words; API billing = the last 24 h of spend vs the daily $ cap, no weekly guard
     const bm = billingOf(m), b = bm ? { name: bm.name, label: bm.label, type: bm.type } : null;
     if (bm?.type === 'api') {
-      const s = spendDay(path.dirname(p.state)), cap = usdCap(m);
-      return { ...parsed, source: 'api', billing: { ...b, usd: s.usd, runs: s.runs, cap }, weeklyStopPct: null, weeklyUsed: null, resetAt: null, guard: cap !== null && s.usd >= cap ? 'STOP' : 'ok' };
+      // gap #9: ended runs + running runs (live estimate) + the dashboard chats; live = the running runs' $ by run id (Running table)
+      const s = spendDay(path.dirname(p.state), Date.now(), { projectsDir }), cap = usdCap(m);
+      return { ...parsed, source: 'api', billing: { ...b, usd: s.usd, runs: s.runs, ended_usd: s.ended_usd, live_usd: s.live_usd, live_runs: s.live_runs, chat_usd: s.chat_usd, chat_turns: s.chat_turns, live: s.live, cap }, weeklyStopPct: null, weeklyUsed: null, resetAt: null, guard: cap !== null && s.usd >= cap ? 'STOP' : 'ok' };
     }
     return { ...parsed, source: fresh ? 'live' : 'estimate', billing: b, estimate: { weekly: parsed.weekly, rate: parsed.rate, cap: parsed.cap },
       weeklyStopPct: stop, weeklyUsed: used ?? null, resetAt: nextReset(parseReset(m.reset)),
@@ -472,7 +499,7 @@ export function createDashboard(o) {
     const burners = tree.flatMap(n => [n, ...(n.children || [])]).filter(n => n.burn30 > 0)
       .map(n => ({ id: n.id, project: n.project, lane: n.lane ?? null, burn30: n.burn30, pct_per_h: perPct ? Math.round((n.burn30 * 2 / perPct) * 100) / 100 : null }))
       .sort((a, b) => b.burn30 - a.burn30).slice(0, 5);
-    return { now: iso(), projects: ps.map(p => p.name), needs_you: needs.length, needs,
+    return { now: iso(), projects: ps.map(p => p.name), needs_you: needsYou(needs), needs,
       running: { claude: { n: claude, cap: m.max_claude_workers ?? null }, codex: { n: codex, cap: m.max_codex ?? null }, lanes: running },
       burn: { usage: usage(ps[0], m), top: burners, executors: providerUsage(ps) },
       paused: ps.some(p => pausedFiles(p).some(existsS)), checkin_locked: ps.some(p => lockFresh(p)),
@@ -562,12 +589,13 @@ export function createDashboard(o) {
       try { parts[i].advice = parts[i].classes.error ? { error: parts[i].classes.error } : adviceFor(p, parts[i].classes, now); } catch (e) { parts[i].advice = { error: String(e.message).slice(0, 200) }; }
       try { parts[i].replay = JSON.parse(fs.readFileSync(replayReportFile(p.state), 'utf8')); } catch { parts[i].replay = null; }
     });
+    if (apiOn(ps)) ps.forEach((p, i) => { try { parts[i].spend = spendOf(p); } catch (e) { parts[i].spend = { error: String(e.message).slice(0, 200) }; } });   // gap #9
     const v = { parts, ms: Number(process.hrtime.bigint() - t0) / 1e6, account_refresh: { running: !!acct.running, started: acct.started, last: acct.last, cache: accountCacheFile } };
     costViews.set(key, { at: Date.now(), v });
     return { ...v, cached: false };
   }
   const docsList = p => (p.docs || []).map((d, i) => ({ i, tab: d.tab, path: d.path, exists: existsS(d.path) }));
-  // META-UX-BUILD S1: the Instructions tab and the Guard read ONE instruction scan per project, never run in a request: the last view
+  // META-UX-BUILD S1: Context and Slop read ONE instruction scan per project, never run in a request: the last view
   // is served at once (from memory, else <state>/instructions-view.json, so a restart is not cold) and, once older than o.insTtlMs
   // (60 s), rebuilt by a worker thread (lib/guard-scan.mjs, this server's own home + machine) - one rebuild at a time per project.
   // A new view, or the end of a rebuild a page was shown as "refreshing", reaches the page as the stream's derived event (in the sig).
@@ -716,19 +744,12 @@ export function createDashboard(o) {
     }
     return c.val ? { ...c.val, age_min: Math.max(0, Math.round((Date.now() - Date.parse(c.val.at)) / 60000)) } : null;
   }
-  // the run's NOTES end marker - only one written since this run started: a lane's notes file outlives its runs, so a resumed
-  // run would otherwise wear the previous run's `## HANDOFF` chip while it works (META-VISUAL-B S1 feed-header bug)
-  async function notesMarker(f, since) {   // META-DASH-ASYNC R1: fs.promises (the head is built every feed poll)
-    if (!f) return null;
+  // the run's own result (gap #3: `norn done`, <state>/results/RUN-n/result.json) - its outcome chip (DONE / STOPPED / HANDOFF) once
+  // the worker wrote it; never a NOTES line (a lane's notes outlive its runs and are a log, not a control channel)
+  async function resultMarker(state, run) {   // META-DASH-ASYNC R1: fs.promises (the head is built every feed poll)
     try {
-      const fh = await fs.promises.open(f, 'r');
-      try {
-        const fst = await fh.stat();
-        if (Number.isFinite(since) && fst.mtimeMs < since) return null;
-        const size = fst.size, n = Math.min(size, 4096), b = Buffer.alloc(n); await fh.read(b, 0, n, size - n);
-        const last = b.toString('utf8').split(/\r?\n/).map(x => x.trim()).filter(Boolean).at(-1) ?? '';
-        return last.match(/^## (DONE|STOPPED|HANDOFF)\b/)?.[1] ?? null;
-      } finally { await fh.close(); }
+      const j = JSON.parse(await fs.promises.readFile(resultPath(state, run), 'utf8'));
+      return j?.run === run && ['done', 'stopped', 'handoff'].includes(j.outcome) ? j.outcome.toUpperCase() : null;
     } catch { return null; }
   }
   // META-DASH-ASYNC R1 (DEC-338): a feed poll runs on a timer, outside any request - each source call reads on fs.promises in a
@@ -742,7 +763,7 @@ export function createDashboard(o) {
       ended: () => inSnap(async () => (await now())?.state !== 'running'),
       head: ({ ctx, peak, window }) => inSnap(async () => {
         const [r] = await Promise.all([now(), readA(p.file), o.budgetFile ? readA(o.budgetFile, '{}') : null]);
-        const d = r.data || {}, end = r.end || {}, t1 = r.state === 'running' ? Date.now() : Date.parse(r.updated), marker = await notesMarker(d.notes, Date.parse(r.created));
+        const d = r.data || {}, end = r.end || {}, t1 = r.state === 'running' ? Date.now() : Date.parse(r.updated), marker = await resultMarker(p.state, r.id);
         return { run: r.id, name: runName(r), project: p.name, lane: d.lane ?? null, kind: d.kind ?? null, role: d.role ?? null, executor: d.executor ?? null,
           model: end.model ?? d.model ?? null, effort: end.effort ?? d.effort ?? null, state: r.state, outcome: end.outcome ?? null, started: r.created,
           elapsed_min: Math.max(0, Math.round((t1 - Date.parse(r.created)) / 60000)), budget_min: d.budget_min ?? null, ctx, ctx_peak: peak ?? null,
@@ -899,7 +920,7 @@ export function createDashboard(o) {
       ruled: items.filter(i => i.kind === 'decision' && new Date(i.created).toDateString() === today).sort(byNew).slice(0, 6)
         .map(d => ({ id: d.id, text: d.data.question ? `${d.data.question}: ${d.data.choice ?? ''}` : d.data.choice ?? d.data.text ?? '', created: d.created, state: d.state })),
       orders: items.filter(i => i.kind === 'directive' && i.state === 'active').sort(byNew).slice(0, 8).map(d => ({ id: d.id, text: d.data.text ?? '', created: d.created })) };
-    return { project: p.name, now: iso(), events, needs_you: events.filter(e => e.cat === 'needs').length, status, side };
+    return { project: p.name, now: iso(), events, needs_you: needsYou(needs), approvals: events.filter(e => e.kind === 'approval' && e.state === 'pending').length, status, side };
   }
   // GET /api/file?project=&path=: an image the thread shows inline, served only from the allow-listed roots - the project root, its
   // state dir, and the worktree + NOTES folder of each of its runs (shots live beside the work that made them). Real paths are compared
@@ -1189,10 +1210,23 @@ data: ${JSON.stringify(l)}
       try { const r = await newLaneAsync(p, { name: data.lane === undefined ? FIRST_LANE : String(data.lane), task: text, by: 'dashboard' }); await viewsA(p); return { ok: true, ...r }; }
       catch (e) { if (e instanceof LaneError) throw fail(e.code === 1 ? 500 : 400, e.message); if (e instanceof RecordError) throw fail(409, e.message); throw e; }
     }
-    if (route === '/api/directive') return rec(p, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text: str(data.text, 'Directive', 4000), via: 'dashboard' } });
+    if (route === '/api/directive') {   // gap #5: a restatement of an active directive = 409 unless new: true (the page asks, then sends new: true)
+      const text = str(data.text, 'Directive', 4000), dup = dupOf(st(p).items, text);
+      if (dup && data.new !== true) throw fail(409, dupMessage(dup, 'new: true'));
+      return rec(p, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text, via: 'dashboard', ...(dup ? { distinct_from: [dup.id] } : {}) } });
+    }
     if (route === '/api/directive/revoke') return rec(p, { kind: 'directive', ev: 'revoke', id: String(data.id), by: 'dashboard', data: {} });
     if (route === '/api/decision/overrule') return rec(p, { kind: 'decision', ev: 'overrule', id: String(data.id), by: 'dashboard', data: { text: str(data.text, 'Overrule text', 4000), ...(data.rework_lane ? { rework_lane: String(data.rework_lane) } : {}) } });
     if (route === '/api/lane/archive') return rec(p, { kind: 'lane', ev: data.unarchive === true ? 'unarchive' : 'archive', id: 'L:' + String(data.lane), by: 'dashboard', data: {} });
+    if (route === '/api/handedit') {   // GAP-8: "Let Norn take it back" (a .bak of the hand text, then the views rewritten) or "Keep my version"
+      if (!['takeback', 'keep'].includes(data.choice)) throw fail(400, 'choice must be takeback or keep');
+      if (typeof data.file !== 'string' || !data.file) throw fail(400, 'file is required');
+      try {
+        if (data.choice === 'keep') return { ok: true, ...(await keepEdit(p.state, data.file)) };
+        const r = await takeBack(p.state, data.file), v = await viewsA(p);
+        return { ok: true, ...r, regenerated: v.written.some(f => path.resolve(f) === path.resolve(r.file)) };
+      } catch (e) { if (e.code === 409) throw fail(409, e.message); throw e; }
+    }
     if (route === '/api/pause') {
       if (typeof data.paused !== 'boolean') throw fail(400, 'paused must be boolean');
       const f = path.join(p.state, 'PAUSED');
@@ -1298,8 +1332,7 @@ data: ${JSON.stringify(l)}
     const updated = applySettings(s.view, changes, exExtra(p)), next = onlyChanged(s.view, changes, updated), parts = split(next), written = [];
     const was = withDefaults(s.view).policy.cadence.checkin_interval_min, now = updated.policy.cadence.checkin_interval_min;
     if (await writeBudgetAsync(o.budgetFile, s.budget, next)) written.push(o.budgetFile);
-    // a billing / usage-guard change reaches the runs already queued (they keep a copy of the budget they were queued with)
-    const requeued = USAGE_KEYS.some(k => k in changes) ? refreshQueued(path.dirname(p.state), { ...s.budget, ...parts.budget }).length : 0;
+    // GAP-2: a budget change reaches the runs already queued by itself - the queue fill reads the budget in force (runs.mjs liveBudget)
     if (JSON.stringify(parts.policy) !== JSON.stringify(s.proj.policy ?? {})) { await atomicA(p.file, JSON.stringify({ ...s.proj, policy: parts.policy }, null, 2) + '\n'); written.push(p.file); }
     let decision = null;
     if (prof) {
@@ -1307,7 +1340,7 @@ data: ${JSON.stringify(l)}
       decision = (await rec(p, { kind: 'decision', ev: 'create', by: 'dashboard', data: { lane: 'settings', question: 'caps profile', choice: `${prof.label} (${profile.cost})`,
         why: `saved from Settings: ${from} setting(s) from the profile${own.length ? `, ${own.length} of the owner's own` : ''}`, profile: prof.name, cost: profile.cost, values, own } })).id;
     }
-    return { ok: true, written, decision, requeued, regenerated: await regenerate(p, updated), gen: await genA(p), interval: now !== was ? now : null };   // DEC-362: sources, then norn gen
+    return { ok: true, written, decision, regenerated: await regenerate(p, updated), gen: await genA(p), interval: now !== was ? now : null };   // DEC-362: sources, then norn gen
   }
 
   // a remote device's request runs inside writeOrigin (records stamp via remote:<device>); cleared when it ends (no stamp leaks into
@@ -1351,7 +1384,7 @@ data: ${JSON.stringify(l)}
         }
         if (route === '/') return send(200, (await readA(path.join(DASH, 'index.html'))).replace('__TOKEN__', JSON.stringify(token)).replace('__REMOTE__', JSON.stringify(who.device ? { device: who.device.id, name: who.device.name } : null)), 'text/html; charset=utf-8');
         if (route === '/api/remote' && remote) return send(200, remoteView(who));
-        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
+        if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/terms.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
         const vm = route.match(/^\/vendor\/([a-z0-9.-]+)$/);   // pinned browser libraries + font (vendor/VENDOR.md), allowlist only
         if (vm && VENDOR.includes(vm[1])) return send(200, await fs.promises.readFile(path.join(DASH, 'vendor', vm[1])), typeOf(vm[1]));
         const nm = route.match(/^\/norn\/([a-z.]+)$/);   // the Norn look's modules + stylesheet, allowlist only
@@ -1363,8 +1396,8 @@ data: ${JSON.stringify(l)}
         if (route === '/api/adopt/repos') return send(200, { repos: await reposNear() });
         if (route === '/api/adopt') return send(200, await adoptView(one(url)));
         if (route === '/api/overview') return send(200, await overview(pick(url, { all: true })));
-        if (route === '/api/inbox') return send(200, { items: (await Promise.all(pick(url, { all: true }).map(inbox))).flat() });
-        if (route === '/api/lanes') { const all = url.searchParams.get('all') === '1'; return send(200, { lanes: pick(url, { all: true }).flatMap(p => lanes(p, all)) }); }
+        if (route === '/api/inbox') { const items = (await Promise.all(pick(url, { all: true }).map(inbox))).flat(); return send(200, { items, needs_you: needsYou(items) }); }
+        if (route === '/api/lanes') { const all = url.searchParams.get('all') === '1'; return send(200, { lanes: lanesWithSpend(pick(url, { all: true }), all) }); }
         if (route === '/api/agents') { const ps = pick(url, { all: true }); return send(200, { tree: (await Promise.all(ps.map(agents))).flat(), queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) }); }
         if (route === '/api/map') return send(200, await map(one(url), url));
         if (route === '/api/deliverables') {

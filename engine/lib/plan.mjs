@@ -167,6 +167,8 @@ export function holdWords(term, { runs = [], now = Date.now(), label = labelOf }
   if ((m = t.match(/^usage: weekly ([\d.]+) % >= guard ([\d.]+) %$/))) return `held: weekly usage at the stop (${m[1]} % of ${m[2]} %)`;
   if (t.startsWith('cap ') || t.startsWith('cap:')) return 'waits for a worker slot';
   if ((m = t.match(/^worktree held by (\S+)/))) return `waits for its folder (${/^RUN-\d+$/.test(m[1]) ? name(m[1]) : 'another run'} is writing there)`;
+  if ((m = t.match(/^lane worktree \S+ held by (\S+)/))) return `waits for its lane's folder (${/^RUN-\d+$/.test(m[1]) ? name(m[1]) : 'another run'} is writing there)`;
+  if ((m = t.match(/^merge slots full: (\d+) merge/))) return `waits for a merge slot (${m[1]} merge${m[1] === '1' ? '' : 's'} running)`;   // GAP-6
   if (/^MERGE /.test(t)) return 'held: its lane is still writing (a merge needs a prepared merge brief)';
   if (t.startsWith('labels ')) return 'offered to another machine';
   if (t.startsWith('resources:')) return 'held: CPU / memory gate';
@@ -190,7 +192,8 @@ export function forecastOf({ status = '', budget = {}, now = Date.now(), queuedC
     lineAt: null, linePre: '', linePost: '' };
   const at = (pre, ms, post = '') => { f.lineAt = new Date(ms).toISOString(); f.linePre = pre; f.linePost = post; f.line = `${pre}${dayClock(ms, now)}${post}`; };
   // API billing (billing.mjs): STATUS says the last 24 h of spend and the daily cap; no weekly limit to forecast
-  const api = status.match(/^- billing: API .*$/m), usd = api?.[0].match(/api spend last 24 h \$([\d.,]+)/), capM = api?.[0].match(/of the \$([\d.,]+) daily cap/);
+  // the total the cap counts: "= $T" after the parts (ended + running + chats, gap #9), else the one figure of an older STATUS
+  const api = status.match(/^- billing: API .*$/m), usd = api?.[0].match(/api spend last 24 h [^;]*?= \$([\d.,]+)/) ?? api?.[0].match(/api spend last 24 h \$([\d.,]+)/), capM = api?.[0].match(/of the \$([\d.,]+) daily cap/);
   if (api) { f.api = { usd: usd ? n(usd[1]) : null, cap: capM ? n(capM[1]) : null }; f.over = null; f.weekly = null; f.stop = null; f.headroom = null;
     const $ = v => `$${(v ?? 0).toFixed(2)}`;
     f.line = f.api.cap === null ? `API billing: ${$(f.api.usd)} in the last 24 h, no daily cap` : f.api.usd >= f.api.cap ? `API daily cap reached: ${$(f.api.usd)} of ${$(f.api.cap)} in 24 h - new Claude work waits` : `API billing: ${$(f.api.usd)} of the ${$(f.api.cap)} daily cap in the last 24 h`;
@@ -430,8 +433,7 @@ export function buildPlan({ project = null, runs = [], ready = [], status = '', 
     const row = rowOf.get(id);
     if (!row) return 'waits to start';
     if (row.ready) return 'starts next';
-    if (row.terms.some(t => t.startsWith('worktree held by'))) return 'waits for the main checkout';
-    return words(row.terms[0]);
+    return words(row.terms.find(t => t.startsWith('merge slots full')) || row.terms[0]);   // GAP-6: a merge waits for a merge slot first
   };
   const live = runs.filter(r => ['running', 'claimed'].includes(r.state) && isMergeStage(r.data.stage));
   const qm = queued.filter(q => isMergeStage(q.stage)), used = new Set();

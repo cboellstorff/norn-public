@@ -1,8 +1,10 @@
 // NORN-WATCH S5 (DEC-683): the Windows half of "a run's process tree dies with the run" (jobguard.mjs). Compiled on first use with
 // the csc.exe of .NET Framework 4 (in every Windows 10 / 11), cached by source hash. Three verbs:
 //   hold <pid> <name>        create the named Job Object <name> (KILL_ON_JOB_CLOSE | BREAKAWAY_OK), put <pid> (the run's supervisor)
-//                            in it, print "ok", then wait for stdin EOF (the supervisor ended or died) and exit: the handle closes,
-//                            and while KILL_ON_JOB_CLOSE is still set the job kills everything in it.
+//                            in it, print "ok", then wait for stdin EOF or the exit of <pid> itself, whichever comes first (the
+//                            supervisor ended or died) and exit: the handle closes, and while KILL_ON_JOB_CLOSE is still set the job
+//                            kills everything in it. The process wait: the hold ends with its supervisor however the pipe behaves
+//                            (a hold seen alive after its supervisor = ci-suite LEAK RED, CI 44141688462 / 43996467416).
 //   reap <name> <keep-pid>   kill every process of the job but <keep-pid>, then clear KILL_ON_JOB_CLOSE (what the supervisor starts
 //                            after its end - tick, auto-resume - lives on); prints "reaped <n> <pid,pid>".
 //   spawn <cwd> <cmdline>    start <cmdline> outside the caller's job (CREATE_BREAKAWAY_FROM_JOB, detached, no window); prints
@@ -28,9 +30,10 @@ static class JobGuard {
   [DllImport("kernel32", SetLastError = true)] static extern IntPtr OpenProcess(int a, bool inh, int pid);
   [DllImport("kernel32", SetLastError = true)] static extern bool TerminateProcess(IntPtr p, uint code);
   [DllImport("kernel32", SetLastError = true)] static extern bool CloseHandle(IntPtr h);
+  [DllImport("kernel32", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr h, uint ms);
   [DllImport("kernel32", SetLastError = true, CharSet = CharSet.Unicode)] static extern bool CreateProcess(string app, StringBuilder cmd, IntPtr pa, IntPtr ta, bool inh, uint flags, IntPtr env, string cwd, ref STARTUPINFO si, out PI pi);
   const uint KILL_ON_CLOSE = 0x2000, BREAKAWAY_OK = 0x800;
-  const int EXTENDED = 9, PID_LIST = 3, JOB_ALL = 0x1F001F, SET_QUOTA = 0x0100, TERMINATE = 0x0001;
+  const int EXTENDED = 9, PID_LIST = 3, JOB_ALL = 0x1F001F, SET_QUOTA = 0x0100, TERMINATE = 0x0001, SYNCHRONIZE = 0x00100000;
 
   static void Limits(IntPtr job, uint flags) {
     var e = new EXT(); e.Basic.LimitFlags = flags;
@@ -51,12 +54,14 @@ static class JobGuard {
     IntPtr job = CreateJobObject(IntPtr.Zero, name);
     if (job == IntPtr.Zero) throw new Win32Exception();
     Limits(job, KILL_ON_CLOSE | BREAKAWAY_OK);
-    IntPtr p = OpenProcess(SET_QUOTA | TERMINATE, false, pid);
+    IntPtr p = OpenProcess(SET_QUOTA | TERMINATE | SYNCHRONIZE, false, pid);
     if (p == IntPtr.Zero || !AssignProcessToJobObject(job, p)) throw new Win32Exception();
-    CloseHandle(p);
     Console.Out.WriteLine("ok"); Console.Out.Flush();
-    while (Console.In.ReadLine() != null) { }
-    return 0;   // EOF: the handle closes with this process
+    var reader = new System.Threading.Thread(() => { while (Console.In.ReadLine() != null) { } Environment.Exit(0); });
+    reader.IsBackground = true; reader.Start();
+    WaitForSingleObject(p, 0xFFFFFFFF);   // the held process exited
+    Environment.Exit(0);   // EOF or the held process gone: the handles close with this process (Exit: the reader thread may sit in a read)
+    return 0;
   }
 
   static int Reap(string name, int keep) {

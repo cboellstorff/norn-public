@@ -233,6 +233,9 @@ export function renderDigest(d, { level = 2 } = {}) {
   // META-CONTROLLER C4: first, while any lane is held - the check-in skips these lanes this tick (no write; its writes there exit 5)
   if (s.held) sec('0 HELD (skip): the controller works on these lanes', s.held, r => `- ${r.id} HELD (skip) by ${r.who} until ${String(r.until).slice(11, 16)}Z (${r.min} min)`
     + `${r.why ? ': ' + r.why : ''}`);
+  // GAP-1: first, while ALL queued work waits on one machine-level hold - no check-in clears it: report it, the owner has the Inbox item
+  if (s.hold) sec('0b EVERYTHING HELD (report it; only the owner clears it)', s.hold, r => `- HOLD ${r.runs.length} queued${r.scope === 'claude' ? ' Claude' : ''} run(s)`
+    + `${r.merges ? ` incl. ${r.merges} merge(s)` : ''} held since ${r.since} (${r.min} min) on "${r.term}": ${r.reason}; fix: ${r.fix}${r.clears ? `; or it clears ${r.clears}` : ''}`);
   sec('1 Finished, not on main', s.finished, r => r.kind === 'deliverable'
     ? `- ${r.id} ${r.lane ?? '-'} ${r.branch ?? '-'} ${r.why}${r.days !== null ? ` ${r.days} d` : ''}${r.run ? ` (${r.run})` : ''}: ${String(r.what).slice(0, 120)}`
     : `- ${r.id} ${r.lane ?? '-'}${r.stage ? ' ' + r.stage : ''} ${r.branch ?? '?'} ${r.why}; review ${r.review}; ended ${r.ended} (${r.hours} h)`);
@@ -255,5 +258,8 @@ export function renderDigest(d, { level = 2 } = {}) {
   if (s.advice) sec('10 Model advice', s.advice, r => '- ' + r.line);   // META-TEND P4: one tap on the Inbox card applies or keeps each
   // META-DOD 3: read the findings, then review the review run (it releases the build it holds) or withdraw / requeue the build
   if (s.critique) sec('11 Plan reviews to read', s.critique, r => `- ${r.id} review of ${r.of} (${r.plan}): ${r.outcome === 'done' ? '' : r.outcome + ', '}${r.findings ?? '?'} finding${r.findings === 1 ? '' : 's'} in ${r.file}; holds ${r.holds.length ? r.holds.join(', ') : 'no queued run'}`);
+  // gap #5: one active directive restating another; the check-in folds the pair (CHECKIN.md 2b), the row leaves when one is not active
+  if (s.dupdirs) sec('12 Possible duplicate directives', s.dupdirs, r => `- possible duplicate directives: ${r.older} ~ ${r.newer} (${r.why}): fold them, `
+    + `e.g. META rec supersede ${r.older} --by ${r.newer} --why "restated by ${r.newer}"`);
   return L.join('\n') + '\n';
 }
