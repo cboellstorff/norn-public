@@ -193,9 +193,7 @@ test('C2 the Home tab at 390 x 844 (phone, both grounds): document scrollWidth =
     const long = 'x'.repeat(300), cmd = 'git push --force-with-lease origin feat/dash-phone-header-and-a-very-long-branch-name-that-does-not-break';
     fs.writeFileSync(threadFile(f.pa.state), [{ ts: T(0), seg: 1, kind: 'owner', text: `look at ${long}` }, { ts: T(1), seg: 1, kind: 'text', text: `run \`${cmd}\` ${long} C:/nowhere/a-very-long-shot-name-for-the-phone-test.png` }]
       .map(l => JSON.stringify(l)).join('\n') + '\n');
-    let port = null;
-    for (let i = 0; i < 300 && !port; i++) { try { port = Number(fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split(/\r?\n/)[0]) || null; } catch { await new Promise(r => setTimeout(r, 100)); } }
-    assert.ok(port, 'DevTools port');
+    const port = await shotLib.waitDevToolsPort({ browser, profile, child });
     let page = null;
     for (let i = 0; i < 100 && !page; i++) { try { page = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(t => t.type === 'page'); } catch { /* not yet */ } if (!page) await new Promise(r => setTimeout(r, 100)); }
     ws = new WebSocket(page.webSocketDebuggerUrl);

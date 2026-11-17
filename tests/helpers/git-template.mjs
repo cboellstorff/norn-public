@@ -48,7 +48,7 @@ export function fromTemplate(key, build, dest) {
   fs.mkdirSync(dest, { recursive: true });
   fs.cpSync(t.root, dest, { recursive: true, preserveTimestamps: true });
   // the forms a path takes: git config escapes a backslash (\\), a worktree .git file has forward slashes, the data the native form
-  // - and in git's spelling too: git writes a worktree's paths canonical (a Windows 8.3 short TEMP, C:\Users\RUNNER~1\..., comes
+  // - and in git's spelling too: git writes a worktree's paths canonical (a Windows 8.3 short TEMP under RUNNER~1, comes
   // back long), so the template root as given would not match them (CI-RED-7E52345)
   const esc = p => p.split('\\').join('\\\\');
   const real = fs.realpathSync.native(t.root), realDest = fs.realpathSync.native(dest);

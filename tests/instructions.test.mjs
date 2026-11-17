@@ -274,9 +274,7 @@ test('Context at 390 x 844 (phone): document scrollWidth == the viewport width, 
   const child = launchBrowser({ browser, profile, size: [390, 844] });
   let ws;
   try {
-    let port = null;
-    for (let i = 0; i < 300 && !port; i++) { try { port = Number(fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split(/\r?\n/)[0]) || null; } catch { await new Promise(r => setTimeout(r, 100)); } }
-    assert.ok(port, 'DevTools port');
+    const port = await shotLib.waitDevToolsPort({ browser, profile, child });
     let page = null;
     for (let i = 0; i < 100 && !page; i++) { try { page = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(t => t.type === 'page'); } catch { /* not yet */ } if (!page) await new Promise(r => setTimeout(r, 100)); }
     ws = new WebSocket(page.webSocketDebuggerUrl);
