@@ -69,8 +69,9 @@ test('phone: the card in the Inbox, no sideways scroll, Apply and Discard reacha
     fs.mkdirSync(fx, { recursive: true });
     fs.writeFileSync(brief, `- id: ${ids[0]}\n`);
     const long = 'a long rule line that would push a narrow screen sideways if the diff did not wrap '.repeat(3);
-    fs.writeFileSync(notes, ['### `CLAUDE.md:3` - medium - rewrite', '```diff', '--- a/CLAUDE.md', '+++ b/CLAUDE.md', '@@ -3,1 +3,1 @@', '-' + long, '+new', '```',
-      '### `AGENTS.md:9` - medium - remove', '```diff', '--- a/AGENTS.md', '+++ b/AGENTS.md', '@@ -9,1 +8,0 @@', '-gone', '```', '## Findings', `- ${ids[0]}: drafted`].join('\n'));
+    fs.writeFileSync(path.join(f.pa.root, 'CLAUDE.md'), `x\nx\n${long}\n`); fs.writeFileSync(path.join(f.pa.root, 'AGENTS.md'), 'y\n'.repeat(8) + 'gone\n');
+    fs.writeFileSync(notes, ['### `CLAUDE.md:3` - medium - rewrite', '```diff', '--- a/CLAUDE.md', '+++ b/CLAUDE.md', '@@ -2,2 +2,2 @@', ' x', '-' + long, '+new', '```',
+      '### `AGENTS.md:9` - medium - remove', '```diff', '--- a/AGENTS.md', '+++ b/AGENTS.md', '@@ -8,2 +8,1 @@', ' y', '-gone', '```', '## Findings', `- ${ids[0]}: drafted`].join('\n'));
     const run = record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { lane: 'fixall', kind: 'audit', executor: 'fake', brief, notes } });
     record(state, { kind: 'run', ev: 'end', id: run.id, by: 'launcher', data: { outcome: 'done', exit: 0 } });
     const ib = (await f.get('/api/inbox?project=kestrel')).data.items.filter(x => x.type === 'fixresult');

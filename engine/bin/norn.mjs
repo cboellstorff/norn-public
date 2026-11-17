@@ -1678,7 +1678,7 @@ function fixCmd(argv, env, out, err) {
     if (!rows.length) throw new RunError(`${id}: none of the next batch's ids is in ${path.basename(ff)}`);
     const dec = items[d.data.fixall], stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*$/, '');
     const notes = path.join(fixerDir(state), `${id}-${stamp}.md`), brief = notes.replace(/\.md$/, '.brief.md');
-    const text = fixerBrief({ project: project.name, dir: id, dec: dec?.id ?? d.data.fixall, rows, picks: dec?.data?.picks || [] });
+    const text = fixerBrief({ project: project.name, dir: id, dec: dec?.id ?? d.data.fixall, rows, picks: dec?.data?.picks || [], root: project.root });
     fs.mkdirSync(fixerDir(state), { recursive: true });
     fs.writeFileSync(brief, text);
     const o = runSpec({ executor: pick.executor, agent: pick.agent, model: pick.model, effort: pick.effort, lane: FIX_LANE, stage: 'fixer', class: 'docs', brief, worktree: project.root, notes, machine: flags.machine, budget: flags.budget, as: flags.as }, env, w);

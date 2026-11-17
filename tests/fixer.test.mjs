@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fixPlan, fixerBrief, fixResult, briefIds, fixBatch, runsFor } from '../engine/lib/fixer.mjs';
+import { fixPlan, fixerBrief, fixResult, briefIds, briefRows, fixBatch, runsFor } from '../engine/lib/fixer.mjs';
 import { withDefaults } from '../engine/lib/policy.mjs';
 import { main } from '../engine/bin/norn.mjs';
 
@@ -57,12 +57,13 @@ test('the brief is generated: each id with its file:line, fix sentence, ready pa
 });
 
 test('the answer: audit-format hunks + one line per finding; no parsable hunk = failed', () => {
-  const text = ['### `CLAUDE.md:12` - medium - rewrite', '```diff', '--- a/CLAUDE.md', '+++ b/CLAUDE.md', '@@ -12,1 +12,1 @@', '-history 2026-10', '+See notes/history.md.', '```',
-    '### `AGENTS.md:30` - medium - remove', '```diff', '--- a/AGENTS.md', '+++ b/AGENTS.md', '@@ -30,1 +29,0 @@', '-cites DEC-1', '```',
+  const text = ['### `CLAUDE.md:12` - medium - rewrite', '```diff', '--- a/CLAUDE.md', '+++ b/CLAUDE.md', '@@ -11,3 +11,3 @@', ' a', '-history 2026-10', '+See notes/history.md.', ' z', '```',
+    '### `AGENTS.md:30` - medium - remove', '```diff', '--- a/AGENTS.md', '+++ b/AGENTS.md', '@@ -29,2 +29,1 @@', ' a', '-cites DEC-1', '```',
     '## Findings', '- I-1: drafted', '- `T-S-2`: drafted', '- R-3: skipped: no way picked'].join('\n');
-  const r = fixResult(text, ['I-1', 'T-S-2', 'R-3', 'X-4']);
+  const files = { 'CLAUDE.md': 'a\n'.repeat(10) + 'a\nhistory 2026-10\nz\n', 'AGENTS.md': 'a\n'.repeat(29) + 'cites DEC-1\n' };
+  const r = fixResult(text, ['I-1', 'T-S-2', 'R-3', 'X-4'], { readFile: f => files[f] ?? null });
   assert.equal(r.failed, false);
-  assert.deepEqual(r.hunks.map(h => [h.file, h.line]), [['CLAUDE.md', 12], ['AGENTS.md', 30]]);
+  assert.deepEqual(r.hunks.map(h => [h.file, h.line, h.applies]), [['CLAUDE.md', 11, true], ['AGENTS.md', 29, true]]);
   assert.match(r.hunks[0].id, /^[0-9a-f]{12}$/);
   assert.deepEqual(r.status.map(s => [s.id, s.state, s.why]), [['I-1', 'drafted', null], ['T-S-2', 'drafted', null], ['R-3', 'skipped', 'no way picked'], ['X-4', 'missing', null]]);
   assert.equal(fixResult('I could not read the files.', ['I-1']).failed, true);
@@ -157,20 +158,69 @@ test('norn fix start routes the fixer by the PROJECT policy (Settings, as the da
 test('the result card: one per ended fixer run without a verdict - files with their hunks, the status lines; no hunk = failed', () => {
   const w = world({ n: 3, runs: 1 }), notes = '/s/fixer/DIR-9-0.md';
   w.items['RUN-1'].data.notes = notes;
-  const text = ['### `CLAUDE.md:3` - medium - rewrite', '```diff', '--- a/CLAUDE.md', '+++ b/CLAUDE.md', '@@ -3,1 +3,1 @@', '-old', '+new', '```',
-    '### `AGENTS.md:9` - medium - remove', '```diff', '--- a/AGENTS.md', '+++ b/AGENTS.md', '@@ -9,1 +8,0 @@', '-gone', '```', '## Findings', '- I-c16-000: drafted', '- I-c16-001: drafted', '- I-c16-002: skipped: no way picked'].join('\n');
-  const [c] = fixCards(w.items, { readNotes: () => text, readBrief: w.readBrief });
+  const text = ['### `CLAUDE.md:3` - medium - rewrite', '```diff', '--- a/CLAUDE.md', '+++ b/CLAUDE.md', '@@ -2,2 +2,2 @@', ' x', '-old', '+new', '```',
+    '### `AGENTS.md:9` - medium - remove', '```diff', '--- a/AGENTS.md', '+++ b/AGENTS.md', '@@ -8,2 +8,1 @@', ' y', '-gone', '```', '## Findings', '- I-c16-000: drafted', '- I-c16-001: drafted', '- I-c16-002: skipped: no way picked'].join('\n');
+  const files = { 'CLAUDE.md': 'x\nx\nold\n', 'AGENTS.md': 'y\n'.repeat(8) + 'gone\n' }, readFile = f => files[path.basename(f)] ?? null;
+  const [c] = fixCards(w.items, { readNotes: () => text, readBrief: w.readBrief, root: '/r', readFile });
   assert.deepEqual([c.run, c.directive, c.state, c.n, c.files.map(f => f.file)], ['RUN-1', 'DIR-9', 'ready', 2, ['CLAUDE.md', 'AGENTS.md']]);
   assert.deepEqual(c.status.map(s => s.state), ['drafted', 'drafted', 'skipped']);
   assert.equal(fixCards(w.items, { readNotes: () => 'I could not.', readBrief: w.readBrief })[0].state, 'failed');
+  assert.equal(fixCards(w.items, { readNotes: () => text, readBrief: w.readBrief, root: '/r', readFile: () => null })[0].fail, 'no hunk applies', 'the files are not there: nothing applies');
   w.items['DEC-3'] = { id: 'DEC-3', kind: 'decision', state: 'in-force', created: '2026-11-17T08:00:00Z', data: { lane: 'fixall-result', directive: 'DIR-9', run: 'RUN-1', ids: ['I-c16-000'], choice: 'apply' } };
-  assert.equal(fixCards(w.items, { readNotes: () => text, readBrief: w.readBrief }).length, 0, 'a verdict: the card leaves');
+  assert.equal(fixCards(w.items, { readNotes: () => text, readBrief: w.readBrief, root: '/r', readFile }).length, 0, 'a verdict: the card leaves');
   const t = verdictText(c, { choice: 'apply', skip: ['AGENTS.md'], close: 'DEC-3' });
   assert.match(t, /Apply the fixer hunks of RUN-1 \(Fix all DIR-9, DEC-1\): 1 hunk\(s\) in CLAUDE\.md\./);
   assert.match(t, /leave AGENTS\.md as it is/);
   assert.match(t, /`norn rec done DIR-9 --refs DEC-3`/);
   assert.equal(verdictText(c, { choice: 'discard' }), null, 'a discard that closes nothing: no directive');
   assert.match(verdictText(c, { choice: 'discard', close: 'DEC-3' }), /^Then close DIR-9/);
+});
+
+// R2 (controller ruling): "Apply all n" counts only hunks that apply to the file as it is now; one that does not shows "does not apply" with
+// its reason, is left out of n and of the verdict, and its finding stays open (the plan offers it to a later batch).
+import { hunkMisfit } from '../engine/lib/fixer.mjs';
+import { renderTab } from '../engine/dash/ui.mjs';
+
+test('one hunk applies, one does not: the card counts 1, says why for the other, its finding stays open for a later batch', () => {
+  const w = world({ n: 3, runs: 1 });
+  w.items['RUN-1'].data.notes = '/s/fixer/DIR-9-0.md';
+  const brief = ['- id: I-c16-000', '  file: CLAUDE.md:3', '- id: I-c16-001', '  file: AGENTS.md:9', '- id: I-c16-002', '  file: AGENTS.md:20'].join('\n');
+  const files = { 'CLAUDE.md': 'x\r\nx\r\nold\r\n', 'AGENTS.md': 'y\n'.repeat(8) + 'gone\n' }, readFile = f => files[path.basename(f)] ?? null;
+  const text = ['### `CLAUDE.md:3` - medium - rewrite', '```diff', '--- a/CLAUDE.md', '+++ b/CLAUDE.md', '@@ -2,2 +2,2 @@', ' x', '-old', '+new', '```',
+    '### `AGENTS.md:9` - medium - remove', '```diff', '--- a/AGENTS.md', '+++ b/AGENTS.md', '@@ -9,1 +8,0 @@', '-gone', '```',
+    '## Findings', '- I-c16-000: drafted', '- I-c16-001: drafted', '- I-c16-002: skipped: no way picked'].join('\n');
+  const [c] = fixCards(w.items, { readNotes: () => text, readBrief: () => brief, root: '/r', readFile });
+  assert.deepEqual([c.state, c.n, c.bad, c.open], ['ready', 1, 1, ['I-c16-001']], 'Apply all 1; the zero-context hunk does not apply; its finding stays open');
+  const bad = c.files.find(f => f.file === 'AGENTS.md').hunks[0];
+  assert.deepEqual([bad.applies, bad.why], [false, 'no context line (git apply refuses a zero-context hunk)']);
+  assert.equal(c.files.find(f => f.file === 'CLAUDE.md').hunks[0].applies, true, 'CRLF file + exact context: applies');
+  const page = renderTab('inbox', { items: [{ type: 'fixresult', id: 'RUN-1', project: 'k', card: c }] }, { project: 'k' });
+  assert.match(page, /Apply all <span[^>]*>1</);
+  assert.match(page, /does not apply<\/span> no context line/);
+  const t = verdictText(c, { choice: 'apply' });
+  assert.match(t, /: 1 hunk\(s\) in CLAUDE\.md\./); assert.match(t, /leave the block\(s\) that do not apply \(AGENTS\.md:9\)/);
+  // the verdict records the open id: the plan gives it back to the rest (a later batch)
+  w.items['DEC-3'] = { id: 'DEC-3', kind: 'decision', state: 'in-force', created: '2026-11-17T08:00:00Z', data: { lane: 'fixall-result', directive: 'DIR-9', run: 'RUN-1', ids: ['I-c16-000', 'I-c16-002'], open: ['I-c16-001'], choice: 'apply' } };
+  assert.deepEqual(fixPlan(w.items['DIR-9'], w.items, { readBrief: () => brief }).left, ['I-c16-001']);
+});
+
+test('hunkMisfit says why a hunk does not apply: wrong line, wrong counts, a line not as quoted, no file', () => {
+  const f = 'a\nb\nc\nd\n', p = (h, ...l) => ['--- a/f', '+++ b/f', h, ...l].join('\n');
+  assert.equal(hunkMisfit(p('@@ -2,2 +2,2 @@', ' b', '-c', '+C'), f), null);
+  assert.equal(hunkMisfit(p('@@ -1,2 +1,2 @@', ' b', '-c', '+C'), f), 'the old lines are at line 2, not 1');
+  assert.match(hunkMisfit(p('@@ -2,3 +2,2 @@', ' b', '-c', '+C'), f), /^the header says -2,3 \+2 but the hunk has 2 old and 2 new/);
+  assert.match(hunkMisfit(p('@@ -2,2 +2,2 @@', ' b', '-cc', '+C'), f), /^line 3 is not as the hunk quotes it/);
+  assert.equal(hunkMisfit(p('@@ -2,2 +2,2 @@', ' b', '-c', '+C'), null), 'the file is not there');
+});
+
+test('the brief quotes the exact lines now around each finding, its path relative to the root', () => {
+  const b = fixerBrief({ project: 'k', dir: 'DIR-9', dec: 'DEC-1', root: 'C:/r', rows: [{ id: 'I-1', path: 'C:\\r\\docs\\CLAUDE.md', line: 6, why: 'w' }],
+    readFile: () => '\uFEFF' + Array.from({ length: 12 }, (_, i) => `l${i + 1}`).join('\r\n') });
+  assert.match(b, /- id: I-1\n  file: docs\/CLAUDE\.md:6\n/);
+  assert.match(b, /lines now [^\n]*\n    2\| l2\n[^]*    10\| l10$/m);
+  assert.doesNotMatch(b, / {4}1\| | {4}11\| /);
+  assert.match(b, /EXACT CONTEXT/);
+  assert.deepEqual(briefRows(b), [{ id: 'I-1', file: 'docs/CLAUDE.md', line: 6 }]);
 });
 
 // ---- the dash: Send -> the findings file + "starting"; a fixer run's end -> ONE result card in the Inbox; Apply (a skipped file) = ONE
@@ -194,8 +244,9 @@ test('the dash: Send keeps the findings file; a fixer run\'s end is ONE Inbox ca
     // a fixer run of ONE finding (a batch of 1), ended with a two-file answer
     const fx = path.join(state, 'fixer'), brief = path.join(fx, `${dir}-1.brief.md`), notes = path.join(fx, `${dir}-1.md`), first = kept[0].id;
     fs.writeFileSync(brief, `- id: ${first}\n`);
-    fs.writeFileSync(notes, ['### `CLAUDE.md:3` - medium - rewrite', '```diff', '--- a/CLAUDE.md', '+++ b/CLAUDE.md', '@@ -3,1 +3,1 @@', '-old', '+new', '```',
-      '### `AGENTS.md:9` - medium - remove', '```diff', '--- a/AGENTS.md', '+++ b/AGENTS.md', '@@ -9,1 +8,0 @@', '-gone', '```', '## Findings', `- ${first}: drafted`].join('\n'));
+    fs.writeFileSync(path.join(f.pa.root, 'CLAUDE.md'), 'x\nx\nold\n'); fs.writeFileSync(path.join(f.pa.root, 'AGENTS.md'), 'y\n'.repeat(8) + 'gone\n');
+    fs.writeFileSync(notes, ['### `CLAUDE.md:3` - medium - rewrite', '```diff', '--- a/CLAUDE.md', '+++ b/CLAUDE.md', '@@ -2,2 +2,2 @@', ' x', '-old', '+new', '```',
+      '### `AGENTS.md:9` - medium - remove', '```diff', '--- a/AGENTS.md', '+++ b/AGENTS.md', '@@ -8,2 +8,1 @@', ' y', '-gone', '```', '## Findings', `- ${first}: drafted`].join('\n'));
     const run = record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { lane: 'fixall', kind: 'audit', executor: 'fake', brief, notes } });
     const s2 = (await f.get('/api/guard?project=kestrel&part=summary')).data;
     assert.deepEqual([s2.sent[0].fixer.at, s2.sent[0].fixer.run], ['running', run.id]);

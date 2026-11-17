@@ -343,7 +343,7 @@ export function createDashboard(o) {
     // META-TEND P5: the vendor audit's hunks - one card each (accept = a decision + a directive: the check-in applies it; decline = a decision)
     for (const c of auditsView(p, s.items).cards) out.push({ type: 'audit', id: c.id, project: p.name, title: c.why, card: c, created: null });
     // META-UX-BUILD S7: the fixer's result - ONE card per run (every file, every hunk; Apply all / Skip this file / Discard)
-    for (const c of fixCards(s.items, { batch: fixBatch(withDefaults(settingsState(p).view).policy) })) out.push({ type: 'fixresult', id: c.run, project: p.name, title: `Fixer result ${c.run}: ${c.n} hunk(s) in ${c.files.length} file(s)`, card: c, created: c.created });
+    for (const c of fixCards(s.items, { batch: fixBatch(withDefaults(settingsState(p).view).policy), root: p.root })) out.push({ type: 'fixresult', id: c.run, project: p.name, title: `Fixer result ${c.run}: ${c.n} hunk(s) in ${c.files.length} file(s)`, card: c, created: c.created });
     for (const q of items.filter(i => i.kind === 'question' && i.state === 'answered')) out.push({ type: 'answered', id: q.id, project: p.name, lane: q.data.lane, title: q.data.title, answer: q.answer, updated: q.updated });
     for (const l of items.filter(i => i.kind === 'lane' && i.state === 'parked')) out.push({ type: 'parked', id: l.id, project: p.name, why: l.park?.why ?? null, q: l.park?.q ?? null });
     // META-TEND P4: model advice = one card each, one tap applies the Settings change or keeps it (both a decision record)
@@ -659,7 +659,7 @@ export function createDashboard(o) {
     const live = Object.values(st(p).items).filter(i => i.kind === 'directive' && i.state === 'active' && i.data?.fixall && Array.isArray(i.data.findings));
     if (!live.length) return { rows, sent: [], cards: [] };
     try { keepFindings(p.state, st(p).items, rows); } catch { /* read-only state: the fixer waits for the next draw */ }   // S7: the rows `norn fix start` briefs
-    const items = st(p).items, batch = fixBatch(withDefaults(settingsState(p).view).policy), cards = fixCards(items, { batch });
+    const items = st(p).items, batch = fixBatch(withDefaults(settingsState(p).view).policy), cards = fixCards(items, { batch, root: p.root });
     const by = new Map();
     for (const d of live) for (const id of d.data.findings) if (!by.has(id)) by.set(id, d.data.fixall);
     const out = rows.map(r => (by.has(r.id) ? { ...r, sent: by.get(r.id) } : r));
@@ -1221,14 +1221,14 @@ data: ${JSON.stringify(l)}
     }
     if (route === '/api/fixresult') {   // S7 (REPORT s.3 step 4): the result card's tap - Apply all (minus skipped files) or Discard = ONE decision (+ ONE directive: the audit accept path)
       if (!['apply', 'discard'].includes(data.choice)) throw fail(400, 'choice must be apply or discard');
-      const items = st(p).items, batch = fixBatch(withDefaults(settingsState(p).view).policy), c = fixCards(items, { batch }).find(x => x.run === String(data.run));
+      const items = st(p).items, batch = fixBatch(withDefaults(settingsState(p).view).policy), c = fixCards(items, { batch, root: p.root }).find(x => x.run === String(data.run));
       if (!c) throw fail(409, 'That result is decided already. Reload.');
       if (data.choice === 'apply' && c.state === 'failed') throw fail(409, 'This run drafted no hunk: there is nothing to apply.');
       const skip = (Array.isArray(data.skip) ? data.skip.map(String) : []).filter(x => c.files.some(f => f.file === x));
-      const kept = c.files.filter(f => !skip.includes(f.file)).reduce((n, f) => n + f.hunks.length, 0), choice = data.choice === 'apply' && kept ? 'apply' : 'discard';
-      const d = items[c.directive], pl = fixPlan(d, items, { batch, readBrief: readRunBrief }), done = new Set([...pl.resolved, ...c.ids]);
+      const kept = c.files.filter(f => !skip.includes(f.file)).reduce((n, f) => n + f.n, 0), choice = data.choice === 'apply' && kept ? 'apply' : 'discard';
+      const d = items[c.directive], pl = fixPlan(d, items, { batch, readBrief: readRunBrief }), open = c.open || [], took = c.ids.filter(x => !open.includes(x)), done = new Set([...pl.resolved, ...took]);
       const closes = d.state === 'active' && (d.data.findings || []).every(x => done.has(x));
-      const r = await rec(p, { kind: 'decision', ev: 'create', by: 'dashboard', data: { lane: 'fixall-result', directive: c.directive, run: c.run, ids: c.ids, choice, skipped_files: skip,
+      const r = await rec(p, { kind: 'decision', ev: 'create', by: 'dashboard', data: { lane: 'fixall-result', directive: c.directive, run: c.run, ids: took, ...(open.length ? { open } : {}), choice, skipped_files: skip,
         question: `Fixer result ${c.run} (${c.directive}): ${c.n} hunk(s) in ${c.files.length} file(s)`, why: choice === 'apply' ? `The owner applies ${kept} hunk(s)${skip.length ? `; skipped: ${skip.join(', ')}` : ''}.` : 'The owner discards the drafts: nothing changes.' } });
       const text = verdictText(c, { choice, skip, close: closes ? r.id : null });
       const x = text ? await rec(p, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text: text.slice(0, 4000), via: 'dashboard' } }) : null;
