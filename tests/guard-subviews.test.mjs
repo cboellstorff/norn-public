@@ -90,6 +90,20 @@ test('the Guard page: his section, 4 numbers, 4 sub-views, then the list - the e
   assert.match(renderTab('slop', { ...base, sub: 'rules', parts_loading: true }, {}), /id="slop-sub-loading"/);
 });
 
+test('UX review 5: the Slop header is one status line + one primary action (Fix all); call / mute / pop-up settings in the "More" menu; same information', () => {
+  const g = bigGuard(), s = guardSummary(g), base = { ...s, limit: SUB_CAP, offer: 3, fixable: 3 };
+  const fix = renderTab('slop', { ...base, sub: 'fix', ...guardPart(g, 'fix'), parts_loading: false }, { project: 'kestrel' });
+  const head = fix.slice(fix.indexOf('id="slop-orc"'), fix.indexOf('</section>', fix.indexOf('id="slop-orc"')));
+  assert.ok(!/<h2>SloppaChoppa<\/h2>/.test(head), 'no heading line of its own');
+  assert.match(head, /id="slop-line"><b>SloppaChoppa<\/b> /, 'his name leads the status line');
+  assert.equal((head.match(/class="primary"/g) || []).length, 1, 'one primary action');
+  assert.match(head, /<button class="primary" data-act="fixall-open" id="slop-fixall">Fix all \(3\)<\/button>/);
+  const menu = head.slice(head.indexOf('id="slop-menu"'));
+  assert.ok(head.indexOf('id="slop-fixall"') < head.indexOf('id="slop-menu"'), 'Fix all before the menu');
+  for (const x of ['data-act="orc-call"', 'data-days="1"', 'data-days="7"', 'id="slop-unmute"', 'id="slop-popups"']) assert.ok(menu.includes(x), `${x} in the menu`);
+  assert.ok(!/<button[^>]*data-act="orc-(call|mute)"/.test(head.slice(0, head.indexOf('id="slop-menu"'))), 'nothing else outside the menu');
+});
+
 test('GET /api/guard?part=: the summary + one part; no part = the full view the chips on other tabs read', { timeout: 180000 }, async () => {
   const f = await fixture();
   try {

@@ -46,12 +46,16 @@ nav button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--ink);f
 .orc-stage>*{pointer-events:auto}
 .orc-bubble{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:0 4px 16px var(--shadow);position:relative;margin-right:40px}
 .orc-bubble::after{content:"";position:absolute;right:28px;bottom:-8px;border:8px solid transparent;border-top-color:var(--line);border-bottom:0}
-.orc-bubble p{margin:0 0 8px}.orc-acts{display:flex;gap:6px;flex-wrap:wrap}
+.orc-bubble p{margin:0 0 8px}.orc-acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .orc-stage.busy .orc-bubble{visibility:hidden}
 .orc-fig{width:192px;height:192px;image-rendering:pixelated;background-repeat:no-repeat}
-.orc-section{display:flex;gap:14px;align-items:flex-start}
-.orc-portrait{flex:none;width:192px;height:192px;image-rendering:pixelated;background:url(/norn/art/orc-96-idle.png) 0 0 / 400% 100% no-repeat}
-.orc-line{font-size:15px;margin:4px 0 8px}
+/* UX review 5: the Slop header is one row - a compact portrait (the 32 bust at 2x), his line, the chip, Fix all, a "More" menu */
+.orc-section{display:flex;gap:12px;align-items:center}.orc-head{flex:1;min-width:0}
+.orc-portrait{flex:none;width:64px;height:64px;image-rendering:pixelated;background:url(/norn/art/orc-32.png) 0 0 / 100% 100% no-repeat}
+.orc-line{font-size:14px;margin:0 0 6px;overflow-wrap:anywhere}
+.kmenu{position:relative;display:inline-block}.kmenu>summary{list-style:none;cursor:pointer;display:inline-block;border:1px solid var(--line);border-radius:6px;padding:4px 10px}.kmenu>summary::-webkit-details-marker{display:none}
+.kpop{position:absolute;right:0;z-index:5;margin-top:4px;width:min(320px,calc(100vw - 40px));background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 4px 16px var(--shadow);padding:8px;display:flex;flex-wrap:wrap;gap:6px}
+.kpop>div{flex-basis:100%;margin-top:4px}
 .glist{margin:0;padding:0 0 0 18px}
 /* META-UX-BUILD S2: the sub-view pattern (subviews.mjs) - a summary row of at most 4 numbers, the sub-view row, the chosen part */
 .subsum{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 10px}.subnum{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px 12px;display:flex;flex-direction:column;gap:2px}.subnum b{font-size:22px}.subnum.warn b{color:var(--warn)}.subnum.ok b{color:var(--ok)}.ctxprofs summary{cursor:pointer}.ctxprofs ul{margin:4px 0 0;padding-left:14px;text-align:left;overflow-wrap:anywhere}
@@ -72,7 +76,7 @@ nav button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--ink);f
 .insseg.seg-rl-prose,.insdot.seg-rl-prose{background:var(--warn)}.insseg.seg-rl-repeated,.insdot.seg-rl-repeated{background:var(--accent)}
 .insseg.seg-rl-enforced,.insdot.seg-rl-enforced{background:var(--ok)}.insseg.seg-rl-retired,.insdot.seg-rl-retired{background:var(--bar)}
 @media (max-width:700px){#orc .o32{display:none}#orc .o16{display:block}#orc{min-width:44px;min-height:44px;justify-content:center}
- .orc-section{flex-direction:column}.orc-portrait{width:144px;height:144px}}
+ .orc-portrait{width:32px;height:32px}}
 nav .count{display:inline-block;min-width:18px;padding:0 5px;margin-left:5px;border-radius:9px;background:var(--accent);color:var(--on-accent);font-size:11px;text-align:center}
 main{padding:18px 20px;max-width:1500px;margin:0 auto}
 .glance{display:grid;grid-template-columns:1.15fr 1.4fr 1fr;gap:14px;margin-bottom:16px}
