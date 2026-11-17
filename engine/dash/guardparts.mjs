@@ -12,10 +12,13 @@ export const BATCH_ROWS = 3;
 export const KIND_ORDER = ['ready', 'drafts', 'call', 'count'];
 
 /** [id, label]: To fix (every open finding) · Per type (the counts per type) · Rules (the rule ledger + the rule rows) · Is it growing? */
-export const GUARD_SUBS = [['fix', 'To fix'], ['types', 'Per type'], ['rules', 'Rules'], ['growing', 'Is it growing?']];
+// In progress: what is being worked on for slop (lib/fixwork.mjs: each Fix all send through its steps, the slop merge holds)
+// a dense tab keeps 3-4 sub-views: Per type is part of Overview (with Is it growing?); the `types` part still answers alone
+export const GUARD_SUBS = [['fix', 'To fix'], ['work', 'In progress'], ['rules', 'Rules'], ['growing', 'Overview']];
 const WARN = s => s === 'high' || s === 'medium';
 // FNV-1a over what a part shows: a row that comes, goes or turns old, the scan landing, the ledger
-const sig = g => fnv(JSON.stringify([g.pending, g.slop, g.ledger, (g.rows || []).map(r => `${r.id}:${r.new ? 1 : 0}:${r.severity}${r.sent ? ':' + r.sent : ''}`)]));
+const workSig = w => (w?.sends || []).map(s => `${s.id}:${s.step}:${s.counts.open}:${s.counts.accepted}:${s.run}`).concat((w?.holds || []).map(h => h.branch));
+const sig = g => fnv(JSON.stringify([g.pending, g.slop, g.ledger, workSig(g.work), (g.rows || []).map(r => `${r.id}:${r.new ? 1 : 0}:${r.severity}${r.sent ? ':' + r.sent : ''}`)]));
 function fnv(s) {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
@@ -51,7 +54,7 @@ export function guardSummary(g) {
   return { project: g.project, pending: g.pending, slop: g.slop, voice: g.voice, errors: g.errors || [], total: g.total ?? rows.length, new: g.new ?? 0,
     warn: rows.filter(r => WARN(r.severity)).length, kinds: kindsOf(rows), fixable: rows.filter(TICK).length, offer: rows.filter(OFFER).length, sent: g.sent || [], batches: batchesOf(rows).filter(b => b.kind !== 'count').length, ledger: g.ledger ?? null, top: rows.slice(0, 1),
     labels: Object.fromEntries((g.types || []).map(t => [t.type, t.label])),
-    counts: { fix: rows.length, types: (g.types || []).filter(t => t.open).length, rules: ruleRows(g).length, growing: null }, sig: sig(g) };
+    counts: { fix: rows.length, work: g.work ? g.work.counts.live + g.work.counts.holds : null, types: (g.types || []).filter(t => t.open).length, rules: ruleRows(g).length, growing: null }, sig: sig(g) };
 }
 
 // META-UX-BUILD S6 (REPORT s.3 "End to end" 1-2, s.7): the Fix all sheet. One item per batch that is fixed or decided (count rows are
@@ -112,8 +115,9 @@ export function guardPart(g, name, limit = SUB_CAP, batch = null) {
     const batches = c.rows.map(b => { const x = capList(b.rows, b.key === open ? limit : BATCH_ROWS); return { ...b, rows: x.rows }; });
     return { fix: { batches, nb: c.n, n: (g.rows || []).length, ...(open ? { open } : {}) } };
   }
+  if (name === 'work') return { work: g.work ?? { sends: [], holds: [], counts: { live: 0, review: 0, holds: 0, done: 0 } } };
   if (name === 'types') return { types: { rows: g.types || [], n: (g.types || []).length } };
   if (name === 'rules') return { rules: { ledger: g.ledger ?? null, ...capList(ruleRows(g), limit) } };
-  if (name === 'growing') return { growing: { trend: g.trend ?? null } };
+  if (name === 'growing') return { growing: { trend: g.trend ?? null, rows: g.types || [], n: (g.types || []).length } };
   throw Object.assign(new Error(`unknown part ${name} (summary, or one of ${GUARD_SUBS.map(x => x[0]).join(', ')})`), { status: 400 });
 }

@@ -58,6 +58,16 @@ nav button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--ink);f
 .fxitem label{display:block;cursor:pointer}.fxitem input{margin-right:6px}.fxcall{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:flex-start}.fxcall .fxbody{flex:1 1 280px;min-width:0}
 .fxq{display:inline-block;width:1.2em;text-align:center;border:1px solid var(--line);border-radius:3px}.fxways{display:flex;flex-wrap:wrap;gap:6px}.fxways button[aria-pressed=true]{outline:2px solid var(--accent,currentColor)}
 .fxfoot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin-top:12px}.fxbtns{display:flex;gap:6px;flex-wrap:wrap}
+.ins-hot>td{background:var(--warn-bg)}.ins-hot>td:first-child{box-shadow:inset 4px 0 0 var(--warn)}.ins-advice{color:var(--warn);margin-top:2px}
+.insworstlist{list-style:none;margin:0;padding:0 12px 8px}.insworst{padding:8px 0;border-bottom:1px solid var(--line)}.insworsthead{display:flex;flex-wrap:wrap;gap:6px;align-items:baseline}
+.insrank{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:11px;background:var(--warn-bg);color:var(--warn);font-weight:700;font-size:12px}
+.insadv{list-style:none;margin:4px 0 0 28px;padding:0}.insadv li{margin:2px 0;overflow-wrap:anywhere}
+.fxsend{border-left:4px solid var(--line)}.fxsend[data-step=review]{border-left-color:var(--accent)}.fxsend[data-step=fixer],.fxsend[data-step=applying]{border-left-color:var(--run)}.fxsend[data-step=done]{border-left-color:var(--ok)}
+.fxsendhead{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.fxline{margin:6px 0 0}
+.fxtrack{display:flex;flex-wrap:wrap;gap:4px;list-style:none;margin:8px 0 0;padding:0}.fxtrack li{font-size:12px;padding:2px 10px;border-radius:10px;background:var(--soft);color:var(--mute)}
+.fxtrack li.past{background:var(--ok-bg);color:var(--ok)}.fxtrack li.now{background:var(--accent-bg);color:var(--accent);font-weight:700;outline:1px solid var(--accent)}
+.fxresult{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}.fxresbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
+.fxfiles,.fxhunks,.fxholds{list-style:none;margin:6px 0 0;padding:0}.fxfile>summary{cursor:pointer;padding:4px 0}.fxhunks li{padding:6px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.fxholds li{padding:4px 0}
 .slopkind{border-left:4px solid var(--line)}.slopkind[data-kind=ready]{border-left-color:var(--ok)}.slopkind[data-kind=ready]>h2{color:var(--ok)}.slopkind[data-kind=drafts]{border-left-color:var(--run)}.slopkind[data-kind=call]{border-left-color:var(--warn)}.slopkind[data-kind=call]>h2{color:var(--warn)}#slop-count{margin:8px 0}#slop-count>summary{cursor:pointer}
 @media (max-width:700px){.subsum{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.subnum{padding:6px 10px}.subnum b{font-size:18px}}.glist .grow{padding:5px 0;border-bottom:1px solid var(--line)}
 .insseg.seg-rl-prose,.insdot.seg-rl-prose{background:var(--warn)}.insseg.seg-rl-repeated,.insdot.seg-rl-repeated{background:var(--accent)}
@@ -896,6 +906,11 @@ document.addEventListener('click', e => {
     document.querySelectorAll('#fixall [data-act=fx-way]').forEach(x => x.setAttribute('aria-pressed', String(f.picks[x.dataset.key] === x.dataset.way))); fxCount(); return; }
   if (d.act === 'fixall-send') { const f = S.fixall; if (!f || f.sent) return; fxKeys(); b.disabled = true;
     act(async () => { f.sent = await post('/api/fixall', { project: S.project, sig: d.sig, keys: [...f.keys], picks: f.picks }); }).finally(() => { if (!f.sent) b.disabled = false; }); return; }
+  // Slop > In progress: the fixer's result card - accept (the check-in applies) or decline, all open changes or the one tapped
+  if (d.act === 'fxr') { const all = !d.ids, n = all ? Number((b.textContent.match(/\d+/) || [0])[0]) : 1;
+    if (all && d.verdict === 'accept' && !confirm(`Apply ${n || 'all'} drafted change(s)? The check-in makes the edits, one commit per file.`)) return;
+    if (all && d.verdict === 'decline' && !confirm('Keep the text as it is for every drafted change?')) return;
+    b.disabled = true; act(() => post('/api/fixall-review', { project: d.project || S.project, send: d.send, verdict: d.verdict, ...(d.ids ? { ids: [d.ids] } : {}) })).finally(() => { b.disabled = false; }); return; }
   if (d.act === 'slop-batch') { S.batch = d.batch || null; S.subLimit = null; render(); return; }   // META-UX-BUILD S5: open one batch (or close it)
   if (d.act === 'sub-more') { S.subLimit = (S.subLimit || S.last?.limit || 40) + 40; render(); return; }
   if (d.tab) { document.body.classList.remove('more'); S.sub = null; S.subLimit = null; S.batch = null; S.fixall = null; S.doc = null; S.docLine = null; S.adoptAdd = false; S.adoptScan = null; S.adoptAsk = null; S.tab = d.tab; history.replaceState(null, '', S.tab === 'roadmap' ? rmUrl() : `?project=${encodeURIComponent(S.project)}&tab=${S.tab}`); render(); return; }

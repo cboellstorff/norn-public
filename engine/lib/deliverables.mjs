@@ -164,7 +164,10 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
 
 // ---------- backfill (DELIVERABLES-SPEC 2) + the launcher's record at a DONE exit ----------
 const NOT_DELIVERING = ['checkin', 'talk', 'interactive', 'fake', 'audit'];
-const isDeliveringRun = r => r?.kind === 'run' && r.end?.outcome === 'done' && !NOT_DELIVERING.includes(r.data?.kind) && r.data?.role !== 'helper' && !r.data?.parent;
+// a resume (--parent RUN-n: the lane's first run handed off) delivers like any worker - its DONE is often the lane's only one; a
+// helper (role helper, under a parent) never does. A parent alone used to exclude the run, so a lane finished by a resume never
+// reached the merge queue.
+const isDeliveringRun = r => r?.kind === 'run' && r.end?.outcome === 'done' && !NOT_DELIVERING.includes(r.data?.kind) && r.data?.role !== 'helper';
 const isMainBranch = b => !b || b === 'HEAD' || b === 'main' || b === 'master';
 const endTs = r => r.history.find(h => h.ev === 'end')?.ts || r.updated;
 const runNum = id => Number(String(id).replace(/\D/g, ''));

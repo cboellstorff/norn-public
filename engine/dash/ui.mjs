@@ -8,7 +8,7 @@ import { renderAdopt, adoptStep } from './adopt.mjs';
 import { renderHome } from './home.mjs';
 import { bars, columns, stack, board, lines, meter, dodChips, critiqueChip, critiqueWord } from './widgets.mjs';
 import { orcLine, badgeLabel } from './norn/orc.mjs';
-import { INS_CAPS, LADDER_ORDER, LADDER_STATES, CONTEXT_SUBS, contextParts, contextNumbers, standingRows } from './insparts.mjs';
+import { INS_CAPS, LADDER_ORDER, LADDER_STATES, CONTEXT_SUBS, contextParts, contextNumbers, standingRows, perDay, worstFiles, fileAdvice } from './insparts.mjs';
 import { SUB_CAP, pickSub, subviewPage, subMore } from './subviews.mjs';
 import { GUARD_SUBS } from './guardparts.mjs';
 import { firstDoc, placeFindings, findingsByLine } from './docparts.mjs';
@@ -258,6 +258,7 @@ function needItem(i, ctx) {
   }
   if (i.type === 'setup') return setupRow(i, ctx);
   if (i.type === 'login') return loginRow(i, ctx);
+  if (i.type === 'fixall') return `<div class="item">${chip('needs', 'review')}<div><b>${esc(i.title)}</b><div class="small mute">${projTag(ctx, i.project)}nothing is edited until you apply</div></div><span class="spacer"></span><button class="primary" ${goAttrs({ tab: 'slop', sub: 'work' })}>Review fixes</button></div>`;
   if (i.type === 'parked') return `<div class="item">${chip('parked', i.id)}<div><b>lane ${esc(i.id.slice(2))} parked</b><div class="small mute">${projTag(ctx, i.project)}${i.q ? `by ${esc(i.q)}` : esc(i.why ?? 'no reason recorded')}</div></div></div>`;
   const [cls] = stateOf(i.state === 'exited' ? `exited: ${String(i.outcome).toUpperCase()}` : i.state);
   return `<div class="item">${chip(cls === 'idle' ? 'stopped' : cls, i.id)}<div><b>${esc(i.lane ?? 'run')} ${esc(String(i.outcome ?? i.state).toUpperCase())}${i.why ? `: ${esc(i.why)}` : ''}</b><div class="small mute">${projTag(ctx, i.project)}${aname(i.name)} unreviewed - no review event yet</div></div></div>`;
@@ -359,6 +360,8 @@ function inbox(d, ctx) {
   }).join('') || `<div class="card" style="margin-bottom:12px">${art(ctx, 'empty-no-questions', 'empty')}${chip('ok', 'all clear')} <span>No open question.</span></div>`;
   const aud = items.filter(i => i.type === 'audit');
   const audCard = aud.length ? `<section class="tablecard" id="inbox-audit" style="margin-bottom:12px"><h3>Audit hunks <span class="mute small">${int(aud.length)} open · the vendor prompt audit proposed them; accept = the check-in applies it, decline = keep the text; Norn edits nothing</span></h3><ul>${aud.map(i => auditCard(i.card, i.project)).join('')}</ul></section>` : '';
+  const fxs = items.filter(i => i.type === 'fixall');   // the fixer's result: one row per send, the changes on Slop > In progress
+  const fxCard = fxs.length ? `<section class="card needs" id="inbox-fixall" style="margin-bottom:12px">${fxs.map(i => `<div>${chip('needs', 'review')} <b>${esc(i.title)}</b> <span class="small mute">${projTag(ctx, i.project)}the fixer ${esc(i.run ?? '')} drafted them; nothing is edited until you apply</span> <button class="strong" ${goAttrs({ tab: 'slop', sub: 'work' })}>Review the changes</button></div>`).join('')}</section>` : '';
   const enf = items.filter(i => i.type === 'enforce');
   const enfCard = enf.length ? `<section class="tablecard" id="inbox-enforce" style="margin-bottom:12px"><h3>Make it enforced? <span class="mute small">${int(enf.length)} correction(s) said again · approve = a directive asks the check-in for a brief; Norn installs nothing</span></h3><ul>${enf.map(i => enforceCard({ ...i.card, approve: i.approve }, i.project)).join('')}</ul></section>` : '';
   const dlvCard = (items.some(i => i.type === 'setup' || i.type === 'login') ? `<section class="card needs" style="margin-bottom:12px">${items.filter(i => i.type === 'login').map(i => loginRow(i, ctx)).join('')}${items.filter(i => i.type === 'setup').map(i => setupRow(i, ctx)).join('')}</section>` : '')
@@ -372,7 +375,7 @@ function inbox(d, ctx) {
   ].join('');
   const adv = items.filter(i => i.type === 'advice');
   const advCard = adv.length ? `<section class="card" id="inbox-advice" style="margin-bottom:12px"><h2>Model advice <span class="mute small">${plural(adv.length, 'card')} · vendor guidance over what each kind of work cost (Usage tab) · nothing changes until you tap</span></h2>${adv.map(i => adviceRow(i, ctx)).join('')}</section>` : '';
-  return `<div class="legend small mute">States: ${['open', 'answered', 'applied', 'superseded', 'withdrawn'].map(s => chip(s)).join(' ')} - set by explicit events only; this page never guesses.</div>${qs}${enfCard}${audCard}${dlvCard}${advCard}
+  return `<div class="legend small mute">States: ${['open', 'answered', 'applied', 'superseded', 'withdrawn'].map(s => chip(s)).join(' ')} - set by explicit events only; this page never guesses.</div>${qs}${fxCard}${enfCard}${audCard}${dlvCard}${advCard}
    <div class="tablecard"><h3>Also needs a look <span class="mute small">parked lanes · unreviewed runs · answered, not yet applied</span></h3><table><thead><tr><th>id</th><th>state</th><th>what</th></tr></thead><tbody>${other || '<tr><td colspan="3" class="mute">nothing</td></tr>'}</tbody></table></div>`;
 }
 
@@ -482,6 +485,49 @@ function fixAll(sh, sent, sel = null) {
     ${done}<div class="fxfoot"><span class="small mute" id="fixall-usage">${esc(sh.usage?.line ?? '')}</span><span class="fxbtns"><button class="ghost" data-act="fixall-close">${sent ? 'Close' : 'Cancel'}</button>
     <button class="strong" data-act="fixall-send" data-sig="${esc(sh.sig)}"${sent || !on ? ' disabled' : ''}>Send the fixer (<span id="fx-n">${int(on)}</span>)</button></span></div></section>`;
 }
+// Slop > In progress (lib/fixwork.mjs): each Fix all send as a card with its step track (sent, fixer run, your review, applying, done),
+// what it waits for in one line, and - at "your review" - the fixer's result card: Apply all (n) or Decline all, each change one tap
+// away under its file. Then the merges SloppaChoppa holds. Finished sends fold away.
+const STEP_CLS = { sent: 'idle', fixer: 'run', review: 'needs', applying: 'run', done: 'ok' };
+function fxTrack(s) {
+  const at = s.steps.findIndex(x => x.key === s.step);
+  return `<ol class="fxtrack" aria-label="${esc(`step ${at + 1} of ${s.steps.length}: ${s.steps[at]?.label ?? s.step}`)}">${s.steps.map((x, i) => `<li class="${i < at || s.step === 'done' ? 'past' : i === at ? 'now' : 'next'}">${i < at || s.step === 'done' ? '✓ ' : ''}${esc(x.label)}</li>`).join('')}</ol>`;
+}
+// a drafted change in words: what it does (from its +/- lines), why (the finding's title without ids, paths or a second severity),
+// and its body without the ---/+++ header lines (the file is the group's heading)
+const fxBody = p => String(p ?? '').split(/\r?\n/).filter(l => !/^(---|\+\+\+) /.test(l)).join('\n');
+function fxWhat(h) {
+  const ls = fxBody(h.patch).split('\n'), del = ls.filter(l => /^-/.test(l)).length, add = ls.filter(l => /^\+/.test(l)).length;
+  const n = k => `${k} line${k === 1 ? '' : 's'}`;
+  return !add ? `Remove ${n(del)}` : !del ? `Add ${n(add)}` : `Rewrite ${n(del)}${del === add ? '' : ` as ${n(add)}`}`;
+}
+const fxWhy = h => String(h.why ?? '').replace(/^\d+\.\s*/, '').replace(/`[^`]*`/g, '').replace(/\s-\s(high|medium|low)\s-\s/gi, ' - ')
+  .replace(/\b[A-Z]-(?:[A-Z]-)?[0-9a-f]+\b/g, '').replace(/^[\s-]+|[\s-]+$/g, '').replace(/\s{2,}/g, ' ').replace(/\s-\s*-\s/g, ' - ');
+function fxResult(s, project) {
+  const open = s.hunks.filter(h => h.status === 'open'), by = new Map();
+  for (const h of open) { const f = shortPath(h.path); if (!by.has(f)) by.set(f, []); by.get(f).push(h); }
+  const pj = project ? ` data-project="${esc(project)}"` : '';
+  const files = [...by].map(([f, hs]) => `<li><details class="fxfile"><summary><b>${esc(f)}</b> <span class="mute small">${int(hs.length)} change${hs.length > 1 ? 's' : ''}</span></summary>
+    <ul class="fxhunks">${hs.map(h => `<li id="fxh-${esc(h.id)}"><div><b>${esc(fxWhat(h))}</b> <span class="small mute">line ${esc(h.line)}</span></div>${fxWhy(h) ? `<div class="small">why: ${esc(fxWhy(h))}</div>` : ''}<pre class="inspatch">${esc(fxBody(h.patch))}</pre>
+      <button class="primary" data-act="fxr" data-verdict="accept" data-send="${esc(s.id)}" data-ids="${esc(h.id)}"${pj}>Apply</button> <button class="ghost" data-act="fxr" data-verdict="decline" data-send="${esc(s.id)}" data-ids="${esc(h.id)}"${pj}>Keep as is</button></li>`).join('')}</ul></details></li>`).join('');
+  return `<div class="fxresult" id="fxres-${esc(s.id)}"><div class="fxresbar"><b>${plural(open.length, 'drafted change')} in ${plural(by.size, 'file')}</b>
+    <span class="fxbtns"><button class="primary" data-act="fxr" data-verdict="accept" data-send="${esc(s.id)}"${pj}>Apply all ${int(open.length)}</button> <button class="ghost" data-act="fxr" data-verdict="decline" data-send="${esc(s.id)}"${pj}>Decline all</button></span></div>
+    <div class="small mute">Applying asks the check-in to make these edits (one commit per file). Open a file to see each change, or to apply or keep one by itself.${s.notes ? ` The fixer's full notes: <span class="mono">${esc(shortPath(s.notes))}</span>.` : ''}</div>
+    <ul class="fxfiles">${files}</ul></div>`;
+}
+function fxSendCard(s, project) {
+  const c = s.counts, tally = c.hunks ? ` · ${int(c.hunks)} drafted: ${int(c.accepted)} to apply, ${int(c.declined)} kept as is, ${int(c.open)} to review` : '';
+  return `<section class="card fxsend" id="fxs-${esc(s.id)}" data-step="${esc(s.step)}"><div class="fxsendhead">${chip(STEP_CLS[s.step] ?? 'idle', s.steps.find(x => x.key === s.step)?.label ?? s.step)} <b>Fix all ${esc(s.id)}</b> <span class="mute small">${int(s.n)} finding${s.n === 1 ? '' : 's'} · sent ${esc(fmtTime(s.at))}${s.directive ? ` · ${esc(s.directive)}` : ''}${s.run ? ` · fixer ${esc(s.run)}` : ''}${tally}</span></div>
+    ${fxTrack(s)}<p class="fxline">${esc(s.line)}</p>${s.step === 'review' ? fxResult(s, project) : ''}</section>`;
+}
+function slopWork(W) {
+  const live = W.sends.filter(s => s.step !== 'done'), done = W.sends.filter(s => s.step === 'done');
+  const holds = W.holds.length ? `<section class="card" id="slop-holds"><h2>Merges held by SloppaChoppa <span class="mute small">${int(W.holds.length)} · a code check at the run end found slop on these branches; they merge once it is fixed or waived</span></h2>
+    <ul class="fxholds">${W.holds.map(h => `<li>${chip('parked', 'held')} <b class="mono">${esc(h.branch)}</b> <span class="small mute">${esc(h.lane ?? '-')} · ${esc(h.run ?? '-')}${h.blocks?.length ? ` · ${int(h.blocks.length)} open block${h.blocks.length > 1 ? 's' : ''}` : ''}</span></li>`).join('')}</ul></section>` : '';
+  const none = !live.length && !W.holds.length ? `<section class="card" id="slop-work-none">${chip('ok', 'idle')} Nothing is being worked on for slop. <span class="small mute">Fix all on To fix sends a batch to one fixer run; it shows here until its changes are applied.</span></section>` : '';
+  const fold = done.length ? `<details class="small" id="slop-work-done"><summary>${int(done.length)} finished send${done.length > 1 ? 's' : ''}</summary>${done.map(s => fxSendCard(s)).join('')}</details>` : '';
+  return `<div id="slop-work">${live.map(s => fxSendCard(s)).join('')}${none}${holds}${fold}</div>`;
+}
 // META-UX-BUILD S2: the page = his section, then the sub-view pattern (subviews.mjs): 4 numbers, To fix / Per type / Rules / Is it
 // growing?, the chosen part. d = the summary (guardparts.mjs) + d[d.sub] once its part is here (parts_loading until then).
 // META-UX-BUILD S5 (DIR-64): the tab is Slop (the route /api/guard stays); the numbers are open + the three kinds of fix.
@@ -505,12 +551,12 @@ function guard(d, ctx) {
   const about = `<p class="small mute" id="slop-about">Slop: every open finding of every check (instruction files, memory, rules, docs, tests, models, the lint's hints and the tightening candidates${on ? ", and SloppaChoppa's code checks" : ''}) in one list, in batches by check and the kind of fix the check declares. It owns no data: each row is fixed on the tab that owns the thing, where it also shows as a chip. Only a NEW finding warns.${d.pending ? ' The instruction-file scan is running: its rows follow.' : ''}</p>`;
   const P = d[d.sub];
   const body = !P ? '' : d.sub === 'fix' ? `<div id="slop-rows">${slopFix(P, d, labels)}${about}</div>`
-    : d.sub === 'types' ? `<section class="card" id="slop-count-types"><h2>Open per type <span class="mute small">${plural(total, 'open finding')} · ${fresh} new at warn level</span></h2>${bars(P.rows.map(t => ({ label: t.label, value: t.open, cls: t.warn ? 'hot' : '',
-      note: `${t.warn ? chip('warn', `${t.warn} warn`) : chip('ok', 'no warning')}${t.new ? ' ' + chip('needs', `${t.new} new`) : ''} <button class="lnk" ${goAttrs({ tab: t.tab })}>fix in ${esc(G_TAB[t.tab] ?? t.tab)}</button>` })), { id: 'slop-types', fmt: n => `${n} open` })}</section>`
+    : d.sub === 'work' ? slopWork(P)
     : d.sub === 'rules' ? `<section class="card" id="slop-ledger-card"><h2>The rule ledger <span class="mute small">every must / never rule by how it is enforced</span></h2>${P.ledger ? `${stack([['prose', 'prose only'], ['repeated', 'repeated'], ['enforced', 'enforced'], ['retired', 'retired']].map(([key, label]) => ({ key: 'rl-' + key, label, value: P.ledger[key] ?? 0 })), { id: 'slop-ledger' })}
     <div class="small">${chip(P.ledger.prose ? 'warn' : 'ok', `${P.ledger.prose ?? 0} prose only`)} rules that no hook, test or gate enforces · <button class="lnk" ${goAttrs({ tab: 'context', sub: 'checks', jump: 'ins-ladder' })}>the ladder (Context › checks)</button></div>` : '<p class="small mute">The rule ledger is not scanned yet.</p>'}
     <h3>Open rule findings <span class="mute small">${int(P.n)}</span></h3><ol class="glist" id="slop-rule-rows">${P.rows.map(r => guardRow(r, labels)).join('') || `<li class="mute">${chip('ok', 'all clear')} no rule finding open</li>`}</ol>${subMore(P.rows.length, P.n)}</section>`
-    : `<section class="card" id="slop-trend-card"><h2>Is it growing? <span class="mute small">the findings open now, by the day each was first seen (30 days)</span></h2>${P.trend?.series?.length ? lines(P.trend.series, { days: P.trend.days, id: 'slop-trend', title: 'open findings by the day first seen' }) : '<p class="small mute">No open finding.</p>'}</section>`;
+    : `${P.rows ? `<section class="card" id="slop-count-types"><h2>Open per type <span class="mute small">${plural(total, 'open finding')} · ${fresh} new at warn level</span></h2>${bars(P.rows.map(t => ({ label: t.label, value: t.open, cls: t.warn ? 'hot' : '',
+      note: `${t.warn ? chip('warn', `${t.warn} warn`) : chip('ok', 'no warning')}${t.new ? ' ' + chip('needs', `${t.new} new`) : ''} <button class="lnk" ${goAttrs({ tab: t.tab })}>fix in ${esc(G_TAB[t.tab] ?? t.tab)}</button>` })), { id: 'slop-types', fmt: n => `${n} open` })}</section>` : ''}<section class="card" id="slop-trend-card"><h2>Is it growing? <span class="mute small">the findings open now, by the day each was first seen (30 days)</span></h2>${P.trend?.series?.length ? lines(P.trend.series, { days: P.trend.days, id: 'slop-trend', title: 'open findings by the day first seen' }) : '<p class="small mute">No open finding.</p>'}</section>`;
   const numbers = [{ n: int(total), label: `open · ${int(fresh)} new${K.count ? ` · ${int(K.count)} only count` : ''}`, cls: fresh ? 'warn' : '' }, { n: int(K.ready ?? 0), label: 'ready: the text is known', cls: K.ready ? 'ok' : '' },
     { n: int(K.drafts ?? 0), label: 'to draft: a worker writes it' }, { n: int(K.call ?? 0), label: 'your call: two ways' }];
   if (d.sheet) return fixAll(d.sheet, d.sheet_sent, d.sheet_sel);
@@ -785,17 +831,28 @@ function context(d, ctx) {
 // Per file: the count card, the file map + most tokens per day, the files (capped, show more); a name opens the Docs reader
 function ctxFile(d, now) {
   const load = r => r.load === 'role' ? `role ${r.role}` : r.load === 'session' && r.standing_tokens < r.tokens ? 'every session (description)' : INS_LOAD[r.load] ?? r.load;
-  const all = d.rows || [], shown = all.slice(0, d.limit || SUB_CAP);
-  const rows = shown.map(r => `<tr id="ins-row-${esc(r.id)}">
-    <td><button class="lnk" data-ins="${esc(r.id)}"${r.exists ? '' : ' disabled'}>${esc(r.name)}</button>${r.exists || r.generated ? '' : ` ${chip('bad', 'missing')}`}${r.generated ? ` ${chip(DRIFT_CHIP[r.drift] ?? 'idle', `generated · ${r.drift || '?'}`)}` : ''}${r.stale ? ` ${chip('warn', `${r.stale} stale`)}` : ''}${r.findings ? ` ${chip('warn', `${r.findings} finding${r.findings > 1 ? 's' : ''}`)}` : ''}${insRuleChips(r.rules)}<div class="inspath mute">${esc(r.path)}</div></td>
+  // the files that cost the most per day first (then size); the worst offenders are marked in the table and named on top with advice
+  const all = [...(d.rows || [])].sort((a, b) => perDay(b) - perDay(a) || (b.tokens ?? 0) - (a.tokens ?? 0)), shown = all.slice(0, d.limit || SUB_CAP);
+  const worst = worstFiles(all), hot = new Set(worst.map(x => x.r.id));
+  const rows = shown.map(r => `<tr id="ins-row-${esc(r.id)}"${hot.has(r.id) ? ' class="ins-hot"' : ''}>
+    <td><button class="lnk" data-ins="${esc(r.id)}"${r.exists ? '' : ' disabled'}>${esc(r.name)}</button>${r.exists || r.generated ? '' : ` ${chip('bad', 'missing')}`}${r.generated ? ` ${chip(DRIFT_CHIP[r.drift] ?? 'idle', `generated · ${r.drift || '?'}`)}` : ''}${r.stale ? ` ${chip('warn', `${r.stale} stale`)}` : ''}${r.findings ? ` ${chip('warn', `${r.findings} finding${r.findings > 1 ? 's' : ''}`)}` : ''}${insRuleChips(r.rules)}<div class="inspath mute">${esc(r.path)}</div>${hot.has(r.id) ? `<div class="small ins-advice">${esc(fileAdvice(r)[0].text)}</div>` : ''}</td>
     <td>${chip(INS_CHIP[r.load] ?? 'idle', load(r))}</td><td class="insopt">${esc((r.harness || []).join(', ') || 'any')}</td>
     <td class="num">${tk(r.tokens)}</td><td class="num">${r.cost_today ? `${tk(r.cost_today)}${r.via ? ' <span class="mute small">via</span>' : ''}<div class="small mute">${int(r.loads_today)} load(s)</div>` : dash}</td>
     <td class="insopt">${r.changed ? `${esc(fmtTime(r.changed, now))} <span class="small mute">${esc(r.changed_by)}</span>` : dash}</td>
     <td class="num">${r.hints ? chip('warn', `${r.hints} hint${r.hints > 1 ? 's' : ''}`) : dash}</td></tr>`).join('');
   return `<div class="card" id="ins-count"><b>${int(d.counts?.files ?? all.length)} files steer the agents</b> · ${tk(d.total)} tokens loaded today by ${int(d.sessions)} session(s)
      <div class="small mute">${esc(d.method)}. Cost today = size x the sessions that loaded it (runs.jsonl + the chat's starts). Read-only: hints are never applied.</div></div>
+   ${ctxWorst(worst)}
    ${insFileMap(d)}
-   <div class="tablecard"><h3>Files <span class="mute small">tap a name to read it in Docs</span></h3><div class="inswrap"><table class="instab" id="ins-table"><thead><tr><th>file</th><th>loaded</th><th class="insopt">harness</th><th>size</th><th>today</th><th class="insopt">changed</th><th>hints</th></tr></thead><tbody>${rows || `<tr><td colspan="7" class="mute">no instruction files found</td></tr>`}</tbody></table></div>${subMore(shown.length, all.length)}</div>`;
+   <div class="tablecard"><h3>Files <span class="mute small">most tokens per day first · highlighted = a worst offender · tap a name to read it in Docs</span></h3><div class="inswrap"><table class="instab" id="ins-table"><thead><tr><th>file</th><th>loaded</th><th class="insopt">harness</th><th>size</th><th>today</th><th class="insopt">changed</th><th>hints</th></tr></thead><tbody>${rows || `<tr><td colspan="7" class="mute">no instruction files found</td></tr>`}</tbody></table></div>${subMore(shown.length, all.length)}</div>`;
+}
+// the worst offenders: the few files to look at first - what each costs a day and what to do about it, the worst problem first
+function ctxWorst(worst) {
+  if (!worst.length) return `<div class="card" id="ins-worst">${chip('ok', 'all clear')} <b>No file needs attention.</b> <span class="small mute">Every loaded file is within budget and has no open finding.</span></div>`;
+  const li = worst.map(({ r, adv, day }, i) => `<li class="insworst"><div class="insworsthead"><span class="insrank">${i + 1}</span> <button class="lnk" data-ins="${esc(r.id)}"${r.exists ? '' : ' disabled'}><b>${esc(r.name)}</b></button>
+    <span class="small mute">${day ? `${tk(day)} tokens / day` : `${tk(r.tokens)} tokens`} · ${esc(INS_LOAD[r.load] ?? r.load)}</span></div>
+    <ul class="insadv">${adv.map(a => `<li>${chip(a.sev, a.sev === 'bad' ? 'fix' : a.sev === 'warn' ? 'improve' : 'minor')} ${esc(a.text)}${a.go ? ` <button class="lnk" data-go="${esc(a.go)}" data-gosub="fix">in Slop</button>` : ''}</li>`).join('')}</ul></li>`).join('');
+  return `<div class="tablecard" id="ins-worst"><h3>Look at these first <span class="mute small">the ${int(worst.length)} file${worst.length > 1 ? 's' : ''} where a fix saves the most: tokens loaded per day, and what the checks found</span></h3><ol class="insworstlist">${li}</ol></div>`;
 }
 // Per role: ONE standing table (META-UX-BUILD S4: "Standing context (measured)" + "Standing context per role" were two views of it) -
 // each measured role (median per session, last 7 days) with the steering files' estimate per launch profile of that role beneath it

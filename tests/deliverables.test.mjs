@@ -236,6 +236,20 @@ test('the launcher records a deliverable at a DONE exit: one per repo + branch, 
   assert.equal(onRunDone(f.state, runDone(f.state, { lane: 'a', worktree: path.join(f.wt, 'gone'), brief: 'x.md' }), {}), null, 'no git worktree: none');
 });
 
+test('a lane whose first run handed off and whose resume ended DONE gets its deliverable (launcher + backfill)', () => {
+  const f = backfillFixture();
+  const st = loadState(f.state).items[f.run];
+  const first = record(f.state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: 'a', worktree: f.wt, brief: 'x.md' } }, { now: () => at(-40), views: false });
+  record(f.state, { kind: 'run', ev: 'end', id: first.id, by: 'launcher', data: { exit: 0, outcome: 'handoff' } }, { now: () => at(-39), views: false });
+  const resume = runDone(f.state, { lane: 'a', worktree: f.wt, brief: 'x.md', parent: first.id }, -3);
+  assert.ok(st, 'the fixture run exists');
+  const plan = backfillPlan({ stateDir: f.state, project: f.p, now: NOW });
+  assert.equal(plan.rows.find(r => r.branch === 'feat/a').evidence, resume, 'the backfill takes the resume as the evidence');
+  const r = onRunDone(f.state, resume, { now: () => at(-3) });
+  assert.ok(r && r.id, 'the launcher records it');
+  assert.equal(loadDeliverables(f.state)[r.id].data.branch, 'feat/a');
+});
+
 // ---------- CLI (DELIVERABLES-SPEC 6): norn deliverables [--json] | backfill [--apply] | park / unpark ----------
 import { main } from '../engine/bin/norn.mjs';
 function cli(argv) {

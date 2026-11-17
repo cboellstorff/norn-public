@@ -45,7 +45,8 @@ export function guardRows({ ins = null, tests = null, advice = null, holds = [],
   const out = [], docAt = new Map(docs.map(d => [fwd(d.path), d.i]));
   const rowOf = a => a.row || (ins?.rows || []).find(r => fwd(r.path) === fwd(a.path))?.id || null;
   // META-UX-BUILD S6 (REPORT s.7): a row on one of the owner's own files (the scan's machine_only rows) says so - Fix all never ticks it for him
-  const own = new Set((ins?.rows || []).filter(r => r.machine_only).map(r => fwd(r.path).toLowerCase()));
+  // Norn's own prompts (norn_file: the engine's, shared by every project) are offered the same way: never ticked by a project's Fix all
+  const own = new Set((ins?.rows || []).filter(r => r.machine_only || r.norn_file).map(r => fwd(r.path).toLowerCase()));
   const ownerOf = x => (x.owner_file === true || (x.path && own.has(fwd(x.path).toLowerCase())) ? { owner_file: true } : {});
   const seen = new Set();
   for (const a of [...(ins?.findings || []), ...(ins?.rules?.advisories || [])]) {

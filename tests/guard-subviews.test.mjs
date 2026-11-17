@@ -40,12 +40,12 @@ test('the Guard parts: the summary has no list (counts + the top row for his lin
   const g = bigGuard(), s = guardSummary(g);
   assert.equal(s.rows, undefined); assert.equal(s.trend, undefined); assert.equal(s.types, undefined);
   assert.deepEqual([s.total, s.new, s.warn, s.ledger.prose], [100, 3, 30, 7]);
-  assert.deepEqual(s.counts, { fix: 100, types: 2, rules: 12, growing: null });
+  assert.deepEqual(s.counts, { fix: 100, work: null, types: 2, rules: 12, growing: null });
   assert.equal(s.top.length, 1); assert.equal(s.top[0].id, 'A-0');
   assert.equal(s.labels.rules, 'rules');
   assert.equal(typeof s.sig, 'string');
   assert.notEqual(guardSummary({ ...g, rows: g.rows.map((r, i) => (i ? r : { ...r, new: false })) }).sig, s.sig, 'a row turning old changes the sig');
-  assert.deepEqual(GUARD_SUBS.map(x => x[0]), ['fix', 'types', 'rules', 'growing']);
+  assert.deepEqual(GUARD_SUBS.map(x => x[0]), ['fix', 'work', 'rules', 'growing']);
   // META-UX-BUILD S5: To fix = batches (check + kind of fix), each with its first BATCH_ROWS rows; one open batch has every row up to the limit
   const fix = guardPart(g, 'fix').fix; assert.deepEqual([fix.nb, fix.n, fix.batches.length], [2, 100, 2]);
   assert.ok(fix.batches.every(b => b.rows.length === BATCH_ROWS), 'a closed batch: its first rows');
@@ -84,7 +84,7 @@ test('the Guard page: his section, 4 numbers, 4 sub-views, then the list - the e
   assert.match(fix, /It owns no data: each row is fixed on the tab that owns the thing/);
   assert.match(fix, /data-act="slop-batch" data-batch="instructions\|drafts">all 88</, 'a batch shows its first rows; "all n" opens it');
   assert.match(renderTab('slop', { ...base, sub: 'fix', ...guardPart(g, 'fix', SUB_CAP, 'instructions|drafts'), parts_loading: false }, {}), /showing 40 of 88[^]*data-act="sub-more"/);
-  assert.match(view('types'), /id="slop-types"/);
+  assert.match(view('growing'), /id="slop-types"[^]*id="slop-trend"/, 'Overview = Per type + the trend');
   assert.match(view('rules'), /id="slop-ledger"[^]*id="slop-rule-rows"[^]*id="slop-A-11"/);
   assert.match(view('growing'), /id="slop-trend"/);
   assert.match(renderTab('slop', { ...base, sub: 'rules', parts_loading: true }, {}), /id="slop-sub-loading"/);

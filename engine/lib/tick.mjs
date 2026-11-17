@@ -3,6 +3,7 @@
 // Port of meta/checkin.ps1; the old synchronous claude -p becomes a supervised detached run (heartbeat, usage, transcript).
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { startRun, liveRuns, stopOrphans, fillQueue, STALE_MS } from './runs.mjs';
@@ -16,7 +17,7 @@ import { checkinGate, noteCheckin, noteSkip, notePaused, noteDebounce, readGate,
 import { handleRoutineEnds, checkinPolicy, laneLevel, debounceOf } from './checkins.mjs';
 import { watchProbe } from './watch.mjs';
 import { MACHINE_DEFAULTS, HARNESS_EXECUTORS, capText } from './policy.mjs';
-import { profileOf, memoryOf, memoryEnv } from './launchpolicy.mjs';
+import { profileOf, memoryOf, memoryEnv, knownAgents } from './launchpolicy.mjs';
 import { BUILTIN } from './executors.mjs';
 import { ledgerStep } from './ledger.mjs';
 import { tickMergeq, mqProbe } from './mergeq.mjs';
@@ -49,6 +50,7 @@ export function renderCheckin(p, { budgetFile, budget = {}, statusFile = path.jo
     project: p.name, norn: `node "${fwd(META_CMD)}"`, meta: `node "${fwd(META_CMD)}"`,   // meta = the old name (META-NAME-W3)
     meta_root: fwd(metaRoot), status: fwd(statusFile), budget: fwd(budgetFile || '(none)'),
     ledger: fwd(p.ledger || '(none)'), briefs_dir: fwd(p.briefs_dir || p.root), policy: policyLine(budget),
+    agents: knownAgents({ claudeDir: process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), project: p }).join(', ') || 'none: leave --agent out',
     rules: (p.rules_read_whole || []).map(fwd).join(', ') || '(none)', wake,
     paths: [['ROOT', p.root], ['STATE', p.state], ['BRIEFS', p.briefs_dir], ['LEDGER', p.ledger]].filter(([, x]) => x).map(([k, x]) => `${k}=${fwd(x)}`).join('  '),
   };

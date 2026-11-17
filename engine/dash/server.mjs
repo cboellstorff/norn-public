@@ -54,7 +54,8 @@ import { SUB_CAP } from './subviews.mjs';
 import { docsList as docsListOf } from './docparts.mjs';
 import { paragraphs } from '../lib/instructions.mjs';
 import { openCardsAsync } from '../lib/rules.mjs';
-import { auditsView, acceptText, auditFiles } from '../lib/audit.mjs';
+import { auditsView, acceptText, auditFiles, auditHunks } from '../lib/audit.mjs';
+import { fixWork, applyText } from '../lib/fixwork.mjs';
 import { paraMarks } from '../lib/readev.mjs';
 import { testsView, testsFiles } from '../lib/testscli.mjs';
 import { guardChips } from '../lib/guard.mjs';
@@ -341,6 +342,8 @@ export function createDashboard(o) {
     for (const c of await openCardsAsync(p.state, s.items)) out.push({ type: 'enforce', id: c.id, project: p.name, title: c.why, card: c, approve: c.approve, created: null });
     // META-TEND P5: the vendor audit's hunks - one card each (accept = a decision + a directive: the check-in applies it; decline = a decision)
     for (const c of auditsView(p, s.items).cards) out.push({ type: 'audit', id: c.id, project: p.name, title: c.why, card: c, created: null });
+    // the fixer's result card: ONE row per Fix all send whose drafted changes wait for the owner (the changes are on Slop > In progress)
+    try { for (const f of fixWork(p, s.items).sends.filter(x => x.step === 'review')) out.push({ type: 'fixall', id: f.id, project: p.name, title: `Review fixes: ${f.counts.open} drafted change${f.counts.open === 1 ? '' : 's'} (${f.id})`, run: f.run, n: f.counts.open, created: f.at }); } catch { /* no result card */ }
     for (const q of items.filter(i => i.kind === 'question' && i.state === 'answered')) out.push({ type: 'answered', id: q.id, project: p.name, lane: q.data.lane, title: q.data.title, answer: q.answer, updated: q.updated });
     for (const l of items.filter(i => i.kind === 'lane' && i.state === 'parked')) out.push({ type: 'parked', id: l.id, project: p.name, why: l.park?.why ?? null, q: l.park?.q ?? null });
     // META-TEND P4: model advice = one card each, one tap applies the Settings change or keeps it (both a decision record)
@@ -646,14 +649,15 @@ export function createDashboard(o) {
     const crossed = await crossingsAsync(p.state, guardRows({ ins, tests, advice, holds, refusals: refused, docs: docsList(p) }));
     if (!Number.isFinite(at) && !ig.pending) { at = Date.now(); try { await fs.promises.mkdir(path.dirname(bf), { recursive: true }); await fs.promises.writeFile(bf, JSON.stringify({ at: new Date(at).toISOString() })); forget(bf); } catch { /* read-only state: no baseline */ } }
     const rows = crossed.map(r => (r.new && !(Number.isFinite(at) && Date.parse(r.first_seen) > at) ? { ...r, new: false } : r));   // no baseline yet (the scan is pending): nothing is new
-    const v = guardView(rows, { rules: ins?.rules?.counts ?? null, slop }), sent = fixSent(p, v.rows || []);
-    return { project: p.name, ...v, rows: sent.rows, sent: sent.sent, pending: ig.pending, slop, voice: pol.voice, errors };
+    const work = part('work', () => fixWork(p, st(p).items, { holds }), null);   // Slop > In progress
+    const v = guardView(rows, { rules: ins?.rules?.counts ?? null, slop }), sent = fixSent(p, v.rows || [], new Set((work?.sends || []).filter(s => s.failed).map(s => s.id)));
+    return { project: p.name, ...v, rows: sent.rows, sent: sent.sent, work, pending: ig.pending, slop, voice: pol.voice, errors };
   }
   // Fix all sent and not done yet: every ACTIVE directive a Send wrote (data.fixall) holds its findings. Those rows are marked sent
   // (sent: DEC-n) - Fix all no longer offers them, the page says they are with the fixer - until the directive is closed or the findings
   // are fixed. Without this a sent sheet came back whole once the tab was left (the sent state lived only in the page).
-  function fixSent(p, rows) {
-    const live = Object.values(st(p).items).filter(i => i.kind === 'directive' && i.state === 'active' && i.data?.fixall && Array.isArray(i.data.findings));
+  function fixSent(p, rows, failed = new Set()) {   // failed: sends whose fixer drafted nothing - their findings are offered again
+    const live = Object.values(st(p).items).filter(i => i.kind === 'directive' && i.state === 'active' && i.data?.fixall && Array.isArray(i.data.findings) && !failed.has(i.data.fixall));
     if (!live.length) return { rows, sent: [] };
     const by = new Map();
     for (const d of live) for (const id of d.data.findings) if (!by.has(id)) by.set(id, d.data.fixall);
@@ -1198,6 +1202,19 @@ data: ${JSON.stringify(l)}
         choice: data.verdict === 'accept' ? 'accepted: apply the hunk' : 'declined: keep the text', why: c.why } });
       const d = data.verdict === 'accept' ? await rec(p, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text: acceptText(c).slice(0, 4000), via: 'dashboard' } }) : null;
       return { ...r, directive: d?.id ?? null };
+    }
+    if (route === '/api/fixall-review') {   // the fixer's result card: accept (decisions + ONE directive the check-in applies) or decline the drafted changes
+      if (!['accept', 'decline'].includes(data.verdict)) throw fail(400, 'verdict must be accept or decline');
+      const items = loadState(p.state).items, w = fixWork(p, items), s = w.sends.find(x => x.id === data.send);
+      if (!s) throw fail(409, `No Fix all send ${data.send} on ${p.name}. Reload.`);
+      const open = s.hunks.filter(h => h.status === 'open'), want = Array.isArray(data.ids) && data.ids.length ? open.filter(h => data.ids.includes(h.id)) : open;
+      if (!want.length) throw fail(409, 'Those changes are decided already. Reload.');
+      const decs = [];
+      for (const h of want) decs.push((await rec(p, { kind: 'decision', ev: 'create', by: 'dashboard', data: { lane: 'audit', advisory: h.id, fixall: s.id,
+        question: `Fix all ${s.id} change ${h.id} (${s.run}): ${h.path}:${h.line}`, choice: data.verdict === 'accept' ? 'accepted: apply the hunk' : 'declined: keep the text', why: h.why } })).id);
+      const run = items[s.run], full = auditHunks(run, p, items).filter(h => want.some(x => x.id === h.id));
+      const d = data.verdict === 'accept' ? await rec(p, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text: applyText({ id: s.id, directive: s.directive }, run, full), via: 'dashboard', fixall_apply: s.id, hunks: want.map(h => h.id) } }) : null;
+      return { ok: true, decided: decs.length, verdict: data.verdict, directive: d?.id ?? null };
     }
     if (route === '/api/fixall') {   // META-UX-BUILD S6 (REPORT s.3 step 2, DIR-65 Q2 A): Send the fixer = ONE decision + ONE directive (the audit card's path) with the ids
       const g = await guardOf(p);
