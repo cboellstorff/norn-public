@@ -64,7 +64,7 @@ export function fixerBrief({ project, dir, dec, rows, picks = [] }) {
 export function fixResult(text, ids) {
   const { hunks } = parseAudit(text), t = String(text ?? '').replace(/\r\n/g, '\n');
   const status = ids.map(id => {
-    const m = t.match(new RegExp(`^\\s*[-*]\\s*\`?${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\`?\\s*:\\s*(drafted|skipped)\\b:?\\s*(.*)$`, 'mi'));
+    const m = t.match(new RegExp(`^\\s*[-*]\\s*\`?${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\`?\\s*:\\s*(drafted|skipped)\\b:?[ \\t]*(.*)$`, 'mi'));
     return { id, state: m ? m[1].toLowerCase() : 'missing', why: m?.[2]?.trim() || null };
   });
   return { hunks: hunks.map(h => ({ id: createHash('sha1').update(h.patch).digest('hex').slice(0, 12), file: h.file, line: h.line, patch: h.patch })), status, failed: hunks.length === 0 };
