@@ -259,8 +259,8 @@
   .rmgh { position: static; }
 }
 
-/* ---------- META-CONTROLLER C2: the Home tab (Look 3, owner Q-25). The Norn frame (the thread) in the accent colour, first in the
-   bar; the section heads, the card words and the bottom bar labels in the pixel font. Layout lives in index.html (both looks). ---------- */
+/* ---------- META-CONTROLLER C2: the Home tab (Look 3, owner Q-25). Home is first in the bar (UX review 2: no Norn frames);
+   the section heads, the card words and the bottom bar labels in the pixel font. Layout lives in index.html (both looks). ---------- */
 :root.norn .hn, :root.norn .hs h4, :root.norn .tag, :root.norn .bbar .bl { font-family: var(--pix); font-weight: 400; -webkit-font-smoothing: none; text-transform: uppercase; }
 :root.norn .hn { font-size: calc(6 * var(--px)); letter-spacing: 3px; }
 :root.norn .hs h4 { font-size: calc(5 * var(--px)); letter-spacing: 3px; color: var(--mute); }

@@ -103,7 +103,7 @@ test('C2 renderHome (Look 3): the side columns, the thread header (harness, cont
   const text = html.replace(/<[^>]+>/g, '');
   assert.match(text, /Claude Code · opus · medium/); assert.match(text, /62k \/ 110k/);
   assert.match(html, /<span class="heff"> · medium<\/span>/); assert.match(html, /<span class="hlim"> \/ 110k<\/span>/, 'effort and the hand-off limit can drop on a phone');
-  assert.match(html, /data-act="home-filter" data-filter="needs"[^>]*>needs you <b>2<\/b>/);
+  assert.match(html, /data-act="home-filter" data-filter="needs"[^>]*>needs you <b id="home-needs">2<\/b>/);   // UX review 4: the Inbox's count (terms.mjs)
   assert.match(html, /data-act="home-filter" data-filter="all" aria-pressed="true"/);
   assert.match(html, /<textarea id="chat-text"[^>]*maxlength="8000"/); assert.match(html, /data-act="chat-send"/);
   assert.match(html, /data-rid="DEC-112"/); assert.match(html, /data-rid="DIR-15"/); assert.match(html, /RUN-411/);
