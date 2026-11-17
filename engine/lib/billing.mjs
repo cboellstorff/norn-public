@@ -1,4 +1,4 @@
-// Billing modes: how the Claude account Norn runs on is paid for, and so which usage guard applies (engine/presets/billing.json).
+// Billing modes: how the Claude account Norn runs on is paid for, and so which usage guard applies (engine/presets/profiles/billing.json).
 // - a plan (pro, max-5x, max-20x, ultra): a weekly limit. The weekly guard (weekly_stop_pct against the calibrated weekly %) and
 //   the hourly rate cap hold new Claude work, as before. A plan mode also suggests the caps that fit the plan (Settings fills them).
 // - api: pay per token, no weekly limit. The weekly guard and the rate cap are off (no calibration is asked for); the optional
@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'presets', 'billing.json');
+const FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'presets', 'profiles', 'billing.json');
 const DATA = JSON.parse(fs.readFileSync(FILE, 'utf8').replace(/^﻿/, ''));
 export const BILLING_MODES = Object.entries(DATA.modes).sort((a, b) => a[1].order - b[1].order).map(([name, m]) => ({ name, ...m }));
 export const BILLING_NAMES = BILLING_MODES.map(m => m.name);
