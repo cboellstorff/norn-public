@@ -4,10 +4,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isolatedMerges, mergeParallel, mergeWtPath } from './mergewt.mjs';
 
 const ENGINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const MERGE_TEMPLATE = path.join(ENGINE, 'prompts', 'MERGE.md');
 export const MERGE_SHA_TEMPLATE = path.join(ENGINE, 'prompts', 'MERGE-SHA.md');   // META-GTP-MERGEQ piece 0: the staged merge (--sha)
+// GAP-6: the same two merges in their own merge worktree (policy.merge.parallel > 0, the default): main lands by `norn merge-land`
+export const MERGE_WT_TEMPLATE = path.join(ENGINE, 'prompts', 'MERGE-WT.md');
+export const MERGE_SHA_WT_TEMPLATE = path.join(ENGINE, 'prompts', 'MERGE-SHA-WT.md');
 export const SHOTS_MODES = ['after', 'before'];
 const fwd = p => String(p).replace(/\\/g, '/');
 
@@ -48,9 +52,12 @@ function suiteText(p, rebase, dir) {
 // META-GTP-MERGEQ piece 0: the last line of every rendered MERGE brief says what it does to the lane worktree, for `norn run
 // --stage MERGE` (runs.mjs mergeStageRefusal): rebase = the brief rebases + pushes in the lane worktree (refused while that
 // worktree holds a live run); staged = it merges one tested commit in the main checkout and never touches the lane worktree.
+// GAP-6: an isolated brief (merge_wt) merges in its own merge worktree instead: no main checkout (no `main`), the repo whose merge
+// slots it takes and how many there are (policy.merge.parallel) - runs.mjs mergeSpec / writeTrees / the slot locks read them here.
 const MARK_RE = /^<!-- meta-merge (\{.*\}) -->$/m;
 const marker = m => `\n<!-- meta-merge ${JSON.stringify(Object.fromEntries(Object.entries(m).filter(([, v]) => v !== undefined)))} -->\n`;
-/** the meta-merge marker of a brief text: { mode: rebase | staged, lane, branch, worktree, sha?, main (the main checkout it writes; META-MERGELOCK), notes (the NOTES file the brief names = the run's notes; META-MERGE-MARKER) } | null (a hand-written brief) */
+/** the meta-merge marker of a brief text: { mode: rebase | staged, lane, branch, worktree, sha?, main (the main checkout it writes; META-MERGELOCK),
+ *  merge_wt + repo + slots + main_branch + remote (GAP-6: the merge's own worktree, the repo it lands on, policy.merge.parallel, its main branch), notes (the NOTES file the brief names = the run's notes; META-MERGE-MARKER) } | null (a hand-written brief) */
 export function briefMarker(text) {
   const m = String(text ?? '').match(MARK_RE);
   if (!m) return null;
@@ -65,6 +72,7 @@ export function renderMergeBrief(p, o) {
   for (const k of ['lane', 'branch', 'notes', ...(o?.sha ? [] : ['worktree'])]) if (!o?.[k]) throw new Error(`merge brief: ${k} is required`);
   if (o.sha !== undefined && !SHA_RE.test(String(o.sha))) throw new Error(`merge brief: --sha must be a commit id (7-40 hex), got ${o.sha}`);
   if (o.sha) return renderStaged(p, o);
+  const iso = isolated(p, o);
   const mode = shotsMode(p), metaRoot = fwd(p.meta || path.join(ENGINE, '..')), st = suiteStep(p, true, fwd(o.worktree), metaRoot);
   const shotsDir = fwd(path.join(path.dirname(o.notes), 'shots'));
   const shots = !o.ui ? 'Shots: no dash / UI change: no screenshots (the notice names the merge only).'
@@ -75,23 +83,37 @@ export function renderMergeBrief(p, o) {
     lane: o.lane, branch: o.branch, worktree: fwd(o.worktree), notes: fwd(o.notes), project: p.name, main: p.deliverables?.main || 'main',
     main_checkout: fwd(p.deliverables?.repo || p.root), meta_root: metaRoot, norn: `node "${metaRoot}/engine/bin/norn.mjs"`, meta: `node "${metaRoot}/engine/bin/norn.mjs"`, shots, suite: st.step, suite_ran: st.ran,
     shot_flag: o.ui && mode === 'after' ? `; then send up to 3 key shots (the changed views, dark first) as attachments, one \`node "${metaRoot}/engine/bin/norn.mjs" notify --class merge --title "<view>" --file <shot>\` each - the phone cannot open a local path; the shots folder path may follow in the body` : '',
+    ...(iso ? iso.v(metaRoot) : {}),
   };
+  if (iso) return fill(MERGE_WT_TEMPLATE, v) + marker({ mode: 'rebase', lane: o.lane, branch: o.branch, worktree: fwd(o.worktree), ...iso.m, notes: v.notes });
   return fill(MERGE_TEMPLATE, v) + marker({ mode: 'rebase', lane: o.lane, branch: o.branch, worktree: fwd(o.worktree), main: v.main_checkout, notes: v.notes });
 }
 
+// GAP-6: a merge of project p in its own merge worktree (policy.merge.parallel > 0 and a state dir) -> { wt, v (the template values), m (the marker fields) } | null
+function isolated(p, o) {
+  if (!isolatedMerges(p)) return null;
+  const wt = mergeWtPath(p.state, o.lane, o.sha), repo = fwd(p.deliverables?.repo || p.root);
+  return { wt, m: { merge_wt: wt, repo, slots: mergeParallel(p), main_branch: p.deliverables?.main || 'main', remote: p.deliverables?.remote || 'origin' },
+    v: metaRoot => ({ merge_wt: wt, land: `node "${metaRoot}/engine/bin/norn.mjs" merge-land --project ${p.file ? fwd(p.file) : '<project.json>'} --worktree ${wt}` }) };
+}
+
 // the staged merge (MERGE-SHA.md): the suite and the shots run on the merged tree in the main checkout
+// GAP-6: isolated, the same in the run's merge worktree (MERGE-SHA-WT.md), landed by norn merge-land
 function renderStaged(p, o) {
-  const mode = shotsMode(p), metaRoot = fwd(p.meta || path.join(ENGINE, '..')), mainCo = fwd(p.deliverables?.repo || p.root);
-  const shotsDir = fwd(path.join(path.dirname(o.notes), 'shots')), sha = String(o.sha), st = suiteStep(p, false, mainCo, metaRoot);
+  const mode = shotsMode(p), metaRoot = fwd(p.meta || path.join(ENGINE, '..')), mainCo = fwd(p.deliverables?.repo || p.root), iso = isolated(p, o);
+  const at = iso ? iso.wt : mainCo, land = iso ? 'the land' : 'the push';   // where the merge is made, and what publishes it
+  const shotsDir = fwd(path.join(path.dirname(o.notes), 'shots')), sha = String(o.sha), st = suiteStep(p, false, at, metaRoot);
   const shots = !o.ui ? 'Shots: no dash / UI change: no screenshots (the notice names the merge only).'
     : mode === 'after'
-      ? `SHOTS AFTER (project policy merge.shots = after): after step 5's commit and before the push, take offscreen screenshots of every changed dash / UI view with \`norn shot\` (\`node "${metaRoot}/engine/bin/norn.mjs" shot <url> --out <png> [--phone] [--theme dark]\`; never start a browser by hand) from ${mainCo} into ${shotsDir}/; the owner sees them in the notice of step 7.`
-      : `SHOTS BEFORE (project policy merge.shots = before): take offscreen screenshots of every changed dash / UI view with \`norn shot\` (\`node "${metaRoot}/engine/bin/norn.mjs" shot <url> --out <png> [--phone] [--theme dark]\`; never start a browser by hand) from ${mainCo} (the uncommitted merge) into ${shotsDir}/, send them (\`norn notify --title "shots before merge ${o.branch}" --file <shot>\` per shot), then \`git -C ${mainCo} merge --abort\`, write NOTES and end \`## STOPPED: shots sent before the merge\` - do NOT do steps 5-7; the check-in re-briefs the merge once the owner answered.`;
+      ? `SHOTS AFTER (project policy merge.shots = after): after step 5's commit and before ${land}, take offscreen screenshots of every changed dash / UI view with \`norn shot\` (\`node "${metaRoot}/engine/bin/norn.mjs" shot <url> --out <png> [--phone] [--theme dark]\`; never start a browser by hand) from ${at} into ${shotsDir}/; the owner sees them in the notice of step 7.`
+      : `SHOTS BEFORE (project policy merge.shots = before): take offscreen screenshots of every changed dash / UI view with \`norn shot\` (\`node "${metaRoot}/engine/bin/norn.mjs" shot <url> --out <png> [--phone] [--theme dark]\`; never start a browser by hand) from ${at} (the uncommitted merge) into ${shotsDir}/, send them (\`norn notify --title "shots before merge ${o.branch}" --file <shot>\` per shot), then \`git -C ${at} merge --abort\`, write NOTES and end \`## STOPPED: shots sent before the merge\` - do NOT do steps 5-7; the check-in re-briefs the merge once the owner answered.`;
   const v = {
     lane: o.lane, branch: o.branch, worktree: o.worktree ? fwd(o.worktree) : '(the lane worktree)', notes: fwd(o.notes), project: p.name, main: p.deliverables?.main || 'main',
     main_checkout: mainCo, meta_root: metaRoot, norn: `node "${metaRoot}/engine/bin/norn.mjs"`, meta: `node "${metaRoot}/engine/bin/norn.mjs"`, shots, sha, sha_short: sha.slice(0, 7), suite: st.step, suite_ran: st.ran,
     shot_flag: o.ui && mode === 'after' ? `; then send up to 3 key shots (the changed views, dark first) as attachments, one \`node "${metaRoot}/engine/bin/norn.mjs" notify --class merge --title "<view>" --file <shot>\` each - the phone cannot open a local path; the shots folder path may follow in the body` : '',
+    ...(iso ? iso.v(metaRoot) : {}),
   };
+  if (iso) return fill(MERGE_SHA_WT_TEMPLATE, v) + marker({ mode: 'staged', lane: o.lane, branch: o.branch, worktree: o.worktree ? fwd(o.worktree) : undefined, sha, ...iso.m, notes: v.notes });
   return fill(MERGE_SHA_TEMPLATE, v) + marker({ mode: 'staged', lane: o.lane, branch: o.branch, worktree: o.worktree ? fwd(o.worktree) : undefined, sha, main: mainCo, notes: v.notes });
 }
 

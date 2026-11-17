@@ -47,6 +47,7 @@ import { remoteSetup, remoteOff } from '../lib/remote.mjs';
 import { fwd } from '../lib/config.mjs';
 import { newLane, lanePaths, LaneError } from '../lib/lanenew.mjs';
 import { renderMergeBrief, shotsMode, briefMarker } from '../lib/mergebrief.mjs';
+import { landProject, landLine, LAND_EXIT } from '../lib/mergeland.mjs';
 import { isMergeStage } from '../lib/usageguard.mjs';
 import { delegateStart, delegateWait, ASK_MAX_S } from '../lib/delegate.mjs';
 import { askStart, askWait } from '../lib/ask.mjs';
@@ -390,6 +391,12 @@ function briefNotes(flags, brief) {
   if (given && normWt(given) !== normWt(own)) throw new RunError(`--notes ${fwd(given)}: the MERGE brief ${fwd(brief)} names notes ${fwd(own)} (its worker writes its end marker there) - drop --notes or pass that file`);
   return own;
 }
+// GAP-6: an isolated MERGE brief names the run's merge worktree (runs.mergeSpec makes it the run's worktree whatever --worktree says):
+// with no --worktree and no lane default it is the worktree
+function briefMergeWt(flags, brief) {
+  if (!isMergeStage(flags.stage) || !brief || brief === '-') return null;
+  try { return briefMarker(fs.readFileSync(brief, 'utf8'))?.merge_wt || null; } catch { return null; }
+}
 // the launch spec of one run from the norn run flags (shared by norn run and norn flow; META-GTP-FLOW piece 2)
 function runSpec(flags, env, { project, state, locks }) {
   const ex = flags.executor;
@@ -418,7 +425,7 @@ function runSpec(flags, env, { project, state, locks }) {
     state, locksDir: locks, executor: ex, lane: flags.lane, brief: callerPath(flags.brief), project: project?.name,
     ...(project && subdirOf(project) ? { subdir: subdirOf(project) } : {}),   // a monorepo project: the scope guard keeps a run without Scope: inside it
     main_checkout: project ? (project.deliverables?.repo || project.root) : undefined,   // META-MERGELOCK: a MERGE run's main checkout lock (runs.writeTrees) when its brief has no marker
-    worktree: flags.worktree || late(project?.lane_defaults?.worktree), notes: briefNotes(flags, callerPath(flags.brief)) || callerPath(flags.notes) || late(project?.lane_defaults?.notes),
+    worktree: flags.worktree || late(project?.lane_defaults?.worktree) || briefMergeWt(flags, callerPath(flags.brief)), notes: briefNotes(flags, callerPath(flags.brief)) || callerPath(flags.notes) || late(project?.lane_defaults?.notes),
     after: afterOf(flags.after), inputs: afterOf(flags.inputs, parseInputs), epic: flags.epic, priority: flags.priority,
     labels: labelsOf(flags.labels), node_labels: servedLabels(machine),   // META-GTP-FED piece 1
     caller: flags.as || env.META_ROLE,   // META-CONTROLLER C4: a check-in's run on a held lane is refused (runs.heldRefusal)
@@ -916,6 +923,25 @@ function mergeBriefCmd(argv, env, out, err) {
   }
 }
 
+// ---------- GAP-6: norn merge-land (an isolated MERGE run lands its merge worktree on main: fast-forward, short lock, never a force) ----------
+const LAND_USAGE = 'usage: norn merge-land --project project.json --worktree <merge worktree> [--no-push] [--attempts N] [--locks D]    (exit 0 LANDED, 4 REMERGED: main moved and was merged in - re-test, then land again, 3 NOT LANDED: nothing landed)';
+function mergeLandCmd(argv, env, out, err) {
+  try {
+    const f = h1Flags(argv, ['project', 'worktree', 'attempts', 'locks', 'no-push!']);
+    if (!f.project || !f.worktree) throw new Usage('--project and --worktree are required', null);
+    const attempts = f.attempts === undefined ? undefined : Number(f.attempts);
+    if (attempts !== undefined && !(Number.isInteger(attempts) && attempts > 0)) throw new Usage('--attempts wants a whole number > 0', null);
+    const p = loadProject(f.project, { meta: metaRoot(env) });
+    const r = landProject(p, { wt: path.resolve(f.worktree), locksDir: f.locks || path.join(path.dirname(path.resolve(p.state)), 'locks'), run: env.META_RUN_ID || 'merge-land',
+      push: !f['no-push'], attempts });
+    out(landLine(r));
+    return LAND_EXIT[r.status] ?? 1;
+  } catch (e) {
+    err('error: ' + e.message); err(LAND_USAGE);
+    return e instanceof Usage || e instanceof ConfigError ? 2 : 1;
+  }
+}
+
 // ---------- H1: norn mcp (stdio MCP server) / norn harness install ----------
 const H1_USAGE = {
   mcp: 'norn mcp --project <project.json> | --state <dir>  --profile controller|checkin|worker|chat (chat: the Norn chat only - controller tools + norn_show / norn_cli / norn_approve, by tier) | (machine-scoped, no project) --profile setup [--client <name> (stamps via chat:<name>; default mcp)]',
@@ -1276,6 +1302,7 @@ Inside a run:
 Plumbing:
   norn ready                       what can start now
   norn merge-brief                 write the brief of one staged merge
+  norn merge-land                  land a merge worktree on main (fast-forward, never a force)
   norn gen                         regenerate (or --check) the generated agent files
   norn billing                     how the Claude account is paid for: a plan (weekly limit) or API billing
   norn calib                       record a weekly usage reading
@@ -1288,7 +1315,7 @@ Plumbing:
   norn eval                        replay check-ins against a copy of a state dir`;
 function usageOf(c) {
   const u = { rec: ALL_USAGE, migrate: MIGRATE_USAGE, ...SETUP_USAGE, ...RUN_USAGE, ...S5_USAGE, dash: DASH_USAGE, smoke: 'norn smoke [--keep] [--update-goldens]',
-    calib: CALIB_USAGE, billing: BILLING_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
+    calib: CALIB_USAGE, billing: BILLING_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, 'merge-land': LAND_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
     eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
     node: NODE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
   return u && 'usage: ' + u.replace(/^usage: /, '');
@@ -1341,6 +1368,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'billing') return billingCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'notify') return notifyCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'merge-brief') return mergeBriefCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'merge-land') return mergeLandCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'ledger') return ledgerCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'node') return nodeCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'epic') return epicCmd(argv.slice(1), env, out, err);

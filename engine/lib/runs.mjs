@@ -19,6 +19,7 @@ import { usageRefusal, onAccount, isMergeStage } from './usageguard.mjs';
 import { authRefusal, probeAuth, matchExcerpt } from './authguard.mjs';
 import { limitRefusal, openLimits } from './limitgate.mjs';
 import { briefMarker } from './mergebrief.mjs';
+import { slotKey, ensureMergeWorktree, sweepMergeWorktrees, mergeWorktrees } from './mergewt.mjs';
 import { openEpic, joinEpic, EpicError } from './epics.mjs';
 import { PRIORITIES } from './records.mjs';
 import { hookCommand } from './mail.mjs';
@@ -163,24 +164,77 @@ export function writeTrees(o) {
   if (o.kind === 'audit' || o.critique) return [];   // META-TEND P5: a read-only audit writes no tree - it never holds the main checkout's lock; nor does a plan review (META-DOD 3)
   const own = o.worktree ? [o.worktree] : [];
   if (!isMergeStage(o.stage)) return own;
-  let m = null;
-  try { m = briefMarker(fs.readFileSync(o.brief, 'utf8')); } catch { /* no brief: the spec decides */ }
+  const m = markerOf(o);
+  // GAP-6: an isolated merge writes its own merge worktree (mergeSpec made it the run's) - never the main checkout; a rebase brief
+  // also the lane worktree it rebases in
+  if (m?.merge_wt) return m.mode === 'rebase' && m.worktree && !own.some(w => normWt(w) === normWt(m.worktree)) ? [...own, m.worktree] : own;
   const main = m?.main || o.main_checkout;
   return !main || own.some(w => normWt(w) === normWt(main)) ? own : [...own, main];
 }
+const markerOf = o => { try { return briefMarker(fs.readFileSync(o.brief, 'utf8')); } catch { return null; } };   // no brief: the spec decides
 // take the lock of every tree in order; one held = release the ones taken, refuse (exit 3). One handle over them all.
 function acquireTrees(locksDir, trees, opts) {
   const hs = [];
   try { for (const wt of trees) hs.push(acquireLock(locksDir, wt, opts)); } catch (e) { for (const h of hs) h.release(); throw e; }
-  return { file: hs[0]?.file ?? null, files: hs.map(h => h.file), refresh: extra => hs.every(h => h.refresh(extra)), release: () => { for (const h of hs) h.release(); } };
+  return handleOf(hs);
 }
+const handleOf = hs => ({ file: hs[0]?.file ?? null, files: hs.map(h => h.file), refresh: extra => hs.every(h => h.refresh(extra)), release: () => { for (const h of hs) h.release(); }, hs });
 /** the trees of spec o (writeTrees) whose lock is fresh and names another run: [{ tree, run, own }] */
 export function heldTrees(o, staleMs = STALE_MS) {
   if (!o.locksDir) return [];
-  return writeTrees(o).map((tree, i) => ({ tree, own: i === 0, cur: readJson(lockPath(o.locksDir, tree)) }))
-    .filter(({ cur }) => cur && !(Date.now() - Date.parse(cur.ts) > staleMs)).map(({ tree, own, cur }) => ({ tree, own, run: cur.run ?? 'a writer' }));
+  return writeTrees(o).map((tree, i) => ({ tree, own: i === 0, lane: i > 0 && !!o.merge_wt, cur: readJson(lockPath(o.locksDir, tree)) }))
+    .filter(({ cur }) => cur && !(Date.now() - Date.parse(cur.ts) > staleMs)).map(({ tree, own, lane, cur }) => ({ tree, own, lane, run: cur.run ?? 'a writer' }));
 }
-const heldWords = h => (h.own ? `worktree held by ${h.run}` : `main checkout ${fwd(h.tree)} held by ${h.run} (one merge at a time)`);
+const heldWords = h => (h.own ? `worktree held by ${h.run}` : h.lane ? `lane worktree ${fwd(h.tree)} held by ${h.run}` : `main checkout ${fwd(h.tree)} held by ${h.run} (one merge at a time)`);
+
+// ---------- GAP-6: isolated merges - the run's own merge worktree, the merge slots (policy.merge.parallel) ----------
+// a MERGE run whose brief names a merge worktree (marker merge_wt) works there, whatever --worktree said: the spec's worktree is
+// it (the lock, the cwd, the scope guard), merge_wt + merge_repo say Norn makes it at the start and removes it at the end
+export function mergeSpec(o) {
+  if (!isMergeStage(o.stage) || !o.brief) return o;
+  const m = markerOf(o);
+  if (!m?.merge_wt || !m.repo) return o;
+  return { ...o, worktree: m.merge_wt, merge_wt: m.merge_wt, merge_repo: m.repo, merge_slots: Number.isInteger(m.slots) && m.slots > 0 ? m.slots : 1,
+    merge_main: m.main_branch || 'main', merge_remote: m.remote || 'origin' };
+}
+const isMergeWtSpec = o => !!o.merge_wt && !!o.merge_repo && normWt(o.worktree) === normWt(o.merge_wt);
+const slotFresh = (o, i, staleMs) => { const cur = readJson(lockPath(o.locksDir, slotKey(o.merge_repo, i))); return cur && !(Date.now() - Date.parse(cur.ts) > staleMs) ? cur : null; };
+/** an isolated merge with every slot of its repo taken: the words (a fill term / queue why), else null */
+export function slotsFull(o, staleMs = STALE_MS) {
+  if (!isMergeWtSpec(o) || !o.locksDir) return null;
+  const held = [];
+  for (let i = 0; i < o.merge_slots; i++) { const c = slotFresh(o, i, staleMs); if (!c) return null; held.push(c.run ?? 'a merge'); }
+  return `merge slots full: ${held.length} merge(s) running in ${fwd(o.merge_repo)} (${held.join(', ')}; policy.merge.parallel ${o.merge_slots})`;
+}
+// take the first free slot lock of the repo (refused exit 3 when all are held)
+function acquireSlot(o, opts) {
+  for (let i = 0; i < o.merge_slots; i++) { try { return acquireLock(o.locksDir, slotKey(o.merge_repo, i), opts); } catch (e) { if (!(e instanceof RunRefused)) throw e; } }
+  throw new RunRefused(slotsFull(o, opts.staleMs) || `merge slots full in ${fwd(o.merge_repo)}`, 3);
+}
+// the merge worktrees a run may still need: those of queued / running / claimed runs, and of a run that ended HANDOFF in the last
+// day (its resume goes on there). Every other one in <state>/mq is a leftover.
+export const MERGE_WT_KEEP_MS = 24 * 3600e3;
+export function mergeWtInUse(state, now = Date.now()) {
+  const keep = new Set(), last = new Map();
+  for (const r of runsOf(state)) {
+    if (r.kind !== 'run' || !r.data.worktree || !isMergeStage(r.data.stage)) continue;
+    const k = normWt(r.data.worktree);
+    if (['queued', 'running', 'claimed'].includes(r.state)) keep.add(k);
+    if (!last.has(k) || Number(r.id.slice(4)) > Number(last.get(k).id.slice(4))) last.set(k, r);
+  }
+  for (const [k, r] of last) if (r.end?.outcome === 'handoff' && now - Date.parse(r.updated || r.created) < MERGE_WT_KEEP_MS) keep.add(k);
+  return keep;
+}
+// at the start of an isolated merge: sweep the leftovers of the state dir, then make (or keep, on a resume) its own merge worktree
+function prepareMergeWt(o) {
+  try {
+    // a worktree whose lock is fresh belongs to a start in flight (its lock is taken before its record): kept too
+    const locked = mergeWorktrees(o.state).filter(wt => { const c = readJson(lockPath(o.locksDir, wt)); return c && !(Date.now() - Date.parse(c.ts) > (o.staleMs ?? STALE_MS)); }).map(normWt);
+    sweepMergeWorktrees({ state: o.state, repo: o.merge_repo, keep: new Set([...mergeWtInUse(o.state), ...locked, normWt(o.merge_wt)]) });
+  } catch { /* a sweep never blocks a start */ }
+  try { return ensureMergeWorktree({ repo: o.merge_repo, wt: o.merge_wt, main: o.merge_main, remote: o.merge_remote }); }
+  catch (e) { throw new RunError(`merge worktree ${fwd(o.merge_wt)}: ${String(e.stderr || e.message).trim().split(/\r?\n/)[0]}`, 1); }
+}
 
 // ---------- heartbeats + lost sweep ----------
 export const hbPath = (state, run) => path.join(state, 'hb', run + '.hb');
@@ -284,7 +338,8 @@ function launchable(o) {
   if (!info) throw unknownExecutor(o.executor);
   for (const [k, v] of [['state', o.state], ['locksDir', o.locksDir], ['brief', o.brief], ['worktree', o.worktree], ['lane', o.lane]]) if (!v) throw new RunError(`${k} is required`);
   if (!fs.existsSync(o.brief)) throw new RunError(`brief not found: ${o.brief}`);
-  if (!fs.existsSync(o.worktree)) throw new RunError(`worktree not found: ${o.worktree}`);
+  if (isMergeWtSpec(o)) { if (!fs.existsSync(o.merge_repo)) throw new RunError(`merge repo not found: ${o.merge_repo}`); }   // GAP-6: the start makes its merge worktree
+  else if (!fs.existsSync(o.worktree)) throw new RunError(`worktree not found: ${o.worktree}`);
   if (o.executor !== 'fake' && o.provider?.runner !== 'fake' && !o.exe) throw new RunError(`no ${o.executor} executable (machine.json)`);
   if (isApi(o.provider)) { const miss = providerEnv(o.provider, process.env).missing; if (miss) throw new RunError(`executor ${o.executor}: its key env var ${miss} is not set`); }
   return info;
@@ -370,7 +425,7 @@ const noCaller = ({ caller: _c, ...o }) => o;
 export function startRun(o) {
   if (!o.fromQueue) heldRefusal(o.state, o.lane, o.caller);
   const caller = o.caller;
-  o = withFloor(withEpic(noCaller(o)));
+  o = mergeSpec(withFloor(withEpic(noCaller(o))));
   duplicateCheck(o);
   busyDoor({ ...o, caller });
   if (o.after?.length && !o.fromQueue) {   // NORN-WATCH S4: a run with `after:` conditions always queues; fillPass starts it once all are met
@@ -386,6 +441,8 @@ export function startRun(o) {
     // META-MERGELOCK: a MERGE whose main checkout is held by another merge waits queued; the fill starts it when the lock frees
     const mh = heldTrees(rest, rest.staleMs ?? STALE_MS).find(h => !h.own);
     if (mh) return { ...queueRun(rest), queued: true, why: heldWords(mh) };
+    const sf = slotsFull(rest, rest.staleMs ?? STALE_MS);   // GAP-6: every merge slot of the repo taken: it waits queued
+    if (sf) return { ...queueRun(rest), queued: true, why: sf };
     // META-GTP-DAG piece 0 (norn RUN-36 started at RATE_OK=0): the immediate start obeys the fill's usage guard; refused = queued
     const refused = limitRefusal(rest.state, rest, { now: rest.now }) || (onAccount(infoOf(rest)) ? usageRefusal(rest, rest.state) : null) || authGate(rest) || resourceGate(rest, rest.resources || sampleResources);   // + piece 5, META-AUTH
     if (refused) return { ...queueRun(rest), queued: true, why: refused };
@@ -405,9 +462,11 @@ export function startRun(o) {
   const mr = mergeStageRefusal(o, staleMs);
   if (mr) throw new RunRefused(mr, 3);
   if (o.lock === false && o.kind !== 'checkin') helperLockCheck(o);
-  const lock = o.lock === false ? { file: null, files: [], refresh() {}, release() {} } : acquireTrees(o.locksDir, writeTrees(o), { run: 'pending', staleMs });
+  let lock = o.lock === false ? { file: null, files: [], refresh() {}, release() {} } : acquireTrees(o.locksDir, writeTrees(o), { run: 'pending', staleMs });
   try {
+    if (isMergeWtSpec(o) && o.lock !== false) lock = handleOf([...lock.hs, acquireSlot(o, { run: 'pending', staleMs })]);   // GAP-6: one merge slot of the repo
     capCheck(o, staleMs);
+    if (isMergeWtSpec(o)) prepareMergeWt(o);   // GAP-6: its own merge worktree (kept on a resume), the leftovers swept
     const base = path.join(o.state, 'logs', `${o.lane}-${stamp()}-${crypto.randomBytes(3).toString('hex')}`);
     const log = base + '.log', final = base + (info.harness === 'codex' ? '.md' : '.json');
     // META-GTP-MAIL piece 3: a nudge resumes the SAME session (claude --resume <sid> keeps its id unless --fork-session)
@@ -470,7 +529,7 @@ export const queueSpecPath = (state, run) => path.join(state, 'runs', run + '.qu
 export function queueRun(o) {
   if (!o.fromQueue) heldRefusal(o.state, o.lane, o.caller);
   const caller = o.caller;
-  o = withFloor(withEpic(noCaller(o)));
+  o = mergeSpec(withFloor(withEpic(noCaller(o))));
   duplicateCheck(o);
   busyDoor({ ...o, caller });
   const info = launchable(o);
@@ -710,6 +769,7 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
     const bc = caps.filter(k => blocked.has(k));
     if (bc.length) row.terms.push(`cap ${bc.join(', ')}: kept for ${[...new Set(bc.map(k => blocked.get(k)))].join(', ')} (fill order per cap)`);
     for (const h of heldTrees(spec, staleMs)) row.terms.push(heldWords(h));   // META-MERGELOCK: a MERGE waits for the main checkout too
+    { const sf = slotsFull(spec, staleMs); if (sf) row.terms.push(sf); }   // GAP-6: an isolated merge waits for a merge slot
     const mr = mergeStageRefusal(spec, staleMs);   // META-GTP-MERGEQ piece 0: a rebase MERGE waits for its lane worktree
     if (mr) row.terms.push(mr);
     // META-GTP-FED piece 1: labels this machine does not serve wait (no cap held); with no other term the row is OFFERED to the nodes -
