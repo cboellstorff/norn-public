@@ -4,11 +4,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fixPlan, fixerBrief, fixerPrompt, fixResult, briefIds, briefRows, fixBatch, runsFor } from '../engine/lib/fixer.mjs';
 import { withDefaults } from '../engine/lib/policy.mjs';
 import { main } from '../engine/bin/norn.mjs';
+import { mkTmp } from './helpers/tmp.mjs';
 
 const ids = n => Array.from({ length: n }, (_, i) => `I-c16-${String(i).padStart(3, '0')}`);
 function world({ n = 90, runs = 0, decRuns, rest = 0 } = {}) {
@@ -70,7 +70,7 @@ test('the answer: audit-format hunks + one line per finding; no parsable hunk = 
 });
 
 test('rec show: a long id list prints as its first ids + a count; --full prints all', () => {
-  const state = fs.mkdtempSync(path.join(os.tmpdir(), 'fixer-show-')), env = { META_STATE: state, META_ROLE: 'owner' }, o = [], e = [];
+  const state = mkTmp('fixer-show-'), env = { META_STATE: state, META_ROLE: 'owner' }, o = [], e = [];
   const run = argv => main(argv, env, s => o.push(s), s => e.push(s));
   assert.equal(run(['rec', 'add', 'directive', '--text', 'Fix all '.padEnd(1200, 'x'), '--via', 'cli']), 0, e.join('\n'));
   const id = o.join('\n').match(/DIR-\d+/)[0], ev = fs.readdirSync(state).map(f => path.join(state, f)).find(f => /\.jsonl$/.test(f) && fs.readFileSync(f, 'utf8').includes(id));
@@ -91,7 +91,7 @@ test('rec show: a long id list prints as its first ids + a count; --full prints 
 import { keepFindings, findingsFile, tickFix, fixCards, verdictText, verdictIds } from '../engine/lib/fixer.mjs';
 import { record } from '../engine/lib/records.mjs';
 
-const tmp = p => fs.mkdtempSync(path.join(os.tmpdir(), p));
+const tmp = p => mkTmp(p);
 const guardRow = (id, extra = {}) => ({ id, type: 'instructions', kind: 'drafts', batch: 'instr-c16|drafts', path: 'C:/r/CLAUDE.md', line: 3, why: `why ${id}`, action: 'move it', ...extra });
 
 test('keepFindings: the rows of an active fixall directive, once; nothing for a directive without fixall', () => {
