@@ -263,13 +263,18 @@ let shotLib = null;
 try { shotLib = await import('../engine/lib/shot.mjs'); } catch { /* norn shot not on this branch */ }
 const browser = shotLib?.findBrowser?.() ?? null;
 test('Context at 390 x 844 (phone): document scrollWidth == the viewport width, rows (Per file) and hints (the checks) shown; a row opens the file', {
-  skip: !shotLib ? 'engine/lib/shot.mjs is not on this branch' : !browser ? 'no Edge / Chrome / Chromium installed' : false, timeout: 120000 }, async () => {
+  skip: !shotLib ? 'engine/lib/shot.mjs is not on this branch' : !browser ? 'no Edge / Chrome / Chromium installed' : false, timeout: 240000 }, async () => {   // the scan wait (<= 120 s) + the browser
   const { launchBrowser, killTree, killProfileProcs, removeProfile } = shotLib;
   const f = fx();
   w(path.join(f.repo, 'deep', 'a-very-long-folder-name-for-the-phone-width-test', 'another-long-folder-name-that-does-not-break', 'CLAUDE.md'), '# deep\n');
   const app = createDashboard({ projects: [f.p], machine: f.machine, budgetFile: path.join(f.base, 'budget.json'), platform: {}, sessionsDir: path.join(f.base, 'sessions') });
   await new Promise(r => app.server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${app.server.address().port}`;
+  // the instruction-file scan runs in a worker (META-UX-BUILD S1): until it lands, Slop has no H- / T- rows and Per file no rows,
+  // and the page's own 20 s wait below raced it (red on a clean main, "the instruction-file scan is running"). Wait for the scan.
+  let l = await (await fetch(`${url}/api/instructions?project=kestrel`)).json();
+  for (let i = 0; l.pending && i < 1200; i++) { await new Promise(r => setTimeout(r, 100)); l = await (await fetch(`${url}/api/instructions?project=kestrel`)).json(); }
+  assert.equal(l.pending, false, `the instruction-file scan landed (${JSON.stringify(l.error ?? null)})`);
   const profile = mkTmp('meta-shot-');
   const child = launchBrowser({ browser, profile, size: [390, 844] });
   let ws;
