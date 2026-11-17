@@ -80,30 +80,6 @@ export function apiRefusal(B, state, { now = Date.now(), stateRoot } = {}) {
   return s.usd >= cap ? `api spend $${s.usd.toFixed(2)} in 24 h >= cap $${cap.toFixed(2)}` : null;
 }
 
-// a queued run keeps a copy of the budget it was queued with (runs.mjs queue spec), so a billing change would not reach it: the
-// usage keys of every queued spec under the state root are set to the new budget's (the other keys stay as queued)
-export const USAGE_KEYS = ['billing', 'api_usd_per_day', 'weekly_stop_pct', 'usage_rate_cap_pct_per_h', 'desired_burn_pct_per_h'];
-/** budget: the machine budget now in force -> the queued spec files changed */
-export function refreshQueued(stateRoot, budget) {
-  const changed = [];
-  let dirs = []; try { dirs = fs.readdirSync(stateRoot, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => path.join(stateRoot, d.name, 'runs')); } catch { return changed; }
-  for (const d of dirs) {
-    let files = []; try { files = fs.readdirSync(d).filter(f => f.endsWith('.queue.json')); } catch { continue; }
-    for (const f of files) {
-      const file = path.join(d, f);
-      try {
-        const j = JSON.parse(fs.readFileSync(file, 'utf8')), b = { ...(j.budget || {}) };
-        for (const k of USAGE_KEYS) if (budget[k] === undefined) delete b[k]; else b[k] = budget[k];
-        if (JSON.stringify(b) === JSON.stringify(j.budget || {})) continue;
-        const tmp = `${file}.${process.pid}.tmp`;
-        fs.writeFileSync(tmp, JSON.stringify({ ...j, budget: b }, null, 2)); fs.renameSync(tmp, file);
-        changed.push(file);
-      } catch { /* a spec mid-write or gone: the next change reaches it */ }
-    }
-  }
-  return changed;
-}
-
 /** one line in words: the mode and, for API billing, the last 24 h of spend against the cap */
 export function billingLine(B, state, { now = Date.now(), stateRoot } = {}) {
   const m = billingOf(B);

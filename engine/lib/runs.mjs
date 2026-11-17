@@ -463,6 +463,25 @@ function duplicateCheck(o) {
 
 // ---------- queue (META-GT12): a run waiting for a cap slot; filled FIFO per cap on every run exit and by norn status ----------
 export const queueSpecPath = (state, run) => path.join(state, 'runs', run + '.queue.json');
+// GAP-2 (queued runs kept stale settings): a queue spec is the launch spec of its queue time, but only what is genuinely the run's own
+// may stay frozen in it. Two kinds of key:
+//  - MACHINE-LEVEL, read LIVE at every fill walk and fill start: the whole machine budget (spec.budget_file = the local/budget.json
+//    `norn run` read: worker caps max_*, billing + the usage guard keys, the worker floor worker_min_*, the default models / efforts
+//    claude_model / *_effort, the typed executors' caps), and the project policy parts (launchpolicy.mjs resolveAtFill: memory, launch
+//    profile, model / effort / agent / class when not given on the command line, a typed executor's entry). The pause files and
+//    STATUS are paths derived from the state dir; their existence / content is read at each fill, so they never go stale.
+//  - PER-RUN, kept as queued: executor, lane, brief, worktree, notes, stage, round, after / inputs, epic, priority, labels, parent / via,
+//    the flags the dispatcher gave (refill.explicit: --model / --effort / --agent / --class), budget_min, the state / locks dirs.
+// Not refreshed (machine.json, rarely changed): exe, node_labels, git_ledger. A spec from before budget_file (no budget_file and no
+// refill.budget_file) keeps its stored copy. A budget file that is gone = {} (as `norn run` reads it); one that does not parse keeps the copy.
+/** the machine budget in force NOW for a queued / run spec */
+export function liveBudget(spec) {
+  const f = spec && Object.hasOwn(spec, 'budget_file') ? spec.budget_file : spec?.refill?.budget_file;   // null = no file: the copy (a fed node with no budget)
+  if (!f) return spec?.budget || {};
+  try { return JSON.parse(fs.readFileSync(f, 'utf8').replace(/^﻿/, '')); } catch (e) { return e.code === 'ENOENT' ? {} : spec.budget || {}; }
+}
+/** a queue spec with its machine-level keys from now (see above) */
+export const withLiveBudget = spec => (spec ? { ...spec, budget: liveBudget(spec) } : spec);
 /**
  * Record a queued run (RUN event `queue`: the start fields + not_before, requeue_of) and keep its launch spec beside the run specs.
  * o: a startRun spec + notBefore? (ISO; the fill waits until then) + requeueOf? (the limit-exit run it repeats). Returns { run, position }.
@@ -698,7 +717,7 @@ function walkQueue(state, { now = Date.now(), act = null, resources = sampleReso
       for (const c of a.conds) if (!c.met) row.terms.push(`after ${c.cond} unmet`);
     }
     if (q.not_before && Date.parse(q.not_before) > now) row.terms.push(`not_before ${q.not_before}`);
-    const spec = readJson(queueSpecPath(state, q.id));
+    const spec = withLiveBudget(readJson(queueSpecPath(state, q.id)));   // GAP-2: caps, usage guard, floor from the budget of NOW
     if (!spec) { gone('queue spec missing'); continue; }
     const paused = (spec.paused || []).find(f => fs.existsSync(f));
     if (paused) row.terms.push(`PAUSED (${paused.replace(/\\/g, '/')})`);
