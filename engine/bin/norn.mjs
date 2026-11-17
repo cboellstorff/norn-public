@@ -15,11 +15,12 @@ import { loadPlan, formatPlan } from '../lib/plan.mjs';
 import { instructionsView, formatInstructions, formatSuggest, paragraphs, applySuggestion, discover } from '../lib/instructions.mjs';
 import { auditScope, auditPrompt, auditStamp, writeStamp, auditsDir, auditsView, AUDIT_MODEL, AUDIT_EFFORT } from '../lib/audit.mjs';
 import { FIX_LANE, fixBatch, fixPlan, fixerBrief, fixerPrompt, fixerDir, findingsFile, readRunBrief } from '../lib/fixer.mjs';
+import { resultPath, writeResult, ResultError } from '../lib/result.mjs';
 import { openCards } from '../lib/rules.mjs';
 import os from 'node:os';
 import { readyGate } from '../lib/dod.mjs';
 import { critiqueHolds, critiqueSkip, critiqueFiles, critiquePrompt, classExecutor } from '../lib/critique.mjs';
-import { startRun, stopRun, requeueRun, fillQueue, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt } from '../lib/runs.mjs';
+import { startRun, stopRun, requeueRun, fillQueue, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf } from '../lib/runs.mjs';
 import { parseAfter, parseInputs, AfterError, makeEval, readyWords } from '../lib/after.mjs';
 import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../lib/epics.mjs';
 import { loadRoadmap, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError } from '../lib/roadmap.mjs';
@@ -1272,6 +1273,7 @@ Inside a run:
   norn delegate                    hand a side question to a helper run
   norn ask                         ask a run (or a cold helper) a question
   norn mail                        messages between runs, the check-in and the controller
+  norn done                        end your run: write its result file (done | stopped | handoff), beside the NOTES marker
 
 Plumbing:
   norn ready                       what can start now
@@ -1290,7 +1292,7 @@ function usageOf(c) {
   const u = { rec: ALL_USAGE, migrate: MIGRATE_USAGE, ...SETUP_USAGE, ...RUN_USAGE, ...S5_USAGE, dash: DASH_USAGE, smoke: 'norn smoke [--keep] [--update-goldens]',
     calib: CALIB_USAGE, billing: BILLING_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
     eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
-    node: NODE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
+    node: NODE_USAGE, done: DONE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
   return u && 'usage: ' + u.replace(/^usage: /, '');
 }
 /**
@@ -1353,6 +1355,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'instructions') return instructionsCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'audit') return auditCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'fix') return fixCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'done') return doneCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'critique') return critiqueCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'mergeq') return mergeqCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'mail') return mailCmd(argv.slice(1), env, out, err);
@@ -1717,6 +1720,9 @@ function fixCmd(argv, env, out, err) {
     const dec = items[d.data.fixall], stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*$/, '');
     const notes = path.join(fixerDir(state), `${id}-${stamp}.md`), brief = notes.replace(/\.md$/, '.brief.md');
     const text = fixerBrief({ project: project.name, dir: id, dec: dec?.id ?? d.data.fixall, rows, picks: dec?.data?.picks || [], root: project.root });
+    // another directive's fixer holds the lane: refuse before the brief is written (a refused start left an orphan brief per tick)
+    const hold = duplicateOf({ state, lane: FIX_LANE, stage: 'fixer', kind: 'audit' });
+    if (hold) throw new RunRefused(`${id}: fixer ${hold.id} is ${hold.state} (one fixer run at a time): this one starts after it`, 3);
     fs.mkdirSync(fixerDir(state), { recursive: true });
     fs.writeFileSync(brief, text);
     const o = runSpec({ executor: pick.executor, agent: pick.agent, model: pick.model, effort: pick.effort, lane: FIX_LANE, stage: 'fixer', class: 'docs', brief, worktree: project.root, notes, machine: flags.machine, budget: flags.budget, as: flags.as }, env, w);
@@ -1726,6 +1732,36 @@ function fixCmd(argv, env, out, err) {
     return 0;
   } catch (e) {
     if (e instanceof RunError || e instanceof ConfigError || e instanceof RecordError || e instanceof RunRefused) { err('error: ' + e.message); err('usage: ' + FIX_USAGE); return 2; }
+    throw e;
+  }
+}
+// ---------- gap #3: norn done (a run's own result file: its outcome, read before the NOTES end marker) ----------
+const DONE_USAGE = 'norn done [--outcome done|stopped|handoff] [--why "<why>" (stopped: required)] [--summary "<one line>"] [--run RUN-n --state D (default: $META_RUN_ID, $META_RUN_STATE)]'
+  + '   (inside a run, as its last step, beside the NOTES end marker: writes $META_RESULT = <state>/runs/RUN-n.result.json; the supervisor reads it first)';
+const fwdSlash = p => String(p).replace(/\\/g, '/');
+function doneCmd(argv, env, out, err) {
+  try {
+    const flags = {};
+    for (let i = 0; i < argv.length; i++) {
+      const a = argv[i];
+      if (!['--outcome', '--why', '--summary', '--run', '--state'].includes(a)) throw new RunError(`unexpected ${a}`);
+      if (i + 1 >= argv.length) throw new RunError(`${a} needs a value`);
+      flags[a.slice(2)] = argv[++i];
+    }
+    // a run speaks for itself: inside a run (META_RUN_ID) --run may only repeat its own id
+    if (flags.run && env.META_RUN_ID && flags.run !== env.META_RUN_ID) throw new RunError(`--run ${flags.run}: a run ends itself only (META_RUN_ID=${env.META_RUN_ID})`);
+    const run = flags.run || env.META_RUN_ID, state = flags.state || env.META_RUN_STATE;
+    if (!run) throw new RunError('no run: give --run RUN-n (inside a run, $META_RUN_ID names it)');
+    if (!state) throw new RunError('no state: give --state D (inside a run, $META_RUN_STATE names it)');
+    if (!fs.existsSync(path.join(state, 'runs', `${run}.spec.json`))) throw new RunError(`${run} is not a run of ${fwdSlash(state)} (no runs/${run}.spec.json)`);
+    // the supervisor's path when it is this run's (META_RESULT), else the state's
+    const own = env.META_RESULT && env.META_RUN_ID === run ? env.META_RESULT : null;
+    const file = own || resultPath(state, run);
+    const r = writeResult(file, { run, outcome: flags.outcome, why: flags.why, summary: flags.summary });
+    out(`${run} ${r.outcome.toUpperCase()}${r.why ? `: ${r.why}` : ''} -> ${fwdSlash(file)} (still end your NOTES with its marker)`);
+    return 0;
+  } catch (e) {
+    if (e instanceof RunError || e instanceof ResultError) { err('error: ' + e.message); err('usage: ' + DONE_USAGE); return 2; }
     throw e;
   }
 }

@@ -29,10 +29,12 @@ import { critiqueOn, findingsCount } from './critique.mjs';
 import { hostWrite } from './slop/host.mjs';
 import { ctxRole, ctxLimits, ctxLevel, transcriptCtx, specPolicy } from './ctxlimit.mjs';
 import { findTranscript } from './harness/claude.mjs';
+import { resultPath, readResult } from './result.mjs';
 
 const NORN_BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'norn.mjs');
 const spec = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const { run, state } = spec;
+const RESULT = resultPath(path.resolve(state), run);   // gap #3: this run's own outcome file (`norn done` writes it; META_RESULT)
 const iso = () => new Date().toISOString();
 const logLine = s => { try { fs.appendFileSync(spec.log, `${iso()} ${s}\n`); } catch { /* log dir gone */ } };
 const read = f => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
@@ -76,10 +78,10 @@ for (const [k, v] of Object.entries(spec.env || {})) {
 // a typed executor: claude-compatible gets ANTHROPIC_* from its entry (openai-compatible / cli: none); the key comes from this process's env only (never the spec / a record)
 if (spec.provider) for (const [k, v] of Object.entries(providerEnv(spec.provider, process.env).vars)) { if (v === null) delete env[k]; else env[k] = String(v); }
 // OOTB-R2 N-16: META_RUN_STATE = the state dir of this run: META_RUN_ID / META_ROLE speak only for records of THAT state
-Object.assign(env, { META_RUN_ID: run, META_RUN_STATE: path.resolve(state), META_RESUMES: String(spec.resumes || 0), ...(spec.notes ? { META_NOTES: spec.notes } : {}), ...(spec.session_id ? { META_SESSION_ID: spec.session_id } : {}) });
+Object.assign(env, { META_RUN_ID: run, META_RUN_STATE: path.resolve(state), META_RESUMES: String(spec.resumes || 0), META_RESULT: RESULT, ...(spec.notes ? { META_NOTES: spec.notes } : {}), ...(spec.session_id ? { META_SESSION_ID: spec.session_id } : {}) });
 
 let cmd;
-try { cmd = buildCommand(spec); } catch (e) { finish(null, null, String(e.message)); }
+try { cmd = buildCommand({ ...spec, result: RESULT }); } catch (e) { finish(null, null, String(e.message)); }
 // NORN-WATCH S5 (DEC-683): the whole tree ends with the run - Windows: this supervisor enters a job before the executor is born
 // (jobguard.mjs); POSIX: the executor leads its own process group. Check-ins are not guarded (they dispatch the workers: a worker
 // must never hang on its dispatcher's job), nor is policy reap "off".
@@ -133,8 +135,16 @@ async function finish(code, signal, error) {
   // a NOTES file this run never wrote keeps an earlier run's end marker (a lane's notes reused: a second fixer on docs-fixer "ended
   // DONE" with nothing drafted). Only a marker written during this run counts; an older one = no marker.
   try { if (marker.marker_line && spec.notes && fs.statSync(spec.notes).mtimeMs < supStarted - 2000) { logLine(`end marker "${marker.marker_line}" is older than this run: the notes were not written by it`); marker = { outcome: 'no-marker', marker_line: null, stale: true }; } } catch { /* no notes file */ }
+  // gap #3: the run's own result file (`norn done`) is its outcome when present and valid; the NOTES marker is the fallback
+  const res = readResult(RESULT, { run, since: supStarted });
+  if (res?.error) logLine(`result file ${RESULT} ignored: ${res.error}`);
+  const byResult = res && !res.error ? res : null;
+  if (byResult && marker.outcome !== 'no-marker' && marker.outcome !== byResult.outcome) logLine(`result ${byResult.outcome} and NOTES marker "${marker.marker_line}" disagree: the result file decides`);
+  const ended = byResult ?? marker;
   // a check-in has no NOTES end marker: its outcome is its exit (S5); so has an audit (its notes = the vendor report)
-  let outcome = code !== 0 ? 'crash' : spec.kind === 'checkin' || spec.kind === 'audit' ? 'done' : marker.outcome;
+  const byExit = code !== 0 || spec.kind === 'checkin' || spec.kind === 'audit';
+  let outcome = code !== 0 ? 'crash' : byExit ? 'done' : ended.outcome;
+  const outcomeSource = byExit ? 'exit' : byResult ? 'result' : marker.outcome !== 'no-marker' ? 'marker' : 'none';
   // META-AUTH: a crash whose log tail / final carries the executor's auth-failure signature is `auth` (its login is down), not a crash
   let auth = null;
   try {
@@ -150,10 +160,10 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   if (limit) outcome = 'limit';
   if (nudging) { outcome = 'nudged'; limit = null; auth = null; }   // stopped by the nudge: whatever the killed tree exited with
   if (ctxForced) { outcome = 'handoff'; limit = null; auth = null; }   // ended at the hard max: a HANDOFF whatever the killed tree exited with
-  const data = { exit: Number.isInteger(code) ? code : null, outcome, marker_line: marker.marker_line, pid: childPid, supervisor_pid: process.pid, supervisor_started: supStarted, ...(capped ? { capped: true } : {}) };
+  const data = { exit: Number.isInteger(code) ? code : null, outcome, outcome_source: outcomeSource, marker_line: byExit ? marker.marker_line : ended.marker_line, ...(byResult?.summary && !byExit ? { summary: byResult.summary } : {}), pid: childPid, supervisor_pid: process.pid, supervisor_started: supStarted, ...(capped ? { capped: true } : {}) };
   if (limit) { data.reset = limit.reset; data.limit_line = limit.line; }
   if (auth) { data.auth_line = auth.line; data.auth_class = auth.cls; }   // META-AUTH-VENDOR: login | vendor
-  if (outcome === 'stopped') data.why = marker.why;
+  if (outcome === 'stopped') data.why = ended.why;
   if (nudging) data.nudge = nudging.mail.id;
   if (ctxForced) data.ctx_forced = ctxForced;
   if (signal) data.signal = signal;

@@ -7,7 +7,7 @@
    "parse": "claude",
    "args": [
     "-p",
-    "Read the brief /b/brief.md and execute it exactly. Your worktree is /w/tree. You run headless: no one answers questions; follow the brief's NOTES end-marker rules.",
+    "Read the brief /b/brief.md and execute it exactly. Your worktree is /w/tree. You run headless: no one answers questions; follow the brief's NOTES end-marker rules, then run `norn done` with the same outcome (--outcome stopped --why \"<why>\" | --outcome handoff).",
     "--model",
     "m-1",
     "--effort",
@@ -31,7 +31,7 @@
    "parse": "claude",
    "args": [
     "-p",
-    "Read the brief /b/brief.md and execute it exactly. Your worktree is /w/tree. You run headless: no one answers questions; follow the brief's NOTES end-marker rules. AUTO-RESUME (2) after the previous agent's HANDOFF: read the LAST '## HANDOFF' block of /n/NOTES.md first and continue from its exact next step; re-check the worktree HEAD + git status before your first commit.",
+    "Read the brief /b/brief.md and execute it exactly. Your worktree is /w/tree. You run headless: no one answers questions; follow the brief's NOTES end-marker rules, then run `norn done` with the same outcome (--outcome stopped --why \"<why>\" | --outcome handoff). AUTO-RESUME (2) after the previous agent's HANDOFF: read the LAST '## HANDOFF' block of /n/NOTES.md first and continue from its exact next step; re-check the worktree HEAD + git status before your first commit.",
     "--agent",
     "kestrel-implementer",
     "--model",
@@ -116,7 +116,7 @@
    "parse": "claude",
    "args": [
     "-p",
-    "Read the brief /b/brief.md and execute it exactly. Your worktree is /w/tree. You run headless: no one answers questions; follow the brief's NOTES end-marker rules.",
+    "Read the brief /b/brief.md and execute it exactly. Your worktree is /w/tree. You run headless: no one answers questions; follow the brief's NOTES end-marker rules, then run `norn done` with the same outcome (--outcome stopped --why \"<why>\" | --outcome handoff).",
     "--model",
     "m-1",
     "--effort",
@@ -140,7 +140,7 @@
    "parse": "claude",
    "args": [
     "-p",
-    "Read the brief /b/brief.md and execute it exactly. Your worktree is /w/tree. You run headless: no one answers questions; follow the brief's NOTES end-marker rules.",
+    "Read the brief /b/brief.md and execute it exactly. Your worktree is /w/tree. You run headless: no one answers questions; follow the brief's NOTES end-marker rules, then run `norn done` with the same outcome (--outcome stopped --why \"<why>\" | --outcome handoff).",
     "--agent",
     "kestrel-runner",
     "--model",

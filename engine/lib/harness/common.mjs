@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { resolveShim } from '../paths.mjs';
 
 export function prompt({ brief, worktree, notes, resumes = 0 }) {
-  let p = `Read the brief ${brief} and execute it exactly. Your worktree is ${worktree}. You run headless: no one answers questions; follow the brief's NOTES end-marker rules.`;
+  let p = `Read the brief ${brief} and execute it exactly. Your worktree is ${worktree}. You run headless: no one answers questions; follow the brief's NOTES end-marker rules, then run \`norn done\` with the same outcome (--outcome stopped --why "<why>" | --outcome handoff).`;
   if (resumes > 0) p += ` AUTO-RESUME (${resumes}) after the previous agent's HANDOFF: read the LAST '## HANDOFF' block of ${notes} first and continue from its exact next step; re-check the worktree HEAD + git status before your first commit.`;
   return p;
 }
@@ -56,11 +56,13 @@ export function detectExe(exe) {
   return { exe, version };
 }
 
-// the per-family HEADLESS snippet core: the outcome contract is the same for every harness (the NOTES end marker)
+// the per-family HEADLESS snippet core: the outcome contract is the same for every harness - `norn done` (the run's own result file,
+// gap #3: the outcome when present) and the NOTES end marker (the fallback a harness without the command still gives)
 // META-BETA-PREP (DIR-52): the slop sentence on its own - a pack of a project whose SloppaChoppa switch is off leaves it out (setup.mjs)
 export const HEADLESS_SLOP = ' Before you write `## DONE`, run `norn slop check` in your worktree and fix every BLOCK it lists.';
 export const HEADLESS_CORE = 'You run headless: nobody answers questions and your process ends with your turn. Decide under the '
-  + "brief's DECISION-RULES or stop. Write only your NOTES file; its last line is exactly `## DONE`, `## STOPPED: <why>` or `## HANDOFF`."
+  + "brief's DECISION-RULES or stop. To end, run `norn done` (or `norn done --outcome stopped --why \"<why>\"` / `--outcome handoff`): it "
+  + "records this run's outcome in its own result file. Write only your NOTES file; its last line is exactly `## DONE`, `## STOPPED: <why>` or `## HANDOFF`."
   + HEADLESS_SLOP;
 // META-GTP-MAIL delivery (b): the line for executors WITHOUT the mail hook (a claude run gets its mail from a PostToolUse hook)
 export const HEADLESS_MAIL = ' Mail: check your mail between steps (MCP norn_mail check, else `norn mail check --run $META_RUN_ID`), act on it, and ack each one (norn_mail ack / norn mail ack MAIL-n).';

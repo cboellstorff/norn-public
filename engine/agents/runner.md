@@ -14,3 +14,5 @@ asks.
 - Screenshots and dashboard walks: only with `norn shot` (see `norn shot --help`: a private, signed-out headless browser on a temp profile, deleted after); never start a browser by hand.
 - Context: when your context is getting full, stop at a clean point and write a HANDOFF section.
 - End the notes file with exactly one of these lines, as its last line: `## DONE`, `## STOPPED: <why>` or `## HANDOFF`.
+  Inside a Norn run, then run the matching `norn done` (`norn done`, `norn done --outcome stopped --why "<why>"` or `norn done --outcome handoff`):
+  it records the run's outcome in its own result file; the notes line stays the fallback.

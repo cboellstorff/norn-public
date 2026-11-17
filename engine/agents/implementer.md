@@ -15,3 +15,5 @@ asks, no more.
 - Context: when your context is getting full, start no new step; finish at a clean point (work committed) and write a HANDOFF section
   (state, commits, the exact next step, open questions).
 - End the notes file with exactly one of these lines, as its last line: `## DONE`, `## STOPPED: <why>` or `## HANDOFF`.
+  Inside a Norn run, then run the matching `norn done` (`norn done`, `norn done --outcome stopped --why "<why>"` or `norn done --outcome handoff`):
+  it records the run's outcome in its own result file; the notes line stays the fallback.

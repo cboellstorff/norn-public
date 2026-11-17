@@ -99,7 +99,7 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
 - Defaults from BUDGET: claude_model / claude_effort, codex_astra_effort, codex_sol_effort; `lanes[<lane>].effort` overrides.
   checkin_model / checkin_effort select the next check-in itself; they are not worker settings.
 - Write the next stage's brief to {{briefs_dir}}/task-<LANE>-<STAGE>-brief.md (lean, line-ranged reading, cites the rules,
-  stop rule, time budget, NOTES end marker `## DONE` / `## STOPPED: <why>` / `## HANDOFF`) and its three Ready lines (DoR, policy.dod.ready):
+  stop rule, time budget, NOTES end marker `## DONE` / `## STOPPED: <why>` / `## HANDOFF` + the matching `norn done`) and its three Ready lines (DoR, policy.dod.ready):
   `Scope: <paths / globs the run may change>`, `Tests: <test files, or a command in backticks>`, `Done: <the end marker>`. At the run end Norn
   runs those Tests + the merge gate itself and checks the tree is clean and inside Scope: only that green record makes a DONE count.
 - Launch: `META run --lane <l> --stage <S> --round <n> --executor claude|codex-sol|codex-astra [--agent <a>] --model <m>

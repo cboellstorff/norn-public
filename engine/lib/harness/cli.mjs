@@ -31,7 +31,7 @@ function command(o) {
   const args = x.args.includes('{mode}') ? x.args.flatMap(a => (a === '{mode}' ? mode.args.map(sub) : [sub(a)])) : [...x.args.map(sub), ...mode.args.map(sub)];
   const cmd = { exe: o.exe, stdin: x.brief === 'stdin' ? o.brief : null, stdout: 'final', parse: 'none', args };
   // the exit watch needs the run's NOTES (a probe has none) and wraps the same stdio: stdin / final / log reach the CLI unchanged
-  if (x.exit_after_s !== undefined && o.notes) return { ...cmd, exe: process.execPath, args: [WATCH, '--after', String(x.exit_after_s), '--notes', o.notes, '--', o.exe, ...args] };
+  if (x.exit_after_s !== undefined && o.notes) return { ...cmd, exe: process.execPath, args: [WATCH, '--after', String(x.exit_after_s), '--notes', o.notes, ...(o.result ? ['--result', o.result] : []), '--', o.exe, ...args] };
   return cmd;
 }
 

@@ -60,6 +60,16 @@ test('exit watch: a cli that writes ## DONE then hangs is ended after exit_after
   assert.match(fs.readFileSync(e.data.final, 'utf8'), /answer/);
 });
 
+test('exit watch (gap #3): a cli that writes its result file ($META_RESULT, as `norn done` does) then hangs is ended too; the run ends by the result', async () => {
+  const d = sandbox();
+  const entry = { ...stub(null, { exit_after_s: 1 }) };
+  entry.args = ['-e', `const fs=require('fs');fs.writeFileSync(process.env.META_RESULT, JSON.stringify({v:1,run:process.env.META_RUN_ID,outcome:'handoff',at:new Date().toISOString()}));process.stdout.write('answer'+String.fromCharCode(10));setInterval(()=>{},1000)`, '{mode}'];
+  const r = d.start(entry);
+  const e = await d.ended(r, 60000);
+  assert.equal(e.end.outcome, 'handoff'); assert.equal(e.end.outcome_source, 'result'); assert.equal(e.end.exit, 0);
+  assert.match(fs.readFileSync(e.data.log, 'utf8'), /exit watch: result handoff in the result file, .* idle 1 s - ended/);
+});
+
 test('exit watch: no end marker (still working) or a marker left from before the start (a resume) never arms it', async () => {
   const d = sandbox();
   const a = d.start(stub(null, { exit_after_s: 0.5 }));
