@@ -73,7 +73,7 @@ ledger line or withdraw it. The owner sees each closure in the record history an
 ## 3.7 Concurrency + integrity
 Lock = exclusive create of `records.lock` (`wx`), retry 25 ms, stale after 10 s (holder pid + ts inside); append one line with
 fsync; regenerate views atomically (temp + rename, the dashboard's `atomic()` today). A view whose hash differs from the last
-generated hash is NOT overwritten: the dashboard shows "hand-edited view - run `norn rec import-edits` or revert" (that importer is a
-gap we skip until it happens). Daily backup copy at the first tick after 00:00 UTC.
+generated hash is NOT overwritten: the dashboard Inbox shows it as a needs-you item ("Let Norn take it back" = a .bak of the hand
+text, then regenerated; "Keep my version" = recorded in views/kept.json, never overwritten). Daily backup copy at the first tick after 00:00 UTC.
 
 Never hand-edit a generated view; never infer state from prose.

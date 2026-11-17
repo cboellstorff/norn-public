@@ -18,6 +18,11 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
   this pass: no dispatch, ruling, question, park, stop, re-queue or review there - Norn refuses a check-in write on a held lane with
   exit 5 (accept it, never work around it). To tell the holder something: `META mail send --to role:controller --subject S --body B`.
 
+- EVERYTHING HELD (digest row 0b): every queued run (or every queued Claude run) has waited on ONE machine-level hold - the usage
+  guard (weekly unknown / at the stop, RATE_OK=0, the API daily cap) or a PAUSED file - past policy.holds.notice_min. No check-in
+  clears it and none works around it: dispatch nothing it holds, do not re-report the other rows as the stall, and start the ledger
+  line with `HELD <n> run(s) since <t>: <reason>; fix: <fix>`. The owner has the Inbox item and one notice; the row leaves by itself.
+
 ## 2. For each run `META runs --unreviewed` lists (exited / lost / killed; any executor)
 - The run's outcome is already recorded; read its end block for the content: the NOTES section under the last `## ` marker
   (the run's notes path) / the Codex final. Do not read code, diffs or logs.

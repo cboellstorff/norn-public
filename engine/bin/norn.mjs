@@ -179,7 +179,7 @@ const order = (a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) 
 const title = i => i.data.title ?? i.data.question ?? i.data.text ?? i.data.lane ?? i.data.name ?? i.data.kind ?? '';
 
 function warnViews(v, err) {
-  for (const p of v.refused) err(`warning: hand-edited view ${p} was NOT regenerated - run \`norn rec import-edits\` or revert it`);
+  for (const p of v.refused) err(`warning: hand-edited view ${p} was NOT regenerated - the dashboard Inbox offers "Let Norn take it back" (a .bak keeps your text) or "Keep my version"; or revert it`);
 }
 
 // NORN-WATCH S3: one chat reply -> named Q answers. One answer event per Q (all-or-nothing), mapped_from = the shared owner text,
@@ -642,6 +642,9 @@ function s5Cmd(argv, env, out, err) {
         (r.code ? err : out)(r.msg);
         if (r.notice) flushes.push(import('../lib/notify.mjs').then(({ notify }) => notify({ title: r.notice.title, body: r.notice.body, cls: 'alert', machine: m.machine, state: proj.state, env }))   // META-AUTH: once per outage
           .then(x => out(`tick ${proj.name}: notify: ${r.notice.cls === 'vendor' ? 'vendor outage' : 'login'} notice ${x.sent ? 'sent' : 'recorded'}`), e => err(`tick ${proj.name}: notify (login) failed: ${e.message}`)));
+        // GAP-1: ONE notice per hold of all queued work (holds.mjs: hold.json notified) - the owner must act, so class alert
+        if (r.hold_notice) flushes.push(import('../lib/notify.mjs').then(({ notify }) => notify({ title: r.hold_notice.title, body: r.hold_notice.body, cls: 'alert', machine: m.machine, state: proj.state, env }))
+          .then(x => out(`tick ${proj.name}: notify: hold notice ${x.sent ? 'sent' : 'recorded'}`), e => err(`tick ${proj.name}: notify (hold) failed: ${e.message}`)));
         // META-GUARD R1: one "usage" notice per new GRD alarm - batched into the FYI digest unless policy guard.push
         for (const g of r.guard || []) flushes.push(import('../lib/notify.mjs').then(({ notify, batchHours }) => notify({ title: `${g.run} ${g.cls}`, body: `${g.id}${g.lane ? ' ' + g.lane : ''}: ${g.why}`,
           cls: 'usage', push: !!r.guard_push, batchH: batchHours(proj), machine: m.machine, state: proj.state, env }))

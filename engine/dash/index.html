@@ -954,6 +954,8 @@ document.addEventListener('click', e => {
   if (d.act === 'settings-discard') { S.setDirty = 0; S.setProfile = null; $('#settings-diff').innerHTML = ''; render(true); return; }
   if (d.act?.startsWith('adopt-')) { adoptAct(b, d); return; }
   if (d.act === 'answer') act(() => post('/api/answer', { project: p, id: d.id, choice: d.choice, text: d.text }));
+  if (d.act === 'handedit' && (d.choice === 'keep' || confirm('Let Norn take it back: your text is saved beside it as .bak, then Norn rewrites the file.'))) act(() => post('/api/handedit', { project: d.project || p, file: d.file, choice: d.choice }));   // GAP-8
+  if (d.act === 'hold-resume') act(() => post('/api/pause', { project: d.project || p, paused: false }));   // GAP-1: the hold row of a PAUSED file
   if (d.act === 'advice-apply') act(() => post('/api/advice', { project: p, key: d.key, verdict: 'apply' }));   // META-TEND P4: the one tap (writes Settings + a decision)
   if (d.act === 'audit-accept' && confirm('Accept: a decision + a directive ask the check-in to apply this hunk. Norn edits nothing itself.')) act(() => post('/api/audit', { project: d.project || p, id: d.id, verdict: 'accept' }));   // META-TEND P5
   if (d.act === 'fx-skip') { const k = (S.fxSkip ??= {})[d.run] ??= new Set(); if (k.has(d.file)) k.delete(d.file); else k.add(d.file); fxPaint(); return; }   // META-UX-BUILD S7

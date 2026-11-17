@@ -41,6 +41,8 @@ import { lanePaths } from '../lib/lanenew.mjs';
 import { loadMachine, loadProject, ConfigError } from '../lib/config.mjs';
 const FIRST_LANE = 'first';   // META-OOTB F-1: the lane the first-task box opens
 import { runName } from '../lib/names.mjs';
+import { readHoldAsync, holdItem, noticeMin } from '../lib/holds.mjs';
+import { handEdits, takeBack, keepEdit } from '../lib/handedits.mjs';
 import { notify as sendNotice, batchHours, ntfyServer, defaultTransport as notifyTransport } from '../lib/notify.mjs';
 import { costRollup, accountUsage, weekStart, nextReset, parseReset } from '../lib/cost.mjs';
 import { Worker } from 'node:worker_threads';
@@ -333,6 +335,13 @@ export function createDashboard(o) {
       if (P?.state === 'open' && P.draft && P.undecided.length)
         out.push({ type: 'setup', id: P.id, project: p.name, title: `Review the draft setup (${P.undecided.length} part${P.undecided.length === 1 ? '' : 's'})`, created: P.created });
     }
+    // GAP-1 (holds.mjs): ONE needs-you row while ALL queued work has waited on one machine-level hold past policy.holds.notice_min
+    // (the tick keeps hold.json; it is gone - and the row with it - once the hold clears)
+    { const h = holdItem(await readHoldAsync(p.state), { min: noticeMin(withDefaults(settingsState(p).view).policy), status: await readA(path.join(p.state, 'STATUS.md')), project: p.name });
+      if (h) out.push(h); }
+    // GAP-8 (handedits.mjs): a generated file edited by hand is no longer regenerated - one row each (take it back / keep mine)
+    for (const e of await handEdits(p.state)) if (!e.kept) out.push({ type: 'handedit', id: 'edit-' + path.basename(e.file), project: p.name, file: e.file.replace(/\\/g, '/'), created: e.edited,
+      title: `${path.basename(e.file)} was edited by hand: Norn no longer regenerates it` });
     // OOTB-R2 N-5: runs held for a login that is down = ONE needs-you row per harness, carrying the command the human runs
     for (const h of loginHolds(p.state, items, { entryOf: x => p.executors?.[x] }))
       out.push({ type: 'login', id: 'login-' + h.harness, project: p.name, harness: h.harness, cls: h.cls, command: h.command, runs: h.runs, line: h.line, created: h.since,
@@ -1198,6 +1207,15 @@ data: ${JSON.stringify(l)}
     if (route === '/api/directive/revoke') return rec(p, { kind: 'directive', ev: 'revoke', id: String(data.id), by: 'dashboard', data: {} });
     if (route === '/api/decision/overrule') return rec(p, { kind: 'decision', ev: 'overrule', id: String(data.id), by: 'dashboard', data: { text: str(data.text, 'Overrule text', 4000), ...(data.rework_lane ? { rework_lane: String(data.rework_lane) } : {}) } });
     if (route === '/api/lane/archive') return rec(p, { kind: 'lane', ev: data.unarchive === true ? 'unarchive' : 'archive', id: 'L:' + String(data.lane), by: 'dashboard', data: {} });
+    if (route === '/api/handedit') {   // GAP-8: "Let Norn take it back" (a .bak of the hand text, then the views rewritten) or "Keep my version"
+      if (!['takeback', 'keep'].includes(data.choice)) throw fail(400, 'choice must be takeback or keep');
+      if (typeof data.file !== 'string' || !data.file) throw fail(400, 'file is required');
+      try {
+        if (data.choice === 'keep') return { ok: true, ...(await keepEdit(p.state, data.file)) };
+        const r = await takeBack(p.state, data.file), v = await viewsA(p);
+        return { ok: true, ...r, regenerated: v.written.some(f => path.resolve(f) === path.resolve(r.file)) };
+      } catch (e) { if (e.code === 409) throw fail(409, e.message); throw e; }
+    }
     if (route === '/api/pause') {
       if (typeof data.paused !== 'boolean') throw fail(400, 'paused must be boolean');
       const f = path.join(p.state, 'PAUSED');
