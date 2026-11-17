@@ -522,7 +522,7 @@ export function createChat(o) {
       const all = items(), c = chatCost(all, { perPct: cfg.perPct }), ctx = segCtx ?? (seg ? lastCtx(all, seg.n) : null);
       const tok = c.tokens >= 1e6 ? (c.tokens / 1e6).toFixed(2) + 'M' : (c.tokens / 1000).toFixed(1) + 'k';
       return say(name, `chat today: ${tok} tokens · ${c.turns} turn${c.turns === 1 ? '' : 's'}${Number.isFinite(c.weekly_pct) ? ` · ~${c.weekly_pct.toFixed(2)} % of the week (estimate)` : ''}`
-        + `${Number.isFinite(ctx) ? ` · this session's context ${kTok(ctx)} of the ${cfg.context.handoff_k}k hand-off` : ''}. Norn counts the chat per turn; workers and check-ins: the Agents tab and the Usage column.`);
+        + `${Number.isFinite(ctx) ? ` · this session's context ${kTok(ctx)} of the ${cfg.context.handoff_k}k hand-off` : ''}. Norn counts the chat per turn; workers and check-ins: the Runs page and the Usage column.`);
     }
     const list = chatCommands(items());
     return say(name, ['Norn chat commands (answered by Norn, no model turn):', ...Object.entries(NORN_COMMANDS).map(([k, w]) => `/${k} - ${w}`),
