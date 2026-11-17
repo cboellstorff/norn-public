@@ -79,6 +79,7 @@ test('a queued run obeys the machine budget in force at fill: the worker cap, th
   assert.equal(q.code, 0, q.out); assert.match(q.out, /QUEUED (RUN-\d+)/);
   const qid = q.out.match(/QUEUED (RUN-\d+)/)[1];
   assert.equal(JSON.parse(fs.readFileSync(path.join(d.state, 'runs', qid + '.queue.json'), 'utf8')).budget_file, bf);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(d.state, 'runs', qid + '.queue.json'), 'utf8')).budget, undefined, 'no copy of the budget is kept');
   d.open();
   const fill = () => fillQueue(d.state, { resources: () => ({ free_gb: 64, cpu_pct: 0 }) });
   const terms = () => readiness(d.state, { resources: () => ({ free_gb: 64, cpu_pct: 0 }) }).find(r => r.id === qid).terms.join('; ');

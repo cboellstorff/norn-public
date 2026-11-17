@@ -112,7 +112,7 @@ export const refillOf = ({ projectFile, budgetFile, meta, explicit, claudeDir })
 /**
  * At fill: spec with its policy-derived parts from the CURRENT project.json + budget (spec.refill), and the record of it
  * { from [files], parts [FILL_PARTS], explicit [flags kept] }. No refill (a spec not from `norn run --project`) = unchanged, at_fill null.
- * spec.budget is already the budget in force now (runs.mjs withLiveBudget: GAP-2), so the worker floor startRun raises the refilled
+ * spec.budget is already the budget in force now (runs.mjs liveBudget: GAP-2), so the worker floor startRun raises the refilled
  * model / effort to is the live one too. A project.json that no longer loads throws (the caller keeps the run queued).
  */
 export function resolveAtFill(spec) {
@@ -122,7 +122,7 @@ export function resolveAtFill(spec) {
   const p = launchParts({ project, budget: spec.budget || {}, executor: spec.executor, lane: spec.lane, explicit: r.explicit || {}, claudeDir: r.claude_dir, worktree: spec.worktree });
   const { provider, ...parts } = p;
   if (spec.provider && !provider) throw new Error(`executor ${spec.executor} is no longer a typed executor in ${project.file}`);
-  const bf = spec.budget_file ?? r.budget_file;
+  const bf = spec.budget_file;
   return {
     spec: { ...spec, ...parts, ...(spec.provider ? { provider } : {}) },
     at_fill: { from: [project.file, ...(bf && fs.existsSync(bf) ? [bf.replace(/\\/g, '/')] : [])], parts: FILL_PARTS,

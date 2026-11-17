@@ -78,16 +78,13 @@ test('modes: each plan sets its caps; api sets only the mode (+ the daily cap); 
   assert.equal(billingChoices().find(b => b.default).name, 'max-5x');
 });
 
-test('a queued spec reads the budget in force (GAP-2): its budget file, else (an old spec) its stored copy', () => {
-  const r = root(), bf = path.join(r.t, 'budget.json'), copy = { max_claude_workers: 3, weekly_stop_pct: 95 };
+test('a queued spec reads the budget in force (GAP-2): its budget file only; gone = none; unparseable = held, never guessed', () => {
+  const r = root(), bf = path.join(r.t, 'budget.json');
   fs.writeFileSync(bf, JSON.stringify({ billing: 'api', api_usd_per_day: 40 }));
-  assert.deepEqual(liveBudget({ budget: copy, budget_file: bf }), { billing: 'api', api_usd_per_day: 40 });
-  assert.deepEqual(liveBudget({ budget: copy, refill: { budget_file: bf } }), { billing: 'api', api_usd_per_day: 40 }, 'a --project spec of before: its refill names the file');
-  assert.deepEqual(liveBudget({ budget: copy }), copy, 'no file named: the copy');
-  assert.deepEqual(liveBudget({ budget: copy, budget_file: null, refill: { budget_file: bf } }), copy, 'null = no file here (a fed node): the copy');
-  assert.deepEqual(liveBudget({ budget: copy, budget_file: path.join(r.t, 'gone.json') }), {}, 'a removed file = no budget, as norn run reads it');
+  assert.deepEqual(liveBudget({ budget_file: bf }), { billing: 'api', api_usd_per_day: 40 });
+  assert.deepEqual(liveBudget({ budget_file: path.join(r.t, 'gone.json') }), {}, 'a removed file = no budget, as norn run reads it');
   fs.writeFileSync(bf, '{ broken');
-  assert.deepEqual(liveBudget({ budget: copy, budget_file: bf }), copy, 'a file mid-edit keeps the copy');
+  assert.throws(() => liveBudget({ budget_file: bf }), /budget .*budget\.json unreadable .*: held until it parses/);
 });
 
 test('STATUS + forecast: API billing says the spend and the cap, asks for no calibration, RATE_OK=1', () => {
@@ -107,7 +104,7 @@ test('norn billing: shows the modes; sets api + a daily cap in the budget (a que
   fs.mkdirSync(local);
   fs.writeFileSync(path.join(local, 'budget.json'), JSON.stringify({ max_claude_workers: 3, max_codex: 0, weekly_stop_pct: 95, usage_rate_cap_pct_per_h: 0.57 }));
   const q = path.join(r.state, 'runs', 'RUN-3.queue.json');
-  const spec = { budget: { max_claude_workers: 3, weekly_stop_pct: 95 }, budget_file: path.join(local, 'budget.json') };
+  const spec = { budget_file: path.join(local, 'budget.json') };
   fs.writeFileSync(q, JSON.stringify(spec));
   const norn = (...a) => spawnSync(process.execPath, [NORN, 'billing', ...a], { encoding: 'utf8', windowsHide: true, env: { ...process.env, META_ROOT: r.t, META_NO_TICK: '1' } });
   let x = norn();
@@ -137,7 +134,7 @@ test('the dash: Settings offers Billing; saving api reaches the queued runs (rea
     const ui = async r => (await f.get(r)).data, now = Date.now();
     const q = path.join(f.pa.state, 'runs', 'RUN-90.queue.json');
     fs.mkdirSync(path.dirname(q), { recursive: true });
-    const spec = { budget: { max_claude_workers: 1, weekly_stop_pct: 50 }, budget_file: f.budgetFile };
+    const spec = { budget_file: f.budgetFile };
     fs.writeFileSync(q, JSON.stringify(spec));
     const g = (await f.get('/api/settings?project=kestrel')).data;
     assert.equal(g.billing_now, null);
