@@ -345,6 +345,26 @@ export function askDeliverable(stateDir, id, { project = {}, by = 'checkin', now
   return { id: e.id };
 }
 
+/**
+ * A "merge, batch or park?" question goes stale once its deliverable reaches its target (merged / installed / superseded): the
+ * tick withdraws it, so the owner's Inbox never asks about work that already landed. Returns [{ q, dlv, why }] (written unless dry).
+ */
+export function closeLandedQuestions(stateDir, { project = {}, now, nowMs, git, dry = false } = {}) {
+  const open = Object.values(fold(readEvents(recordsFile(stateDir, 'question'))).items)
+    .filter(q => q.kind === 'question' && q.state === 'open' && q.data?.deliverable);
+  if (!open.length) return [];
+  const rows = new Map(deliverablesView({ stateDir, project, now: nowMs ?? (now ? now().getTime() : Date.now()), ...(git ? { git } : {}), questions: open }).rows.map(r => [r.id, r]));
+  const out = [];
+  for (const q of open) {
+    const r = rows.get(q.data.deliverable);
+    if (!r?.at_target) continue;
+    const why = `${r.id} ${r.branch} is ${r.superseded ? `superseded by ${r.superseded.by}` : r.state}: nothing left to ask (closed by the tick)`;
+    if (!dry) record(stateDir, { kind: 'question', ev: 'withdraw', id: q.id, by: 'checkin', data: { why } }, { views: project.views || {}, ...(now ? { now } : {}) });
+    out.push({ q: q.id, dlv: r.id, why });
+  }
+  return out;
+}
+
 // ---------- META-DLV-R2: the rebase / resolve lane (Gas Town done_rebase.go, GT-4) ----------
 const resolveDir = stateDir => path.join(stateDir, 'resolve');
 // the live (running / queued) resolve run of a deliverable: its brief sits at <state>/resolve/DLV-n-*.md
