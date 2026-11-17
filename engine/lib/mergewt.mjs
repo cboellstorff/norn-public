@@ -1,7 +1,7 @@
 // GAP-6 (merges no longer queue behind each other on the owner's checkout): a MERGE run gets its own temporary worktree of the
 // main branch, <state>/mq/merge-<lane>-<key> (detached), merges the lane there, and lands the result with `norn merge-land`
 // (mergeland.mjs: a fast-forward of main under a short lock, never a force). Up to policy.merge.parallel merges run at once
-// (default 2; 0 = the old way: one merge at a time in the main checkout, META-MERGELOCK). This leaf module holds the paths, the
+// (default 2); the owner's checkout is never a merge's. This leaf module holds the paths, the
 // slot keys and the worktree's make / remove / sweep: git and path only (runs.mjs and mergebrief.mjs import it).
 import fs from 'node:fs';
 import path from 'node:path';
@@ -11,14 +11,12 @@ import { pathKey } from './config.mjs';
 const fwd = p => String(p).replace(/\\/g, '/');
 export const MERGE_PARALLEL_DEFAULT = 2;
 
-/** policy.merge.parallel: how many MERGE runs of the project may work at once (each in its own merge worktree); 0 = the main checkout, one at a time */
+/** policy.merge.parallel: how many MERGE runs of the project may work at once (each in its own merge worktree), 1-16 */
 export function mergeParallel(p) {
   const n = p?.policy?.merge?.parallel ?? MERGE_PARALLEL_DEFAULT;
-  if (!Number.isInteger(n) || n < 0 || n > 16) throw new Error(`${p?.name ?? 'project'}: policy.merge.parallel must be a whole number 0-16 (got ${JSON.stringify(n)})`);
+  if (!Number.isInteger(n) || n < 1 || n > 16) throw new Error(`${p?.name ?? 'project'}: policy.merge.parallel must be a whole number 1-16 (got ${JSON.stringify(n)})`);
   return n;
 }
-/** merges of project p work in their own worktree: parallel > 0 and a state dir to hold the worktrees */
-export const isolatedMerges = p => !!p?.state && mergeParallel(p) > 0;
 
 const slug = s => String(s).replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'x';
 /** the merge worktree of one merge: <state>/mq/merge-<lane>[-<sha7>] (the staged merge of a commit names it; the rebase merge one per lane) */

@@ -1,4 +1,4 @@
-// GAP-6: `norn merge-land` - an isolated MERGE run lands the merge it made in its own merge worktree (mergewt.mjs) on main. Code,
+// GAP-6: `norn merge-land` - a MERGE run lands the merge it made in its own merge worktree (mergewt.mjs) on main. Code,
 // not the worker: under a short per-repo lock (the ref update only, seconds) main moves to the merge by a FAST-FORWARD - a push
 // to the remote's main (never a force) when the repo has that remote, else the local main ref. When main moved since the merge was
 // made, main is merged into the merge worktree OUTSIDE the lock and the land is tried again (bounded): a conflict = nothing lands;

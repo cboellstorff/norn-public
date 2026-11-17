@@ -205,14 +205,14 @@ function runBox() {
   };
   // --worktree names the lane worktree as the check-in's run line does (lane_defaults): the brief's merge worktree wins
   d.opts = (lane, brief, o = {}) => ({ state: d.state, locksDir: d.locks, executor: 'fake', lane, worktree: path.join(t, 'wt-' + lane), brief, stage: 'MERGE', notes: path.join(t, `${lane}-NOTES.md`),
-    tick: null, hbMs: 150, staleMs: 3000, policy: { auto_resume_max: 0 }, budget: {}, main_checkout: f.repo, ...o });
+    tick: null, hbMs: 150, staleMs: 3000, policy: { auto_resume_max: 0 }, budget: {}, ...o });
   d.item = id => loadState(d.state).items[id];
   d.filled = qid => Object.values(loadState(d.state).items).find(x => x.kind === 'run' && x.data.from_queue === qid) || null;
   d.ends = id => waitForSync(() => settled(d.item(id)), { producer: supervisorAlive(d.state, () => d.item(id)), what: `${id} ends` });
   return d;
 }
 
-test('the brief: an isolated merge names its merge worktree and merge-land, the marker carries no main checkout; parallel 0 = the old brief', () => {
+test('the brief: a merge names its merge worktree and merge-land, never the owner checkout; policy.merge.parallel 1-16', () => {
   const d = runBox(), sha = d.f.tips['feat/a'];
   const text = renderMergeBrief(d.P, { lane: 'a', branch: 'feat/a', worktree: '/w/a', notes: '/n/a.md', sha });
   const m = briefMarker(text), wt = mergeWtPath(d.state, 'a', sha);
@@ -226,10 +226,9 @@ test('the brief: an isolated merge names its merge worktree and merge-land, the 
   const rb = renderMergeBrief(d.P, { lane: 'a', branch: 'feat/a', worktree: '/w/a', notes: '/n/a.md' });
   assert.equal(briefMarker(rb).mode, 'rebase');
   assert.ok(rb.includes(`git -C ${mergeWtPath(d.state, 'a')} merge --no-ff`));
-  const old = renderMergeBrief({ ...d.P, policy: { merge: { parallel: 0 } } }, { lane: 'a', branch: 'feat/a', worktree: '/w/a', notes: '/n/a.md', sha });
-  assert.equal(briefMarker(old).main, fwd(d.f.repo));
-  assert.equal(briefMarker(old).merge_wt, undefined);
-  assert.throws(() => mergeParallel({ policy: { merge: { parallel: -1 } } }), /policy\.merge\.parallel/);
+  assert.equal(briefMarker(renderMergeBrief({ ...d.P, policy: { merge: { parallel: 3 } } }, { lane: 'a', branch: 'feat/a', worktree: '/w/a', notes: '/n/a.md', sha })).slots, 3);
+  for (const bad of [0, -1, 17, 1.5]) assert.throws(() => mergeParallel({ policy: { merge: { parallel: bad } } }), /policy\.merge\.parallel must be a whole number 1-16/);
+  assert.throws(() => renderMergeBrief({ ...d.P, state: undefined }, { lane: 'a', branch: 'feat/a', worktree: '/w/a', notes: '/n/a.md', sha }), /no state dir/);
   // writeTrees: the merge worktree only (mergeSpec makes it the run's); a rebase brief also the lane worktree
   const b = d.brief('a', sha, '/never');
   assert.deepEqual(writeTrees(mergeSpec(d.opts('a', b))).map(fwd), [wt]);
@@ -241,7 +240,7 @@ test('the brief: an isolated merge names its merge worktree and merge-land, the 
 test('MERGE runs: two start at once (policy.merge.parallel 2) in their own merge worktrees, the third waits for a slot; ends remove the worktrees; the owner checkout is never locked', () => {
   const d = runBox(), go = l => path.join(d.t, 'go-' + l);
   const shaA = d.f.tips['feat/a'], shaB = d.f.tips['feat/b'], shaC = d.f.tips['feat/c'];
-  // a leftover of a crashed merge: swept by the next isolated start
+  // a leftover of a crashed merge: swept by the next merge start
   const left = mergeWtPath(d.state, 'old', 'abcdef1');
   ensureMergeWorktree({ repo: d.f.repo, wt: left });
   const a = startRun(d.opts('a', d.brief('a', shaA, go('a'))));

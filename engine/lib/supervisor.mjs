@@ -42,7 +42,7 @@ const logLine = s => { try { fs.appendFileSync(spec.log, `${iso()} ${s}\n`); } c
 const read = f => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
 const TAIL = 8192;
 const tail = f => { const t = read(f); return t === null ? '' : t.slice(-TAIL); };
-// META-MERGELOCK: every lock the run holds (runs.writeTrees: a MERGE holds the main checkout's beside its own worktree's)
+// META-MERGELOCK: every lock the run holds (runs.writeTrees + GAP-6: a MERGE holds a merge slot beside its own worktree's)
 const lockFiles = spec.lockFiles ?? (spec.lockFile ? [spec.lockFile] : []);
 let childPid = null;
 let finished = false;
@@ -241,7 +241,7 @@ ${tail(spec.final)}`, authPatterns(spec.executor, spec.provider || (spec.auth ? 
   process.exit(0);
 }
 
-// GAP-6: an isolated MERGE run's merge worktree goes with the run (DONE, STOPPED, a crash, a limit re-queue: the next start makes a
+// GAP-6: a MERGE run's merge worktree goes with the run (DONE, STOPPED, a crash, a limit re-queue: the next start makes a
 // fresh one); a HANDOFF keeps it for its resume (the start-time sweep collects it after a day). A norn stop leaves it to that sweep.
 function dropMergeWt(outcome) {
   if (!spec.merge_wt || !spec.merge_repo || outcome === 'handoff') return;
