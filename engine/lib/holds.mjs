@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { billingOf } from './billing.mjs';
 import { isMergeStage } from './usageguard.mjs';
-import { queueSpecPath } from './runs.mjs';
+import { queueSpecPath, liveBudget } from './runs.mjs';
 
 export const NOTICE_MIN = 60;
 /** the minutes a whole hold lasts before it is surfaced: project policy.holds.notice_min (a Settings row), else NOTICE_MIN */
@@ -43,13 +43,13 @@ export async function readHoldAsync(state) { try { return JSON.parse(await fs.pr
 const write = (state, rec) => { const f = file(state), tmp = `${f}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify(rec) + '\n'); fs.renameSync(tmp, f); };
 
 /** the tick's step after the fill: (re)write hold.json from the walk (same term = same episode, its since kept); null = no hold, file gone.
- * billing (for the words) = the budget billing key the guard saw: the first held run's queue spec. */
+ * billing (for the words) = the budget billing key the guard saw: the live budget file of the first held run's queue spec (GAP-2: no copy). */
 export function trackHold(state, rows, { now = Date.now() } = {}) {
   const h = wholeHold(rows), prev = readHold(state);
   if (!h) { if (prev) { try { fs.unlinkSync(file(state)); } catch { /* gone */ } } return null; }
   const same = prev?.term === h.term;
   let billing = null;
-  try { billing = JSON.parse(fs.readFileSync(queueSpecPath(state, h.runs[0]), 'utf8'))?.budget?.billing ?? null; } catch { /* no spec: no billing words */ }
+  try { billing = liveBudget(JSON.parse(fs.readFileSync(queueSpecPath(state, h.runs[0]), 'utf8'))).billing ?? null; } catch { /* no spec / budget unreadable: no billing words */ }
   const rec = { ...h, since: same ? prev.since : new Date(now).toISOString(), billing, notified: same ? prev.notified ?? null : null };
   if (JSON.stringify(rec) !== JSON.stringify(prev)) write(state, rec);
   return rec;

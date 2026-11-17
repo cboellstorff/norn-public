@@ -65,11 +65,12 @@ test('trackHold / holdItem / holdNoticeDue: one episode, its since kept, one not
 test('the queue + the digest: a weekly-unknown hold of every queued run is digest row 0b (and leaves with the hold)', () => {
   const t = mkTmp('meta-holds-q-'), state = path.join(t, 'state', 'demo'), locks = path.join(t, 'state', 'locks');
   for (const d of [state, locks]) fs.mkdirSync(d, { recursive: true });
-  const status = path.join(state, 'STATUS.md'), budget = { max_claude_workers: 1, weekly_stop_pct: 95, billing: 'max-5x' };
+  const status = path.join(state, 'STATUS.md'), budget_file = path.join(t, 'budget.json');
+  fs.writeFileSync(budget_file, JSON.stringify({ max_claude_workers: 1, weekly_stop_pct: 95, billing: 'max-5x' }));   // GAP-2: the fill reads the budget file live
   for (const [n, stage] of [[1, 'S1'], [2, 'MERGE']]) {
     const wt = path.join(t, 'wt' + n), brief = path.join(t, `b${n}.md`);
     fs.mkdirSync(wt, { recursive: true }); fs.writeFileSync(brief, 'mode: done\n');
-    queueRun({ state, locksDir: locks, executor: 'fake', lane: 'l' + n, stage, worktree: wt, notes: path.join(t, 'NOTES.md'), brief, budget, statusFile: status, policy: { auto_resume_max: 0 }, tick: null });
+    queueRun({ state, locksDir: locks, executor: 'fake', lane: 'l' + n, stage, worktree: wt, notes: path.join(t, 'NOTES.md'), brief, budget_file, statusFile: status, policy: { auto_resume_max: 0 }, tick: null });
   }
   const now = Date.now(), rows = readiness(state, { now });
   assert.ok(rows.every(r => r.account === true && r.terms.includes(W)), JSON.stringify(rows));
