@@ -17,6 +17,20 @@ const readSchema = n => JSON.parse(fs.readFileSync(path.join(ENGINE, 'schema', n
 export const PROJECT_SCHEMA = readSchema('project.schema.json');
 export const MACHINE_SCHEMA = readSchema('machine.schema.json');
 export const fwd = p => String(p).replace(/\\/g, '/');
+// The canonical path: realpath of the deepest existing ancestor + the rest (a path need not exist yet). A path as given may name the
+// same place as git's / the OS's answer in another spelling - a Windows 8.3 short name (the hosted runners' TEMP is
+// C:\Users\RUNNER~1\...), a junction, a symlink (macOS /var -> /private/var): compare paths by this, never raw (CI-RED-7E52345).
+export function realPath(p) {
+  const abs = path.resolve(String(p)), rest = [];
+  for (let cur = abs; ;) {
+    try { return path.join(fs.realpathSync.native(cur), ...rest); } catch { /* not there yet: try its parent */ }
+    const up = path.dirname(cur);
+    if (up === cur) return abs;
+    rest.unshift(path.basename(cur)); cur = up;
+  }
+}
+/** a path's identity for comparing / keying: canonical, forward slashes, no trailing slash, case-folded on Windows */
+export const pathKey = p => { const a = fwd(realPath(p)).replace(/(.)\/+$/, '$1'); return process.platform === 'win32' ? a.toLowerCase() : a; };
 export const metaRoot = (env = process.env) => fwd(env.META_ROOT || path.resolve(ENGINE, '..'));
 export const homeDir = () => fwd(os.homedir());
 const BUILTINS = ['home', 'norn', 'meta', 'state', 'name', 'root', 'lane', 'project_dir'];

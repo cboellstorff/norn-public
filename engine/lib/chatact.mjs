@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { loadState } from './records.mjs';
+import { realPath } from './config.mjs';
 
 export const APPROVAL_MS = 30 * 60000;   // SPEC sec. 3 tier 2: waits 30 min, then denies and pings you
 export const outboxDir = state => path.join(state, 'chat', 'outbox');
@@ -114,7 +115,7 @@ export function showRoots(state, project) {
 }
 /** the real path of f when it lies inside one of the roots (no .. / link escapes), else null */
 export function insideRoots(roots, f) {
-  const real = realOf(f) ?? path.resolve(f);
+  const real = realPath(f);   // a missing file too: its real folder + name, so it is judged (404) beside its roots, not refused by spelling
   return roots.some(r => { const rel = path.relative(r, real); return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel); }) ? real : null;
 }
 

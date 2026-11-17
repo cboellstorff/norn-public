@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fold, readEvents, recordsFile, loadState, record } from './records.mjs';
 import { scanRepo, makeGit, pruneCache } from './dlvgit.mjs';
 import { workOnMain } from './after.mjs';
-import { expandLate } from './config.mjs';
+import { expandLate, pathKey } from './config.mjs';
 import { parseOutcome } from './runs.mjs';
 
 export const DEFAULTS = { main: 'main', remote: 'origin', branches: ['feat/*', 'fix/*'], native: null, receipts: [],
@@ -14,7 +14,7 @@ export const DEFAULTS = { main: 'main', remote: 'origin', branches: ['feat/*', '
   target: 'install', ask_after_h: 24, park_days: 7, resolve_behind: 100 };
 const DAY = 864e5;
 const fwd = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
-export const sameRepo = (a, b) => fwd(a).toLowerCase() === fwd(b).toLowerCase();
+export const sameRepo = (a, b) => pathKey(a) === pathKey(b);   // the same repo in any spelling (8.3 short name, link, case)
 
 // project.json `deliverables` over the defaults; repo defaults to the project root
 export function deliverableConfig(project = {}) {
@@ -181,13 +181,13 @@ function worktrees(repo, git) {
   const out = git(repo, ['worktree', 'list', '--porcelain'], { allowFail: true }) || '';
   let cur = null;
   for (const l of out.split('\n')) {
-    if (l.startsWith('worktree ')) cur = fwd(l.slice(9)).toLowerCase();
+    if (l.startsWith('worktree ')) cur = pathKey(l.slice(9));
     else if (l.startsWith('branch ') && cur) map.set(cur, { repo: fwd(repo), branch: l.slice(7).replace(/^refs\/heads\//, '') });
   }
   const seen = new Map();
   return wt => {
     if (!wt) return null;
-    const k = fwd(wt).toLowerCase();
+    const k = pathKey(wt);
     if (map.has(k)) return map.get(k);
     if (seen.has(k)) return seen.get(k);
     let r = null;
@@ -215,7 +215,7 @@ export function backfillPlan({ stateDir, project = {}, now = Date.now(), git = m
   const st = loadState(stateDir);
   const existing = loadDeliverables(stateDir);
   const cand = new Map();
-  const key = (repo, b) => fwd(repo).toLowerCase() + '|' + b;
+  const key = (repo, b) => pathKey(repo) + '|' + b;
   const own = scanner.get(cfg.repo);
   if (own.s) for (const b of own.s.branches(cfg.branches)) cand.set(key(cfg.repo, b), { repo: cfg.repo, branch: b });
   const wtOf = worktrees(cfg.repo, git);

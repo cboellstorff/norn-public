@@ -28,7 +28,7 @@ import { agentsTree, primeAgents, shownRunIds } from '../lib/agents.mjs';
 import { ctxView } from '../lib/ctxlimit.mjs';
 import { mapGraph } from '../lib/map.mjs';
 import { LOCK_STALE_MIN, quietFlag } from '../lib/tick.mjs';
-import { homeDir } from '../lib/config.mjs';
+import { homeDir, realPath } from '../lib/config.mjs';
 import { executorExtra } from '../lib/executors.mjs';
 import { loginHolds, authFile } from '../lib/authguard.mjs';
 import { cacheFile as vendorCacheFile } from '../lib/vendorstatus.mjs';
@@ -894,7 +894,7 @@ export function createDashboard(o) {
     const raw = url.searchParams.get('path');
     if (!raw) throw fail(400, 'path is required');
     if (!path.isAbsolute(raw) || /^[\\/]{2}/.test(raw)) throw fail(400, 'path must be an absolute local path');
-    const real = await realOf(raw), f = real ?? path.resolve(raw);
+    const real = await realOf(raw), f = real ?? realPath(raw);   // a missing file: its real folder + name (an 8.3 short spelling is judged, 404, not refused)
     const inside = r => { const rel = path.relative(r, f); return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel); };
     if (!fileRoots(p).some(inside)) throw fail(403, 'Outside the allowed roots (the project root, its state, its runs\' worktrees and NOTES folders)');
     const type = IMAGE[path.extname(f).slice(1).toLowerCase()];

@@ -9,6 +9,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { POLICY_MODELS } from './policy.mjs';
 import { advisory } from './advisory.mjs';
+import { realPath } from './config.mjs';
 
 const fwd = p => String(p).replace(/\\/g, '/');
 const lc = p => (process.platform === 'win32' ? fwd(p).toLowerCase() : fwd(p));
@@ -38,11 +39,15 @@ export const CHECKS = {
 /** the memory folder of the git repository at root (every worktree of it shares one), matched case-insensitively on disk */
 export function memoryDir(root, claudeConfig) {
   if (!root || !claudeConfig) return null;
-  const common = gitOut(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'])?.trim();
-  const main = common && /\/\.git\/?$/.test(fwd(common)) ? path.dirname(common) : root;
-  const slug = fwd(path.resolve(main)).replace(/[^A-Za-z0-9]/g, '-'), base = path.join(claudeConfig, 'projects');
+  // the common dir relative to root, resolved against root: the main root in the caller's spelling (an 8.3 short name stays short,
+  // as Claude Code saw it as its cwd); its canonical spelling (git's absolute answer) is the second candidate (CI-RED-7E52345)
+  const common = gitOut(root, ['rev-parse', '--path-format=relative', '--git-common-dir'])?.trim();
+  const abs = common && path.resolve(root, common);
+  const main = abs && /\/\.git\/?$/.test(fwd(abs)) ? path.dirname(abs) : root;
+  const slugOf = p => fwd(path.resolve(p)).replace(/[^A-Za-z0-9]/g, '-'), slug = slugOf(main), base = path.join(claudeConfig, 'projects');
+  const want = [slug, slugOf(realPath(main))].map(s => s.toLowerCase());
   let hit = null;
-  try { hit = fs.readdirSync(base).find(n => n.toLowerCase() === slug.toLowerCase()); } catch { /* no projects folder yet: fall back to the computed slug */ }
+  try { const names = fs.readdirSync(base); hit = want.map(w => names.find(n => n.toLowerCase() === w)).find(Boolean); } catch { /* no projects folder yet: fall back to the computed slug */ }
   return path.join(base, hit || slug, 'memory');
 }
 
