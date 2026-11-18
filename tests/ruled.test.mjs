@@ -67,3 +67,10 @@ test('RUN-61 / RUN-68 in the digest: a check-in that ended after the answer with
   assert.deepEqual(row.missed, [ck]);
   assert.match(renderDigest(d), new RegExp(`${q} answered .*MISSED by ${ck}: apply it first`));
 });
+
+test('after the apply the lane says who applied the ruling and what it did, until its next run', () => {
+  const state = mkTmp('ruled-applied-'), q = parkedOnQ(state);
+  rec(state, { kind: 'question', ev: 'answer', id: q, by: 'owner', data: { choice: 'waive', text: 'yes', via: 'chat' } });
+  record(state, { kind: 'question', ev: 'apply', id: q, by: 'checkin', data: { refs: ['WVR-1'] } }, { views: false, run: 'RUN-69' });
+  assert.equal(lanesView(loadState(state)).find(x => x.name === 'ci-fix4').text, `Applied by RUN-69: your ruling on ${q} (waive) -> WVR-1`);
+});
