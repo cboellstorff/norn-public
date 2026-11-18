@@ -38,6 +38,7 @@ import { loginHolds, authFile } from '../lib/authguard.mjs';
 import { cacheFile as vendorCacheFile } from '../lib/vendorstatus.mjs';
 import { limitLines } from '../lib/limitgate.mjs';
 import { newLaneAsync, LaneError } from '../lib/lanenew.mjs';
+import { proposalsOf, primeProposals } from '../lib/proposals.mjs';
 import { loadRoadmap, checkLinks, refTerm, writeRoadmapViewAsync, roadmapViewPath, RoadmapError } from '../lib/roadmap.mjs';
 import { proposalOf, addRuleAsync, adoptDecideAsync, adoptApplyAsync, adoptCloseAsync, AdoptError, interviewOf, readExecutor, consentLine, ANSWER_KEYS, RULES_FILE, laneNameOf } from '../lib/adopt.mjs';
 import { lanePaths } from '../lib/lanenew.mjs';
@@ -371,6 +372,10 @@ export function createDashboard(o) {
     const pa = new Map(possibleAnswers(items).map(x => [x.q, x]));   // META-Q-RECONCILE R1: the hint "already answered in DEC-m"
     for (const q of items.filter(i => i.kind === 'question' && i.state === 'open')) out.push({ type: 'question', id: q.id, project: p.name, lane: q.data.lane, title: q.data.title, body: q.data.body ?? null, options: q.data.options ?? [], recommend: q.data.recommend ?? null, class: q.data.class ?? null, created: q.created,
       ...(pa.has(q.id) ? { answered_by: { id: pa.get(q.id).dec, words: pa.get(q.id).words, why: pa.get(q.id).why } } : {}) });
+    // RM-28 S1: a finished planner run = ONE decision card (its summary, plan, a Queue now / Later / Drop per open stage)
+    await primeProposals(s.items);
+    for (const x of proposalsOf(s.items, loadRoadmap(p.state))) out.push({ type: 'proposal', id: x.run, project: p.name, lane: x.lane, item: x.item, title: `Decide: ${x.lane} plan`,
+      summary: x.summary, plans: x.plans, stages: x.stages, open: x.open, created: x.ended });
     // META-TEND P3: the repeat detector's approval cards (one per cluster, ranked): approve = a directive the check-in turns into a brief
     for (const c of await openCardsAsync(p.state, s.items)) out.push({ type: 'enforce', id: c.id, project: p.name, title: c.why, card: c, approve: c.approve, created: null });
     // META-TEND P5: the vendor audit's hunks - one card each (accept = a decision + a directive: the check-in applies it; decline = a decision)
@@ -1360,6 +1365,13 @@ data: ${JSON.stringify(l)}
       const text = `${head} ${ids.join(' ')}${ids.length < x.ids.length ? ` +${x.ids.length - ids.length} more (every id in ${r.id} and in this directive's findings)` : ''}`;
       const d = await rec(p, { kind: 'directive', ev: 'create', by: 'dashboard', data: { text, via: 'dashboard', findings: x.ids, fixall: r.id } });
       return { ok: true, id: r.id, directive: d.id, n: x.ids.length, again: false };
+    }
+    if (route === '/api/proposal') {   // RM-28 S1: a stage's pick on the proposal card = `norn proposal rule` (the decision + the act: one path)
+      if (!['queue', 'later', 'drop'].includes(data.pick)) throw fail(400, 'pick must be queue, later or drop');
+      if (!/^RUN-\d+$/.test(String(data.run)) || !/^S\d+$/i.test(String(data.stage))) throw fail(400, 'run must be a RUN-n and stage an S<n>');
+      const r = await metaCli(['proposal', 'rule', String(data.run), String(data.stage), data.pick, '--as', 'dashboard', ...(p.file ? ['--project', p.file] : []), '--state', p.state]);
+      if (r.code !== 0) { const e = cliFail(r); throw fail(/decided already/.test(e.message) ? 409 : e.status, e.message); }
+      return { ok: true, lines: r.out.trim().split(/\r?\n/) };
     }
     if (route === '/api/advice') {   // META-TEND P4: the advice card's one tap - apply its Settings change, or keep the setting; both recorded
       if (!['apply', 'keep'].includes(data.verdict)) throw fail(400, 'verdict must be apply or keep');

@@ -3,9 +3,10 @@
 // the plan path, the stages) and each stage into an owner pick: queue (launch the brief now, --item = the planner's roadmap item),
 // later (a child roadmap item, horizon next, linking the brief) or drop. Every pick is a decision record (data.proposal = the planner
 // run, data.stage = the stage key); a stage is open until it has one, or until a run was launched from its brief (a check-in did it
-// by hand). Pure over folded items + a file reader; the CLI (`norn proposal`) acts, the dashboard Inbox shows the cards. Node built-ins.
-import fs from 'node:fs';
+// by hand). Pure over folded items + the snapshot-aware file readers (fsnap.mjs: the dash primes them with primeProposals, never a
+// sync read on a GET); the CLI (`norn proposal`) acts, the dashboard Inbox shows the cards. Node built-ins.
 import path from 'node:path';
+import { readText, readTextA, readdirS, readdirA } from './fsnap.mjs';
 
 export const PICKS = ['queue', 'later', 'drop'];
 export const PICK_WORDS = { queue: 'Queue now', later: 'Later', drop: 'Drop' };
@@ -13,8 +14,7 @@ const BRIEF_RE = /^brief-(S\d+)\.md$/i;
 const fwd = p => String(p ?? '').replace(/\\/g, '/');
 const same = (a, b) => fwd(a).toLowerCase() === fwd(b).toLowerCase();
 const stageNum = k => Number(String(k).slice(1));
-const readOr = f => { try { return fs.readFileSync(f, 'utf8'); } catch { return null; } };
-const listOr = d => { try { return fs.readdirSync(d); } catch { return []; } };
+const listOr = d => readdirS(d).filter(e => e.isFile()).map(e => e.name);
 
 /** is this run a planner run that ended DONE? (the role agent planner, any *-planner variant) */
 export const isPlannerDone = r => r?.kind === 'run' && /(^|-)planner$/.test(r.data?.agent ?? '') && r.state === 'exited' && r.end?.outcome === 'done';
@@ -51,7 +51,7 @@ function picksOf(all, id) {
 /** every planner DONE with its proposal -> [{ run, lane, executor, worktree, notes, dir, item, summary [lines], plans [paths], ended,
  *  stages [{ key, brief, title, state open | queue | later | drop | launched, dec?, ref? }], open (count) }], newest first.
  *  o.all = also the proposals with no open stage left. o.read / o.list = file readers (tests). */
-export function proposalsOf(items, R, { read = readOr, list = listOr, all = false } = {}) {
+export function proposalsOf(items, R, { read = readText, list = listOr, all = false } = {}) {
   const xs = Object.values(items), out = [];
   for (const r of xs.filter(isPlannerDone)) {
     if (!r.data.notes) continue;
@@ -70,6 +70,14 @@ export function proposalsOf(items, R, { read = readOr, list = listOr, all = fals
       item: itemOf(R, r), summary: summaryOf(notes), plans, ended: r.end?.at ?? r.updated ?? r.created, stages, open });
   }
   return out.sort((a, b) => String(b.ended).localeCompare(String(a.ended)));
+}
+
+/** the dash (META-DASH-ASYNC): every planner DONE's notes folder, NOTES file and briefs into the request snapshot on fs.promises */
+export async function primeProposals(items) {
+  await Promise.all(Object.values(items).filter(r => isPlannerDone(r) && r.data.notes).map(async r => {
+    const dir = path.dirname(r.data.notes), es = await readdirA(dir);
+    await Promise.all([r.data.notes, ...es.filter(e => e.isFile() && BRIEF_RE.test(e.name)).map(e => path.join(dir, e.name))].map(readTextA));
+  }));
 }
 
 /** the one open stage `key` of proposal `run`, or why not (a RuleError message) */

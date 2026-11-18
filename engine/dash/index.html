@@ -151,6 +151,8 @@ tr:last-child td{border-bottom:0}
 .opt.rec{border-color:var(--accent);background:var(--accent-bg)}
 .q{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px}
 .q.openq{box-shadow:inset 3px 0 0 var(--accent)}
+.proposal{overflow-wrap:anywhere}.phead{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.psum{margin:8px 0;padding-left:22px;font-size:13px}.psum li{margin:2px 0}.ppath{word-break:break-all}
+.pstages{list-style:none;margin:8px 0;padding:0}.pstage{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;justify-content:space-between;padding:6px 0;border-top:1px solid var(--line)}.pstage>div:first-child{flex:1 1 260px;min-width:0}.pacts{display:flex;gap:6px;flex-wrap:wrap}
 .tree{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:6px 0}
 .node{display:grid;grid-template-columns:minmax(300px,1.6fr) 230px 80px 80px 130px 170px 100px;gap:10px;align-items:center;padding:6px 14px;border-top:1px solid var(--line)}
 .node.head{border-top:0;color:var(--mute);font-size:12px;font-weight:600}
@@ -1044,6 +1046,7 @@ document.addEventListener('click', e => {
   if (d.act === 'settings-discard') { S.setDirty = 0; S.setProfile = null; $('#settings-diff').innerHTML = ''; render(true); return; }
   if (d.act?.startsWith('adopt-')) { adoptAct(b, d); return; }
   if (d.act === 'answer') act(() => post('/api/answer', { project: p, id: d.id, choice: d.choice, text: d.text }));
+  if (d.act === 'proposal') act(() => post('/api/proposal', { project: d.project || p, run: d.run, stage: d.stage, pick: d.pick }));   // RM-28 S1: one stage's pick
   if (d.act === 'handedit') act(() => post('/api/handedit', { project: d.project || p, file: d.file, choice: d.choice }));   // GAP-8
   if (d.act === 'hold-resume') act(() => post('/api/pause', { project: d.project || p, paused: false }));   // GAP-1: the hold row of a PAUSED file
   if (d.act === 'advice-apply') act(() => post('/api/advice', { project: p, key: d.key, verdict: 'apply' }));   // META-TEND P4: the one tap (writes Settings + a decision)
