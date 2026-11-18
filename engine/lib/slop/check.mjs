@@ -17,10 +17,10 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const RULES_DIR = path.join(HERE, 'rules');
 export const LEVELS = ['BLOCK', 'WARN', 'TREND', 'LIST'];
 // RM-45 (audit REPORT sec. 6): the parameters a project may patch per kind (overrides.json), and the kinds a project rule
-// (P-*.json) may use. The engine-only kinds (diff-check, swallow, command, dup, exports, refs) are code over the whole tree, and
+// (P-*.json) may use; a rule's text (patterns, selectors, its lint rules, the cited ids) is never a param. The engine-only kinds (diff-check, swallow, command, dup, exports, refs) are code over the whole tree, and
 // `command` runs a program: a project file can switch and relevel them, never write one.
 export const KIND_PARAMS = {
-  'diff-check': [], swallow: ['files', 'exclude', 'deny'], pattern: ['files', 'exclude', 'patterns', 'in', 'unless', 'cite'], eslint: ['files', 'exclude'],
+  'diff-check': [], swallow: ['files', 'exclude', 'deny'], pattern: ['files', 'exclude', 'in', 'unless'], eslint: ['files', 'exclude'],
   ast: ['files', 'exclude', 'reason'], imports: ['roots', 'files', 'exclude', 'forbid', 'bare', 'manifests', 'vendor'], command: [], junk: ['patterns', 'max_bytes', 'allow'],
   dup: ['roots', 'files', 'exclude', 'groups', 'min_chars'], exports: ['roots', 'files', 'exclude', 'search', 'tests', 'tests_level', 'entry'], refs: ['files', 'exclude'],
 };
