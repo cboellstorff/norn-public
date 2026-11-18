@@ -249,7 +249,10 @@ function tests(d, ctx) {
   const h = d.history || [], last = h.at(-1), g = d.git?.points || [], gl = g.at(-1), adv = d.advisories;
   const advCard = adv ? `<div class="tablecard" id="tests-adv"><h3>Last merge check <span class="mute small">${esc(adv.head)} vs ${esc(adv.base)} · ${int(adv.files.length)} changed test file(s) · advisory, never a merge block</span></h3>
     ${adv.list.length ? `<ul class="tlist">${adv.list.map(a => `<li>${chip(a.severity === 'medium' ? 'warn' : 'idle', a.key)}${a.new ? ` ${chip('open', 'new')}` : ''} <b>${esc(a.path ?? a.surface)}</b> ${esc(a.why)}<div class="small mute">${esc(a.fix.action)} · ${esc(a.id)}</div></li>`).join('')}</ul>` : '<p class="mute" style="padding:0 12px">no finding</p>'}</div>` : '';
-  return testsHead(d, ctx, last, gl) + advCard + testsOver(h, g, last, gl) + testsLean(d.lean, d.mutation) + testsWave((d.waves || []).at(-1), ctx);
+  // a pytest (or any non node:test) project: say which parts can fill, instead of a page of "not measured yet" and a command that refuses
+  const why = d.suite === false ? `<div class="banner" id="tests-scope">This project's tests are not a node:test suite (tests/*.test.mjs), so only <b>Over time</b> fills here: test cases and lines per day from git, refreshed once a day by the tick. Per-test time, the slowest tests, the merge check and lean tests read node:test suites only.</div>`
+    : !g.length && !h.length ? `<div class="banner" id="tests-scope">Nothing measured yet. The tick fills <b>Over time</b> from git once a day; per-test time comes from <span class="mono">${esc(d.commands.measure)}</span> (a full suite run).</div>` : '';
+  return why + (d.suite === false ? testsOver(h, g, last, gl) : testsHead(d, ctx, last, gl) + advCard + testsOver(h, g, last, gl) + testsLean(d.lean, d.mutation) + testsWave((d.waves || []).at(-1), ctx));
 }
 
 // OOTB-R2 N-5: runs held for a login (the command to type, the held runs, the failing line)

@@ -64,7 +64,7 @@ import { auditsView, acceptText, auditFiles } from '../lib/audit.mjs';
 import { dupOf, dupMessage } from '../lib/dupdirs.mjs';
 import { keepFindings, fixPlan, fixBatch, runsFor, fixCards, verdictText, verdictIds, readRunBrief, FIX_LANE } from '../lib/fixer.mjs';
 import { paraMarks } from '../lib/readev.mjs';
-import { testsView, testsFiles } from '../lib/testscli.mjs';
+import { testsView, testsFiles, suiteOf } from '../lib/testscli.mjs';
 import { guardChips } from '../lib/guard.mjs';
 import { usageWeek } from '../lib/usageweek.mjs';
 import { classCost } from '../lib/classcost.mjs';
@@ -1411,7 +1411,7 @@ data: ${JSON.stringify(l)}
         if (route === '/api/docs') return send(200, docsAt(one(url), url));   // META-UX-BUILD S3
         if (route === '/api/instructions') return send(200, insOf(one(url), url));
         if (route === '/api/guard') return send(200, await guardAt(one(url), url));   // META-TEND P6
-        if (route === '/api/tests') { const p = one(url); await prime({ files: testsFiles(p.state) }); return send(200, { project: p.name, ...testsView(p.state) }); }   // META-TEND TESTS
+        if (route === '/api/tests') { const p = one(url); await prime({ files: testsFiles(p.state) }); return send(200, { project: p.name, ...testsView(p.state, await suiteOf(p)) }); }   // META-TEND TESTS
         const im = route.match(/^\/api\/instructions\/([\w-]+)$/);
         if (im) return send(200, insFile(one(url), im[1]));
         if (route === '/api/ledger') return send(200, await ledgerPage(one(url), url));
