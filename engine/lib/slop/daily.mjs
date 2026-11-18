@@ -49,7 +49,7 @@ export function dailyReport({ repo, state, now = Date.now(), own = null }) {
     .map(h => ({ branch: h.branch, open: h.blocks.length, rules: [...new Set(h.blocks.map(b => b.rule))].join(' ') }));
   const { markdown, line } = renderDaily(loc, sw, { day, holds, waivers: activeWaivers(state, now).length });
   const point = { loc: { totals: loc.totals, apart: loc.apart, areas: loc.areas }, sweep: { real: sw.real.length, conflicts: sw.real.filter(r => r.conflicts).length,
-    empty: sw.empty.length, dead: sw.dead.length, at_risk: sw.at_risk.length, remote_merged: sw.remote_merged.length } };
+    empty: sw.empty.length, unrelated: sw.unrelated.length, dead: sw.dead.length, at_risk: sw.at_risk.length, remote_merged: sw.remote_merged.length } };
   return { line, ...hostWrite(state, { type: 'daily', day, report: markdown, line, point }) };
 }
 
