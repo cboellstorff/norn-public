@@ -34,7 +34,8 @@ const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } c
  * marks = the run's start record ctx_marks (null for a run started before WORK-SIZING S1: never today's policy). o: { projectsDir, cache }
  */
 export function stageSizes(state, { lane, stage } = {}, o = {}) {
-  const runs = Object.values(loadState(state).items).filter(r => r.kind === 'run' && r.data?.lane === lane).sort((a, b) => String(a.created).localeCompare(String(b.created)));
+  const started = r => r.history?.some(h => h.ev === 'start');   // a queue record that was filled is no session (its fill is)
+  const runs = Object.values(loadState(state).items).filter(r => r.kind === 'run' && r.data?.lane === lane && started(r)).sort((a, b) => String(a.created).localeCompare(String(b.created)));
   const st = stage ?? runs.at(-1)?.data.stage ?? null, cache = o.cache || new Map();
   const sessions = runs.filter(r => (r.data.stage ?? null) === st).map(r => {
     const d = r.data, end = r.end || null, live = r.state === 'running';
