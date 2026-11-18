@@ -85,6 +85,9 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
 ## 2f. Usage guard (digest row 8: GRD alarms - runaway vs its peers, over the hand-off line, tool spam; Norn never stops a run itself)
 - Rule each: `META guard rule GRD-n --action let-run|mail|stop --why W`. mail = `NORN mail send --to RUN-n` (hand off / stop reading
   whole logs); stop = mail `role:controller` (a kill is not yours). `META guard sources RUN-n` shows what fills its context.
+- A `stuck:RM-n` wake (policy.stuck: k stopped rounds in a row / n runs / d days without a merge; its last three stop reasons follow
+  the wake line): `norn run` refuses further rounds on that item. Do not relaunch it as before: write `META stuck brief RM-n --out F`
+  and start that review as stage APPROACH-REVIEW on another executor or model than the stuck rounds (or ask the owner).
 
 ## 2g. Plan reviews (digest sec. 11; per project policy.dod.critique = on)
 - A planning run ending DONE got one fresh read-only review (norn critique); its findings file sits beside the plan. A build

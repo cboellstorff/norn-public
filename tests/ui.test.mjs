@@ -286,3 +286,13 @@ test('roadmap view in the URL hash: #board, #board-past, #board-rm-RM-3; the tre
   assert.deepEqual([parseRmHash('#board'), parseRmHash('#board-past'), parseRmHash('#board-rm-RM-3'), parseRmHash('#tree'), parseRmHash('#tree-future'), parseRmHash('#board-bogus')],
     [{ view: 'board' }, { view: 'board', scope: 'past' }, { view: 'board', item: 'RM-3' }, { view: 'tree' }, { view: 'tree', scope: 'future' }, {}]);
 });
+
+test('roadmap row: a stuck item shows the stuck chip (since + why + the review it waits for) and "n runs, d days, k stopped in a row" (META-CATCH S1)', () => {
+  const tr = rmTree(), it = tr.themes[0].children.find(i => i.id === 'RM-3');
+  it.stuck = { runs: 9, days: 4, stopped_row: 3, flag: { ts: rd(2), why: ['3 stopped in a row'] } };
+  const h = renderTab('roadmap', tr, { project: 'p', look: 'norn', rm: {}, now: Date.parse(RNOW) }), r3 = h.slice(h.indexOf('id="rm-RM-3"'), h.indexOf('id="rm-RM-4"'));
+  assert.match(r3, /<span class="chip bad" title="stuck since 2030-01-08T12:00Z: 3 stopped in a row - further rounds wait for an approach review">stuck<\/span>/);
+  assert.match(r3, /9 runs, 4 days, 3 stopped in a row/);
+  const r2 = h.slice(h.indexOf('id="rm-RM-2"'), h.indexOf('id="rm-RM-3"'));
+  assert.doesNotMatch(r2, />stuck</); assert.doesNotMatch(r2, /stopped in a row/);
+});

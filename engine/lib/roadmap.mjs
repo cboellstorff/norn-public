@@ -10,6 +10,7 @@ import { deliverablesView, deliverableConfig, lastInstall } from './deliverables
 import { scanRepo, makeGit } from './dlvgit.mjs';
 import { loadEpics, epicMembers } from './epics.mjs';
 import { writeGuarded, writeGuardedAsync } from './views.mjs';
+import { stuckOf, stuckPolicy, mergesOf, stuckWords } from './stuck.mjs';
 
 export class RoadmapError extends Error {}
 
@@ -81,17 +82,17 @@ const plural = (n, w) => `${n} ${w}${n === 1 ? '' : w.endsWith('h') ? 'es' : 's'
  *   docs: [paths] | fn(path) -> bool, hasInstall (the target is an install: deliverables receipts set), epics: { EP-n: { state, title, members } },
  *   idle: { days (default 7), now (default 3) } }
  */
-export function worldOf({ now = Date.now(), items = {}, dlv = [], branches = {}, shas = {}, docs = [], hasInstall = false, epics = {}, idle = {} } = {}) {
+export function worldOf({ now = Date.now(), items = {}, dlv = [], branches = {}, shas = {}, docs = [], hasInstall = false, epics = {}, idle = {}, policy = {} } = {}) {
   const fnOf = (v, miss) => typeof v === 'function' ? v : Array.isArray(v) ? (k => v.includes(k)) : (k => (k in v ? v[k] : miss));
   // OOTB-R2 N-4: a fake-executor run is a rehearsal - never evidence for the derived status (as deliverables' NOT_DELIVERING)
   const runs = Object.values(items).filter(i => i.kind === 'run' && i.data?.kind !== 'checkin' && i.data?.executor !== 'fake');
   const group = key => { const m = {}; for (const d of dlv) if (d[key]) (m[d[key]] ||= []).push(d); return m; };
   return { now, items, runs, dlv, dlvById: Object.fromEntries(dlv.map(d => [d.id, d])), dlvByBranch: group('branch'), dlvByLane: group('lane'),
-    branch: fnOf(branches, null), sha: fnOf(shas, null), doc: fnOf(docs, false), hasInstall, epics, idle: { days: 7, now: 3, ...idle } };
+    branch: fnOf(branches, null), sha: fnOf(shas, null), doc: fnOf(docs, false), hasInstall, epics, idle: { days: 7, now: 3, ...idle }, stuck: stuckPolicy(policy) };   // META-CATCH S1: policy.stuck
 }
 
 /** the runs, DLVs and branches an item's links reach (a lane brings its runs + DLVs, an epic its member runs + DLVs) */
-function reach(node, W) {
+export function reach(node, W) {
   const L = linksOf(node.links);
   const members = L.ep.flatMap(id => W.epics[id]?.members || []);
   const runIds = new Set([...L.run, ...members.filter(m => /^RUN-/.test(m))]);
@@ -173,9 +174,11 @@ export function derive(node, W) {
   const evidence = !!(row === 1 || live.length || queued.length || B.length || started.length || shaOk.length || qOpen.length || parked.length);
   const lastEvidence = Math.max(last || 0, ...B.map(b => b.ts || 0)) || null;
   const spans = started.map(spanOf).sort((a, b) => Date.parse(a.from) - Date.parse(b.from));
+  // META-CATCH S1: the stuck fold (runs / days / stopped in a row since the last merge; stuck.mjs); a past item never flags
+  const stuck = stuckOf(runs, mergesOf(runs, branches), W.stuck || stuckPolicy(), now, { past: PHASE[status] === 'past' });
   return { row, status, phase: PHASE[status], why, evidence, live: live.map(r => r.id), queued: queued.map(r => r.id), stages, branches, spans, first: spans[0]?.from ?? null,
     progress: { done: stages.filter(s => s.state === 'done').length + B.filter(b => b.at_target).length, total: stages.length + B.length },
-    last: last ? new Date(last).toISOString() : null, last_evidence: lastEvidence ? new Date(lastEvidence).toISOString() : null };
+    last: last ? new Date(last).toISOString() : null, last_evidence: lastEvidence ? new Date(lastEvidence).toISOString() : null, stuck };
 }
 
 // ---------- drift: the detectors D1-D5 (SPEC sec. 2) ----------
@@ -268,7 +271,7 @@ export function world({ stateDir, project = {}, now = Date.now(), git = makeGit(
     return (shaMemo[x] = !full ? null : git(cfg.repo, ['merge-base', '--is-ancestor', full, s.mainSha], { allowFail: true }) !== null);
   };
   const docs = p => fs.existsSync(path.isAbsolute(p) ? p : path.join(project.root || path.dirname(path.resolve(stateDir)), p));
-  const W = worldOf({ now, items: st.items, dlv: rows, branches, shas, docs, hasInstall, epics: epicsOf(stateDir), idle });
+  const W = worldOf({ now, items: st.items, dlv: rows, branches, shas, docs, hasInstall, epics: epicsOf(stateDir), idle, policy: project.policy });
   W.repo = cfg.repo || null;
   return W;
 }
@@ -340,6 +343,7 @@ export function renderItem(n, depth = 0) {
   const pad = '  '.repeat(depth), out = [];
   out.push(`${pad}${n.id}  ${n.status.padEnd(8)}  ${n.progress.done}/${n.progress.total}  ${n.title}${n.horizon ? ` [${n.horizon}]` : ''}`);
   out.push(`${pad}      ${n.why}`);
+  if (n.stuck?.runs) out.push(`${pad}      ${stuckWords(n.stuck)}${n.stuck.flag ? ` - STUCK since ${n.stuck.flag.ts.slice(0, 16)}Z: ${n.stuck.flag.why.join(', ')}` : ''}`);
   for (const s of n.stages) out.push(`${pad}      - ${s.key}${s.lane ? ` (${s.lane})` : ''}: ${s.state}${s.run ? ` ${s.run}` : ''}`);
   for (const f of flagWords(n)) out.push(`${pad}      ! ${f}`);
   for (const c of n.children) out.push(...renderItem(c, depth + 1));
