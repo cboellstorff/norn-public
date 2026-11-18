@@ -328,6 +328,8 @@ body[data-tab=home] main{padding:0;max-width:none}
 .hbar i{position:absolute;left:0;top:0;bottom:0;background:var(--warn)}.hbar b{position:absolute;top:-3px;bottom:-3px;width:1px;background:var(--run)}
 .home-c{display:flex;flex-direction:column;min-width:0;min-height:0}
 .hhead{display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--line);background:var(--panel);font-size:12.5px;white-space:nowrap;overflow:hidden;min-width:0}
+#chat-state{overflow:hidden;text-overflow:ellipsis;min-width:0}.chat-live{color:var(--accent);font-variant-numeric:tabular-nums}
+.chat-live::before{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent);margin-right:6px;vertical-align:middle}
 .hn{font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
 .hchip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--warn);color:var(--warn);padding:2px 8px;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .hchip i{flex:none;width:8px;height:8px;background:var(--ok);display:inline-block}
@@ -440,7 +442,7 @@ import { initLook, setLook, setTheme, setQuiet, look, ground, assetImg, assetUrl
 import { badgeCount, badgeLabel, bestAction, orcLine, mayAppear, logAppearance, stillOnly, createStage, avoidRects } from '/norn/orc.mjs';
 import { createScheduler } from '/norn/motion.mjs';
 import { createEvents, eventsOfRecords, beatOf } from '/norn/live.mjs';
-import { renderBottomBar, renderThread, pickProject, threadOnly, chatState, slashMenu, HOME_FILTERS } from '/home.mjs';
+import { renderBottomBar, renderThread, pickProject, threadOnly, chatState, chatStateClass, slashMenu, HOME_FILTERS } from '/home.mjs';
 // META-CI-WORKCLASS R2 (DEC-332): body.dataset.step = the last boot / render() step reached (a test timeout names where ready stalled)
 const step = n => { document.body.dataset.step = n; };
 step('imports');
@@ -645,11 +647,13 @@ async function paintThread() {
     const d = await get(`/api/home?project=${encodeURIComponent(S.project)}`), k = homeKeep();
     S.last = d; S.lastTab = 'home';
     $('#thread').innerHTML = renderThread(d.events || [], { project: d.project ?? S.project, filter: S.homeFilter, open: S.homeOpen });
-    const st = $('#chat-state'); if (st) st.textContent = chatState(d.status);
+    const st = $('#chat-state'); if (st) { st.textContent = chatState(d.status); st.className = chatStateClass(d.status); }
     const nb = $('[data-act="home-filter"][data-filter="needs"] b'); if (nb) nb.textContent = d.needs_you ?? 0;
     homeRestore(k); err('');
   } catch (e) { err('Refresh failed: ' + e.message); }
 }
+// the state line's clock: one tick a second while a turn runs (text only - no fetch, no repaint)
+setInterval(() => { const st = $('#chat-state'), s = S.lastTab === 'home' ? S.last?.status : null; if (st && s?.busy && s.since) st.textContent = chatState(s); }, 1000);
 let chatEs = null, chatFor = null;
 function chatLive(project) {
   if (project === chatFor) return;
@@ -678,7 +682,7 @@ async function chatSend() {
   const t = $('#chat-text'), text = t?.value.trim(); if (!text) return;
   const btn = $('[data-act="chat-send"]'); if (btn) btn.disabled = true;
   // a live line may have re-painted the composer while the post was in flight: clear the one on the page now
-  try { const r = await post('/api/chat/send', { project: S.project, text }); if (r?.command) render(true); const cur = $('#chat-text'); if (cur && cur.value.trim() === text) cur.value = ''; S.chatDraft = ''; err(''); const st = $('#chat-state'); if (st) st.textContent = 'sent - the controller is on it ...'; }
+  try { const r = await post('/api/chat/send', { project: S.project, text }); if (r?.command) render(true); const cur = $('#chat-text'); if (cur && cur.value.trim() === text) cur.value = ''; S.chatDraft = ''; err(''); const st = $('#chat-state'); if (st) { st.textContent = r?.queued ? 'sent - waiting in Norn until the chat restarts ...' : 'sent - the controller is on it ...'; st.className = 'small chat-live'; } }
   catch (e) { err('Not sent: ' + e.message); }
   finally { if (btn) btn.disabled = false; }
 }
@@ -960,7 +964,7 @@ document.addEventListener('click', e => {
   if (d.act === 'settings-discard') { S.setDirty = 0; S.setProfile = null; $('#settings-diff').innerHTML = ''; render(true); return; }
   if (d.act?.startsWith('adopt-')) { adoptAct(b, d); return; }
   if (d.act === 'answer') act(() => post('/api/answer', { project: p, id: d.id, choice: d.choice, text: d.text }));
-  if (d.act === 'handedit' && (d.choice === 'keep' || confirm('Let Norn take it back: your text is saved beside it as .bak, then Norn rewrites the file.'))) act(() => post('/api/handedit', { project: d.project || p, file: d.file, choice: d.choice }));   // GAP-8
+  if (d.act === 'handedit') act(() => post('/api/handedit', { project: d.project || p, file: d.file, choice: d.choice }));   // GAP-8
   if (d.act === 'hold-resume') act(() => post('/api/pause', { project: d.project || p, paused: false }));   // GAP-1: the hold row of a PAUSED file
   if (d.act === 'advice-apply') act(() => post('/api/advice', { project: p, key: d.key, verdict: 'apply' }));   // META-TEND P4: the one tap (writes Settings + a decision)
   if (d.act === 'audit-accept' && confirm('Accept: a decision + a directive ask the check-in to apply this hunk. Norn edits nothing itself.')) act(() => post('/api/audit', { project: d.project || p, id: d.id, verdict: 'accept' }));   // META-TEND P5
