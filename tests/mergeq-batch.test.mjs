@@ -90,7 +90,7 @@ function buildBatchBase(root) {
 // the MERGE worker's step 3 + 4, as the brief says: fast-forward main to the gated tip, push
 const mergeBatch = (f, rec) => { g(f.repo, 'merge', '-q', '--ff-only', rec.merge_tip); g(f.repo, 'push', '-q', 'origin', 'main'); };
 
-test('batch: a green gate -> ONE MERGE brief for the batch (one revert per branch); one batch at a time; merged -> the next', async () => {
+test('batch: a green gate -> ONE MERGE brief for the batch (one PR per branch); one batch at a time; merged -> the next', async () => {
   const f = batchFixture([['feat/a', 'docs/a.md'], ['feat/b', 'docs/b.md'], ['feat/u', 'engine/dash/u.css']]);
   f.project.merge.batch_max = 2;
   const r = await mergeqRun({ stateDir: f.state, project: f.project, locksDir: f.locks });
@@ -101,12 +101,12 @@ test('batch: a green gate -> ONE MERGE brief for the batch (one revert per branc
   assert.equal(g(f.repo, 'rev-list', '--count', '--first-parent', `${b.base}..${b.merge_tip}`), '2', 'one --no-ff merge commit per branch');
   assert.equal(g(f.repo, 'rev-parse', 'main'), b.base, 'main is untouched: the MERGE stage merges');
   const brief = fs.readFileSync(b.brief, 'utf8');
-  for (const m of b.members) assert.ok(brief.includes(`revert -m 1 ${m.merge}`), 'one revert command per branch');
+  assert.doesNotMatch(brief, /revert -m 1/, 'RM-7: the batch opens PRs, it never reverts on main');
   // GAP-6: the batch lands from its own merge worktree (the tip checked out there, then norn merge-land), never the owner checkout
   const mwt = briefMarker(brief).merge_wt;
   assert.equal(mwt, mergeWtPath(f.state, 'mq-batch-1'));
   assert.ok(brief.includes(`git -C ${mwt} checkout --quiet --detach ${b.merge_tip}`));
-  assert.ok(brief.includes(`merge-land --project <project.json> --worktree ${mwt}`));
+  assert.ok(brief.includes(`merge-land --project <project.json> --worktree ${mwt}${b.members.map(m => ` --branch ${m.branch}`).join('')}`), 'one --branch per member: one PR each');
   assert.doesNotMatch(brief, new RegExp(`git -C ${fwd(f.repo)} (pull|merge|push)`));
   assert.match(brief, /no dash \/ UI change in the batch/);
   assert.equal(briefMarker(brief).mode, 'staged');

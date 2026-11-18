@@ -62,8 +62,9 @@ export const KINDS = {
     end: { from: ['running'], to: 'exited', roles: ['launcher'] },
     lost: { from: ['running'], to: 'lost', roles: ['launcher', 'status'] },
     kill: { from: ['running'], to: 'killed', roles: [...OWNER, 'controller'] },
-    // the supervisor's auto-resume verdict after a HANDOFF exit: { next: RUN-n } or { refused: why } (design 5)
-    resume: { from: ['exited'], to: null, roles: ['launcher'] },
+    // the supervisor's auto-resume verdict after a HANDOFF exit: { next: RUN-n } or { refused: why } (design 5); META-CATCH S1: the
+    // same verdict on a run lost for a certain death (runs.mjs relaunchLost)
+    resume: { from: ['exited', 'lost'], to: null, roles: ['launcher'] },
     // META-CHECKIN-DIET R1: the launcher reviews a ROUTINE end itself ({ refs, routine, why[, queued, brief] }: checkins.mjs)
     review: { from: ['exited', 'lost', 'killed'], to: null, roles: ['checkin', 'controller', 'launcher'] },
     // META-GT12 queue: a run waiting for a cap slot (all start fields + not_before); filled by the launcher ({ next: RUN-m }) or withdrawn
@@ -93,6 +94,8 @@ export const KINDS = {
     unpark: { from: ['parked'], to: 'open', roles: [...CK, ...OWNER] },
     // META-GTP-MERGEQ piece 0: the work landed another way (another DLV, or a port commit): terminal, never resurfaces
     supersede: { from: ['open', 'parked'], to: 'superseded', roles: [...CK, ...OWNER] },
+    // RM-7: norn merge-land opened (or found open) the branch's PR to main: { url, number, repo, head, base, merge, run? }
+    pr: { from: ['open', 'parked'], to: null, roles: ['launcher', ...CK] },
   } },
   // META-GTP-DAG piece 2 (GT-PARITY-PLAN 2.3, a Gas Town convoy): a group of runs / deliverables with a priority. Its own file
   // (epics.jsonl), so loadState stays as is; members = create.members + add - remove (epics.mjs); DONE is derived, never an event.
@@ -365,6 +368,7 @@ function validateData(kind, ev, d, target, st, by) {
       str(d.owner_words, 'owner_words', { req: false, max: 4000 });   // META-Q-RECONCILE R1
       if (d.not_an_answer !== undefined && d.not_an_answer !== true) fail('not_an_answer must be true');
       if (d.not_an_answer && d.answers) fail('--answers and --not-an-answer exclude each other');
+      if (d.approach_review !== undefined && !/^RM-\S+$/.test(d.approach_review)) fail('approach_review must name a roadmap item (RM-n)');   // META-CATCH S1 (stuck.mjs)
     }
     if (ev === 'notanswer') {
       if (kindOfId(d.q) !== 'question' || st.items[d.q]?.kind !== 'question') fail(`q must name an existing Q-n (got ${JSON.stringify(d.q)})`);

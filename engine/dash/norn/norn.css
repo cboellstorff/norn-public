@@ -283,3 +283,15 @@
 /* META-TEND P1-VISUAL: the stack widget and the file map square on the pixel grid (the series --k1..--k9 sit in the ground blocks above) */
 :root.norn .insbar, :root.norn .insdot, :root.norn .stkdot, :root.norn .fmblk { border-radius: 0; }
 :root.norn .fmblk { color: var(--panel); }
+
+/* the live dots - the hand-off chip (widgets.mjs hoChip, .pulse) and the chat header's busy dot (index.html .chat-live::before) - and
+   their one pulse, the animation both looks share, so it lives here under .motion (index.html holds none): the classic dot breathes
+   (scale only: no opacity, no colour); the Norn dot is square on the pixel grid and blinks on and off in two steps.
+   No .motion (QUIET, reduced motion, hidden tab) = a still dot beside the same words. */
+:root.motion .pulse, :root.motion .chat-live::before { animation: ho-pulse 1.4s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes ho-pulse { 50% { transform: scale(0.45); } }
+:root.norn .ho, :root.norn .chat-live::before { border-radius: 0; }
+:root.norn .pulse { border-radius: 0; width: calc(4 * var(--px)); height: calc(4 * var(--px)); }
+:root.norn.motion .pulse, :root.norn.motion .chat-live::before { animation: norn-blink 1.2s steps(1, end) infinite; }
+@keyframes norn-blink { 50% { visibility: hidden; } }
+:root.norn .lbl .ho { margin: 0 0 0 4px; padding: 0 4px; font-size: 11px; }

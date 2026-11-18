@@ -346,7 +346,7 @@ function finish(stateDir, rec, k, { cfg, project, git }) {
     scratch: cfg.scratch, notes: rec.notes, ui: rec.ui, members: rec.merge_members });
   fs.writeFileSync(rec.brief, text);
   rec.status = 'green';
-  // GAP-6: the batch MERGE works in its own merge worktree (the brief's marker names it) and lands with norn merge-land
+  // GAP-6: the batch MERGE works in its own merge worktree (the brief's marker names it) and opens the PRs with norn merge-land
   rec.dispatch = ['run', '--lane', 'mq', '--stage', 'MERGE', '--brief', rec.brief, '--worktree', briefMarker(text).merge_wt, '--notes', rec.notes, '--executor', 'claude', '--queue'];
 }
 

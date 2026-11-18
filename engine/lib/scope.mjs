@@ -22,9 +22,8 @@ const WIN = process.platform === 'win32';
 const fwd = p => String(p).replace(/\\/g, '/');
 const norm = p => { const a = fwd(path.resolve(p)).replace(/\/+$/, ''); return WIN ? a.toLowerCase() : a; };
 const under = (p, root) => p === root || p.startsWith(root + '/');
-const isMerge = spec => String(spec.stage ?? '').toUpperCase() === 'MERGE';
-// a check-in works in the main checkout and a MERGE stage run lands its merge (norn merge-land): both push main; a lane run never does
-const mayPushMain = spec => isMerge(spec) || spec.kind === 'checkin';
+// a check-in works in the main checkout and may push main; a MERGE stage opens a PR (norn merge-land) and a lane run never pushes main
+const mayPushMain = spec => spec.kind === 'checkin';
 
 export const refusalsFile = state => path.join(state, 'scope', 'refusals.jsonl');
 export const scopeHookCommand = state => `"${fwd(process.execPath)}" "${fwd(META_BIN)}" scope check --run $META_RUN_ID --state "${fwd(path.resolve(state))}"`;

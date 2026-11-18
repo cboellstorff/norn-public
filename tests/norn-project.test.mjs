@@ -117,7 +117,7 @@ test('MERGE brief template: filled from the lane + the project policy merge.shot
   const o = { lane: 'meta-watch', branch: 'feat/norn-watch', worktree: '/h/dev/sdd-codex-watch', notes: '/h/dev/sdd-codex-reviews/meta-watch/MERGE-NOTES.md', ui: true };
   const after = renderMergeBrief(p, o);
   assert.doesNotMatch(after, /\{\{/);
-  for (const s of ['feat/norn-watch', '/h/dev/sdd-codex-watch', 'merge --no-ff -m "merge: feat/norn-watch (meta-watch)" origin/feat/norn-watch', 'norn.mjs" smoke', 'merge-land --project', 'revert -m 1 <merge sha>', 'norn.mjs" done', 'MERGE-NOTES.md']) assert.ok(after.includes(s), s);
+  for (const s of ['feat/norn-watch', '/h/dev/sdd-codex-watch', 'merge --no-ff -m "merge: feat/norn-watch (meta-watch)" origin/feat/norn-watch', 'norn.mjs" smoke', 'merge-land --project', '--branch feat/norn-watch', 'norn.mjs" done', 'MERGE-NOTES.md']) assert.ok(after.includes(s), s);
   assert.match(after, /SHOTS AFTER/);
   // 11-09 VISUAL-B merge: the notice named a local folder (useless on a phone) - the shots ride as ntfy attachments
   assert.match(after, /up to 3 key shots/); assert.doesNotMatch(after, /shot paths in --body/);
@@ -149,10 +149,10 @@ test('MERGE briefs: policy.merge.suite full (default: the ci-suite step, as befo
   const kinds = { rebase: q => renderMergeBrief(q, o), staged: q => renderMergeBrief(q, { ...o, sha: 'abcdef1' }), batch: q => renderBatchBrief(q, b) };
   const today = {   // today's text, bit for bit
     rebase: ["2. Suite in /h/wt: `node engine/bin/ci-suite.mjs` (smoke.test.mjs runs alone after the rest). Only the known reds of the project's known-red list may be\n   red; a load red must pass alone (run it alone, name it). Any other red = STOPPED, nothing merged.\n",
-      '--body "<sha>, suite + smoke green; revert', 'Write NOTES: merge sha, the land line, suite counts + named reds, smoke result'],
+      '--body "<PR url>, suite + smoke green"', 'Write NOTES: the PR url, the tested merge sha, the merge-land line, suite counts + named reds, smoke result'],
     staged: [`3. Suite in ${W} on the uncommitted merge: \`node engine/bin/ci-suite.mjs\` (smoke.test.mjs runs alone after the rest). Only the known reds of\n   the project's known-red list may be red; a load red must pass alone (run it alone, name it). Any other red =\n   \`git -C ${W} merge --abort\`, STOPPED, nothing merged.\n`,
-      '--body "<sha>, suite + smoke green; revert', 'Write NOTES: merge sha, the land line, suite counts + named reds, smoke result'],
-    batch: ['The gate `node engine/bin/ci-suite.mjs` ran GREEN on the batch tip ' + 'a'.repeat(40), '--body "<tip>, gate + smoke green; revert one'],
+      '--body "<PR url>, abcdef1 tested, suite + smoke green"', 'Write NOTES: the PR url, the tested merge sha, the merge-land line, suite counts + named reds, smoke result'],
+    batch: ['The gate `node engine/bin/ci-suite.mjs` ran GREEN on the batch tip ' + 'a'.repeat(40), '--body "<one PR url per branch>, gate + smoke green"'],
   };
   for (const [k, render] of Object.entries(kinds)) {
     const dflt = render(p), full = render(suite('full')), skip = render(suite('skip'));
@@ -162,12 +162,12 @@ test('MERGE briefs: policy.merge.suite full (default: the ci-suite step, as befo
     assert.doesNotMatch(skip, /\{\{|ci-suite\.mjs` \(|Suite in/, `${k}: skip runs no ci-suite`);
     assert.match(skip, /merge\.suite = skip/);
     assert.match(skip, /norn\.mjs" smoke/, `${k}: the smoke always stays`);
-    assert.match(skip, k === 'batch' ? /--body "<tip>, gate skipped \(policy merge\.suite = skip\) \+ smoke green/ : /--body "<sha>, suite skipped \(policy merge\.suite = skip\)/, `${k}: the notify body says which ran`);
+    assert.match(skip, k === 'batch' ? /--body "<one PR url per branch>, gate skipped \(policy merge\.suite = skip\) \+ smoke green/ : /--body "<PR url>, (abcdef1 tested, )?suite skipped \(policy merge\.suite = skip\)/, `${k}: the notify body says which ran`);
     if (k !== 'batch') {
       assert.match(skip, /conflicts?.*only the test files of the conflicted areas/s);
       assert.match(skip, /a red there = .*--outcome stopped --why "red in a conflicted area/s);
       assert.match(skip, /clean .* runs no test/);
-      assert.match(skip, /Write NOTES: merge sha, the land line, suite skipped \(policy merge\.suite = skip\)/);
+      assert.match(skip, /Write NOTES: the PR url, the tested merge sha, the merge-land line, suite skipped \(policy merge\.suite = skip\)/);
     }
     assert.throws(() => render(suite('sometimes')), /merge\.suite must be one of full, skip/);
   }

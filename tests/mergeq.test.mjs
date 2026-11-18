@@ -60,7 +60,7 @@ test('merge brief --sha: merges THAT commit in its own merge worktree and never 
   assert.match(txt, new RegExp(`merge-base --is-ancestor ${sha} origin/feat/vis`));
   assert.doesNotMatch(txt, /rebase origin|force-with-lease|-C \/h\/dev\/sdd-codex-vis (fetch|rebase|push|merge)/, 'nothing runs in the lane worktree');
   assert.match(txt, /NEVER touch the lane worktree \/h\/dev\/sdd-codex-vis/);
-  for (const s of ['git -C /h/dev/sdd-codex revert -m 1', 'norn.mjs" smoke', 'norn.mjs" done', 'MERGE-NOTES.md', 'SHOTS AFTER']) assert.ok(txt.includes(s), s);
+  for (const s of ['merge-land --project', '--branch feat/vis', 'norn.mjs" smoke', 'norn.mjs" done', 'MERGE-NOTES.md', 'SHOTS AFTER']) assert.ok(txt.includes(s), s);
   const land = { repo: '/h/dev/sdd-codex', slots: 2, main_branch: 'main', remote: 'origin' };
   assert.deepEqual(briefMarker(txt), { mode: 'staged', lane: 'meta-vis', branch: 'feat/vis', worktree: '/h/dev/sdd-codex-vis', sha, merge_wt: mergeWtPath(P.state, 'meta-vis', sha), ...land, notes: '/h/r/meta-vis/MERGE-NOTES.md' });
   assert.match(txt, new RegExp(`git -C ${mergeWtPath(P.state, 'meta-vis', sha)} merge --no-ff --no-commit ${sha}`), 'the merge is made in the merge worktree');

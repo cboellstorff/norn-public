@@ -23,7 +23,8 @@ import { critiqueHolds, critiqueSkip, critiqueFiles, critiquePrompt, classExecut
 import { startRun, stopRun, requeueRun, fillQueue, queueOf, readiness, FILL_DEFAULTS, RunRefused, RunError, laneWriter, normWt, duplicateOf } from '../lib/runs.mjs';
 import { parseAfter, parseInputs, AfterError, makeEval, readyWords } from '../lib/after.mjs';
 import { loadEpics, epicMembers, epicStatus, checkMembers, EpicError } from '../lib/epics.mjs';
-import { loadRoadmap, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError } from '../lib/roadmap.mjs';
+import { loadRoadmap, buildTree, renderTree, renderItem, renderAudit, auditOf, itemsOf, findNode, checkLinks, planEvents, refTerm, writeRoadmapView, roadmapViewPath, RoadmapError, world, reach } from '../lib/roadmap.mjs';
+import { stuckRefusal, readStuck, reviewBrief, replayLines } from '../lib/stuck.mjs';
 import { scan, importLegacy, renderImport, adoptStart, adoptDecide, adoptApply, adoptClose, proposalOf, renderProposal, AdoptError, interviewOf, laneNameOf, readExecutor, readStart, readWait, consentLine, ANSWER_KEYS } from '../lib/adopt.mjs';
 import { loadFlow, startFlow, flowStatus, resumeFlow, FlowError, FLOWS_DIR } from '../lib/flows.mjs';
 import { providersOf, typedExe, executorInfo } from '../lib/executors.mjs';
@@ -51,7 +52,7 @@ import { remoteSetup, remoteOff } from '../lib/remote.mjs';
 import { fwd } from '../lib/config.mjs';
 import { newLane, lanePaths, LaneError } from '../lib/lanenew.mjs';
 import { renderMergeBrief, shotsMode, briefMarker } from '../lib/mergebrief.mjs';
-import { landProject, landLine, LAND_EXIT } from '../lib/mergeland.mjs';
+import { openProjectPrs, prLine, LAND_EXIT } from '../lib/mergeland.mjs';
 import { isMergeStage } from '../lib/usageguard.mjs';
 import { delegateStart, delegateWait, ASK_MAX_S } from '../lib/delegate.mjs';
 import { askStart, askWait } from '../lib/ask.mjs';
@@ -80,7 +81,7 @@ import { BILLING_MODES, BILLING_NAMES, billingChanges, billingLine, isApi, usdCa
 
 const USAGE = {
   'add question': 'norn rec add question --lane L --title T [--body TEXT | --body-file F] [--option "key|text|cost"]... [--recommend "key|why"] [--class i..v] [--blocks a,b] [--source S] [--owner-only]',
-  'add decision': 'norn rec add decision --lane L --question Q --choice C --why W [--cost C] [--source S] [--answers Q-n --owner-words "<owner words, verbatim>" | --not-an-answer] [--notify] [--on-runs RUN-1,RUN-2]    (exit 3 = an owner pick on a lane with an open Q: name it with --answers, or --not-an-answer)',
+  'add decision': 'norn rec add decision --lane L --question Q --choice C --why W [--cost C] [--source S] [--answers Q-n --owner-words "<owner words, verbatim>" | --not-an-answer] [--notify] [--on-runs RUN-1,RUN-2] [--approach-review RM-n]    (exit 3 = an owner pick on a lane with an open Q: name it with --answers, or --not-an-answer)',
   'add directive': 'norn rec add directive --text T --via dashboard|talk|chat [--scope a,b] [--expires UTC] [--new]    (owner contexts only; exit 3 = it restates an active DIR: supersede that one, or --new to create anyway)',
   'add waiver': 'norn rec add waiver --rule K2 --scope <fingerprint | path glob> --why W [--until ISO]    (owner / controller: a slop finding that may stay)',
   'add lane': 'norn rec add lane --name N [--worktree W] [--notes F] [--branch B] [--brief-dir D] [--stage S] [--round-estimate R] [--executor-hint E] [--item RM-n (links lane:N to the roadmap item)]',
@@ -104,7 +105,7 @@ const USAGE = {
 const COMMON = ['state', 'project', 'as'];
 const FLAGS = {
   'add question': ['lane', 'title', 'body', 'body-file', 'option*', 'recommend', 'class', 'blocks', 'source', 'owner-only!'],
-  'add decision': ['lane', 'question', 'choice', 'why', 'cost', 'source', 'answers', 'owner-words', 'not-an-answer!', 'notify!', 'on-runs'],
+  'add decision': ['lane', 'question', 'choice', 'why', 'cost', 'source', 'answers', 'owner-words', 'not-an-answer!', 'notify!', 'on-runs', 'approach-review'],
   'add directive': ['text', 'via', 'scope', 'expires', 'new!'],
   'add waiver': ['rule', 'scope', 'why', 'until'],
   'add lane': ['name', 'worktree', 'notes', 'branch', 'brief-dir', 'stage', 'round-estimate', 'executor-hint', 'item'],
@@ -157,7 +158,7 @@ function addData(what, f, cmd) {
     const body = f['body-file'] !== undefined ? fs.readFileSync(f['body-file'], 'utf8') : f.body;
     return drop({ title: f.title, lane: f.lane, body, options, recommend, class: f.class, blocks: csv(f.blocks) || [], source: f.source, owner_only: f['owner-only'] ? true : undefined });
   }
-  if (what === 'decision') return drop({ lane: f.lane, question: f.question, choice: f.choice, why: f.why, cost: f.cost, source: f.source, answers: f.answers, owner_words: f['owner-words'], not_an_answer: f['not-an-answer'] ? true : undefined, notify: f.notify ? true : undefined, on_runs: csv(f['on-runs']) });
+  if (what === 'decision') return drop({ lane: f.lane, question: f.question, choice: f.choice, why: f.why, cost: f.cost, source: f.source, answers: f.answers, owner_words: f['owner-words'], not_an_answer: f['not-an-answer'] ? true : undefined, notify: f.notify ? true : undefined, on_runs: csv(f['on-runs']), approach_review: f['approach-review'] });
   if (what === 'directive') return drop({ text: f.text, via: f.via, scope: csv(f.scope), expires_utc: f.expires });
   if (what === 'waiver') return drop({ rule: f.rule, scope: f.scope, why: f.why, until: f.until });
   if (what === 'lane') return drop({ name: f.name, worktree: f.worktree, notes: f.notes, branch: f.branch, brief_dir: f['brief-dir'], stage: f.stage, round_estimate: f['round-estimate'], executor_hint: f['executor-hint'] });
@@ -498,6 +499,9 @@ function runCmd(argv, env, out, err) {
     if (rg.refused) throw new RunRefused(rg.refused, 6);
     if (rg.dod) o.dod = { ...rg.dod, ...(o.notes ? { notes: o.notes } : {}) };
     if (flags.item) openItem(state, flags.item);   // META-ROADMAP S3: refuse before any run is recorded
+    // META-CATCH S1: a stuck item (stuck.json, the tick's flags) takes no further round until its approach review (exit 7)
+    const sr = stuckRefusal(state, { lane: o.lane, item: flags.item, stage: o.stage, executor: ex, model: o.model });
+    if (sr) throw new RunRefused(sr, 7);
     // META-DOD 3: a brief naming a plan whose review is not settled waits for it (critique.mjs; met now = no condition)
     const holds = critiqueHolds(state, o.brief);
     if (holds.length) o.after = [...(o.after || []), ...holds];
@@ -664,6 +668,12 @@ function s5Cmd(argv, env, out, err) {
         // GAP-1: ONE notice per hold of all queued work (holds.mjs: hold.json notified) - the owner must act, so class alert
         if (r.hold_notice) flushes.push(import('../lib/notify.mjs').then(({ notify }) => notify({ title: r.hold_notice.title, body: r.hold_notice.body, cls: 'alert', machine: m.machine, state: proj.state, env }))
           .then(x => out(`tick ${proj.name}: notify: hold notice ${x.sent ? 'sent' : 'recorded'}`), e => err(`tick ${proj.name}: notify (hold) failed: ${e.message}`)));
+        // META-CATCH S1: ONE notice per sweep that handled dead runs ("machine rebooted at T: n runs lost, m relaunched"), class alert
+        if (r.lost_notice) flushes.push(import('../lib/notify.mjs').then(({ notify }) => notify({ title: r.lost_notice.title, body: r.lost_notice.body, cls: 'alert', machine: m.machine, state: proj.state, env }))
+          .then(x => out(`tick ${proj.name}: notify: lost-runs notice ${x.sent ? 'sent' : 'recorded'}`), e => err(`tick ${proj.name}: notify (lost runs) failed: ${e.message}`)));
+        // META-CATCH S1: ONE notice per new stuck flag (stuck.mjs: stuck.json noticed), class alert
+        for (const n of r.stuck_notices || []) flushes.push(import('../lib/notify.mjs').then(({ notify }) => notify({ title: n.title, body: n.body, cls: 'alert', machine: m.machine, state: proj.state, env }))
+          .then(x => out(`tick ${proj.name}: notify: stuck notice ${x.sent ? 'sent' : 'recorded'}`), e => err(`tick ${proj.name}: notify (stuck) failed: ${e.message}`)));
         // META-GUARD R1: one "usage" notice per new GRD alarm - batched into the FYI digest unless policy guard.push
         for (const g of r.guard || []) flushes.push(import('../lib/notify.mjs').then(({ notify, batchHours }) => notify({ title: `${g.run} ${g.cls}`, body: `${g.id}${g.lane ? ' ' + g.lane : ''}: ${g.why}`,
           cls: 'usage', push: !!r.guard_push, batchH: batchHours(proj), machine: m.machine, state: proj.state, env }))
@@ -953,19 +963,22 @@ function mergeBriefCmd(argv, env, out, err) {
   }
 }
 
-// ---------- GAP-6: norn merge-land (a MERGE run lands its merge worktree on main: fast-forward, short lock, never a force) ----------
-const LAND_USAGE = 'usage: norn merge-land --project project.json --worktree <merge worktree> [--no-push] [--attempts N] [--locks D]    (exit 0 LANDED, 4 REMERGED: main moved and was merged in - re-test, then land again, 3 NOT LANDED: nothing landed)';
+// ---------- RM-7: norn merge-land (a MERGE run's tested merge goes to main as a PR per lane branch; Norn never pushes main) ----------
+const LAND_USAGE = 'usage: norn merge-land --project project.json --worktree <merge worktree> --branch B [--branch B2 ..]    (exit 0: every branch has its PR to main (PR OPENED / PR ALREADY OPEN <url>), 3 NOT OPENED: some branch has none)';
 function mergeLandCmd(argv, env, out, err) {
   try {
-    const f = h1Flags(argv, ['project', 'worktree', 'attempts', 'locks', 'no-push!']);
-    if (!f.project || !f.worktree) throw new Usage('--project and --worktree are required', null);
-    const attempts = f.attempts === undefined ? undefined : Number(f.attempts);
-    if (attempts !== undefined && !(Number.isInteger(attempts) && attempts > 0)) throw new Usage('--attempts wants a whole number > 0', null);
+    const branches = [], rest = [];
+    for (let i = 0; i < argv.length; i++) {
+      if (argv[i] !== '--branch') { rest.push(argv[i]); continue; }
+      if (i + 1 >= argv.length) throw new Usage('--branch needs a value', null);
+      branches.push(argv[++i]);
+    }
+    const f = h1Flags(rest, ['project', 'worktree']);
+    if (!f.project || !f.worktree || !branches.length) throw new Usage('--project, --worktree and --branch are required', null);
     const p = loadProject(f.project, { meta: metaRoot(env) });
-    const r = landProject(p, { wt: path.resolve(f.worktree), locksDir: f.locks || path.join(path.dirname(path.resolve(p.state)), 'locks'), run: env.META_RUN_ID || 'merge-land',
-      push: !f['no-push'], attempts });
-    out(landLine(r));
-    return LAND_EXIT[r.status] ?? 1;
+    const rs = openProjectPrs(p, { wt: path.resolve(f.worktree), branches, run: env.META_RUN_ID || null });
+    for (const r of rs) out(prLine(r));
+    return rs.every(r => r.status !== 'refused') ? LAND_EXIT.opened : LAND_EXIT.refused;
   } catch (e) {
     err('error: ' + e.message); err(LAND_USAGE);
     return e instanceof Usage || e instanceof ConfigError ? 2 : 1;
@@ -1303,6 +1316,7 @@ Plan and land work:
   norn flow                        start / resume a multi-step flow
   norn epic                        group runs and deliverables under one goal
   norn road                        the roadmap: themes, items, derived status, audit
+  norn stuck                       stuck roadmap items: the flags, the approach-review brief, --replay
   norn adopt                       look at a repo and draft its setup: roadmap, rules, commands, caps, a first task
   norn plan                        what happens next, and when (up next, chains, landing, forecast)
   norn instructions                every file that steers the agents: load, ~tokens, cost today, hints, the measured standing context
@@ -1333,7 +1347,7 @@ Inside a run:
 Plumbing:
   norn ready                       what can start now
   norn merge-brief                 write the brief of one staged merge
-  norn merge-land                  land a merge worktree on main (fast-forward, never a force)
+  norn merge-land                  open the PR of a tested merge's lane branch(es) to main (never pushes main)
   norn gen                         regenerate (or --check) the generated agent files
   norn billing                     how the Claude account is paid for: a plan (weekly limit) or API billing
   norn calib                       record a weekly usage reading
@@ -1347,7 +1361,7 @@ Plumbing:
 function usageOf(c) {
   const u = { rec: ALL_USAGE, migrate: MIGRATE_USAGE, ...SETUP_USAGE, ...RUN_USAGE, ...S5_USAGE, dash: DASH_USAGE, smoke: 'norn smoke [--keep] [--update-goldens]',
     calib: CALIB_USAGE, billing: BILLING_USAGE, notify: NOTIFY_USAGE, 'merge-brief': MERGE_USAGE, 'merge-land': LAND_USAGE, ...H1_USAGE, executors: EXECUTORS_USAGE, delegate: DELEGATE_USAGE, ask: ASK_USAGE,
-    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
+    eval: EVAL_USAGE, deliverables: DLV_USAGE, ready: READY_USAGE, plan: PLAN_USAGE, instructions: INS_USAGE, audit: AUDIT_USAGE, mergeq: MQ_USAGE, flow: FLOW_USAGE, epic: EPIC_USAGE, road: ROAD_USAGE, stuck: STUCK_USAGE, adopt: ADOPT_USAGE, init: INIT_USAGE, cv: CV_USAGE, guard: GUARD_USAGE, usage: USAGE_USAGE, mail: MAIL_USAGE, scope: SCOPE_USAGE,
     node: NODE_USAGE, done: DONE_USAGE, ledger: LEDGER_USAGE, remote: REMOTE_USAGE, lane: LANE_USAGE + '\n       ' + LANE_HOLD_USAGE, shot: SHOT_USAGE }[c];
   return u && 'usage: ' + u.replace(/^usage: /, '');
 }
@@ -1404,6 +1418,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
   if (argv[0] === 'node') return nodeCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'epic') return epicCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'road') return roadCmd(argv.slice(1), env, out, err);
+  if (argv[0] === 'stuck') return stuckCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'adopt') return adoptCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'init') return initCmd(argv.slice(1), env, out, err);
   if (argv[0] === 'flow') return flowCmd(argv.slice(1), env, out, err);
@@ -1957,6 +1972,46 @@ function epicCmd(argv, env, out, err) {
 }
 
 // ---------- META-ROADMAP S1: norn road (roadmap records in roadmap.jsonl; status is derived, never typed; engine/lib/roadmap.mjs) ----------
+// ---------- META-CATCH S1: norn stuck (stuck.mjs) ----------
+const STUCK_USAGE = 'norn stuck [--json] (the open flags) | brief RM-n [--out F] (the generated approach-review brief) | --replay [RM-n] (when each threshold would have fired, from this state)    [--project F | --state D]';
+function stuckCmd(argv, env, out, err) {
+  try {
+    const flags = {}, pos = [];
+    for (let i = 0; i < argv.length; i++) {
+      const a = argv[i];
+      if (!a.startsWith('--')) { pos.push(a); continue; }
+      const k = a.slice(2);
+      if (['json', 'replay'].includes(k)) { flags[k] = true; continue; }
+      if (!['project', 'state', 'out'].includes(k)) throw new RunError(`unknown flag ${a}`);
+      flags[k] = argv[++i];
+    }
+    const { project, state } = where(flags, env);
+    const P = project || {}, R = loadRoadmap(state);
+    const nodes = id => { const xs = Object.values(R.items).filter(n => n.kind === 'item' && (!id || n.id === id)); if (id && !xs.length) throw new RunError(`${id} does not exist`); return xs; };
+    if (flags.replay) {
+      if (pos.length > 1) throw new RunError(`unexpected ${pos[1]}`);
+      const W = world({ stateDir: state, project: P });
+      out(replayLines(nodes(pos[0]), W, W.stuck, reach).join('\n'));
+      return 0;
+    }
+    if (pos[0] === 'brief') {
+      if (!pos[1]) throw new RunError('brief needs RM-n');
+      const n = findNode(buildTree({ stateDir: state, project: P }), pos[1]);
+      if (!n || n.kind !== 'item') throw new RunError(`${pos[1]} is not a roadmap item`);
+      const text = reviewBrief(pos[1], n, reach(R.items[pos[1]], world({ stateDir: state, project: P })).runs);
+      if (flags.out) { fs.writeFileSync(flags.out, text + '\n'); out(`wrote ${flags.out}`); } else out(text);
+      return 0;
+    }
+    if (pos.length) throw new RunError(`unexpected ${pos[0]}`);
+    const f = readStuck(state);
+    out(flags.json ? JSON.stringify(f, null, 1) : Object.entries(f).map(([id, x]) => `${id} stuck since ${x.ts.slice(0, 16)}Z: ${x.why.join(', ')} (${x.words})`).join('\n') || 'no stuck item');
+    return 0;
+  } catch (e) {
+    if (e instanceof RunError || e instanceof ConfigError) { err('error: ' + e.message); err('usage: ' + STUCK_USAGE); return 2; }
+    throw e;
+  }
+}
+
 const ROAD_USAGE = 'norn road show [RM-n] [--json] | list [--json] | audit [--json] (exit 1 while Unplaced is not empty) | add --title T (--theme RM-n | --kind theme) [--from DIR-n] [--after RM-n | --first] '
   + '[--horizon now|next|later] [--note N] [--links kind:id,..] [--stages "S1 a;S2 b"] | edit RM-n [--title T] [--note N] [--horizon now|next|later|none] [--stages "a;b"] [--caveat C|none] '
   + '| move RM-n [--theme RM-n] [--after RM-n | --first] [--ref DEC-n|DIR-n] | link RM-n kind:id.. | unlink RM-n kind:id.. | drop RM-n --why W --ref DEC-n|DIR-n | reopen RM-n --why W '

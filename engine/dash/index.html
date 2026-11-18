@@ -97,6 +97,14 @@ main{padding:18px 20px;max-width:1500px;margin:0 auto}
 .chip.handoff,.chip.answered,.chip.parked,.chip.warn{background:var(--warn-bg);color:var(--warn)}
 .chip.stopped,.chip.lost,.chip.no-result,.chip.bad,.chip.overruled{background:var(--bad-bg);color:var(--bad)}
 .chip.superseded,.chip.archived,.chip.revoked,.chip.withdrawn,.chip.idle{background:var(--soft);color:var(--mute)}
+/* the live hand-off state (lanes.mjs handoffOf; widgets.mjs hoChip): amber while the next session is on its way, blue once it talks. It
+   wraps (never widens a phone row). .pulse = the shared pulsing dot (HTML span or SVG circle); it moves only under the motion policy
+   (norn.css, :root.motion: not QUIET, not reduced motion, tab visible) - this sheet holds no animation */
+.ho{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:1px 8px;margin:2px 0 0 4px;border-radius:10px;font-size:12px;font-weight:600;white-space:normal;vertical-align:middle}
+td .ho{min-width:13em}.ho.pending{background:var(--warn-bg);color:var(--warn)}.ho.resumed{background:var(--run-bg);color:var(--run)}.ho .id{color:inherit}
+.pulse{display:inline-block;flex:none;width:8px;height:8px;border-radius:50%;background:currentColor}
+circle.pulse.ho-pending{fill:var(--warn)}circle.pulse.ho-resumed{fill:var(--run)}.mn .ns.ho-w{fill:var(--ink);font-weight:600}
+.node .horow{grid-column:1/-1;padding-left:28px}.node .horow .ho{margin-left:0}.fh-ho{margin-top:6px}.fh-ho .ho{margin-left:0;font-size:13px}.hrow.ho-row{border-bottom:0;padding:0 0 6px}
 .chip.refused{background:var(--soft);color:var(--accent);outline:1px solid var(--accent)}.refusedrow{padding-left:44px}
 .seg-v-agree{background:var(--ok)}.seg-v-harmless{background:var(--mute)}.seg-v-refused{background:var(--codex)}.seg-v-recoverable{background:var(--warn)}.seg-v-harmful,.seg-v-errors{background:var(--bad)}
 .id{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--mute)}
@@ -329,6 +337,8 @@ body[data-tab=home] main{padding:0;max-width:none}
 .hbar i{position:absolute;left:0;top:0;bottom:0;background:var(--warn)}.hbar b{position:absolute;top:-3px;bottom:-3px;width:1px;background:var(--run)}
 .home-c{display:flex;flex-direction:column;min-width:0;min-height:0}
 .hhead{display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--line);background:var(--panel);font-size:12.5px;white-space:nowrap;overflow:hidden;min-width:0}
+#chat-state{overflow:hidden;text-overflow:ellipsis;min-width:0}.chat-live{color:var(--accent);font-variant-numeric:tabular-nums}
+.chat-live::before{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent);margin-right:6px;vertical-align:middle}
 .hn{font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
 .hchip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--warn);color:var(--warn);padding:2px 8px;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .hchip i{flex:none;width:8px;height:8px;background:var(--ok);display:inline-block}
@@ -437,13 +447,14 @@ details.ck .ck-full{text-align:left;margin:6px 0 2px;padding:8px 10px;border:1px
 import { TABS, loadTab, loadParts, partsKey, renderTab, renderNav, pageTitle, needsCount, fmtTime, esc, matchText, renderFeedHead, renderFeedEvent, rmScopeNext, rmUrlHash, parseRmHash } from '/ui.mjs';
 import DOMPurify from '/vendor/purify.es.mjs';
 import { renderDeliverable, renderRmEditor, rmEditBody, LANE_SHOW, LANE_SHOW_DEFAULT, laneKey } from '/ui.mjs';
+import { hoChip } from '/widgets.mjs';
 // RM-19 S1: the Lanes filter chips live in S.laneShow and the URL (&lanes=active,done); a reload keeps them
 const laneShowQs = v => { const k = String(v ?? '').split(',').filter(x => LANE_SHOW.some(c => c[0] === x)); return new Set(v == null ? LANE_SHOW_DEFAULT : k); };
 import { initLook, setLook, setTheme, setQuiet, look, ground, assetImg, assetUrl, motion } from '/norn/look.mjs';
 import { badgeCount, badgeLabel, bestAction, orcLine, mayAppear, logAppearance, stillOnly, createStage, avoidRects } from '/norn/orc.mjs';
 import { createScheduler } from '/norn/motion.mjs';
 import { createEvents, eventsOfRecords, beatOf } from '/norn/live.mjs';
-import { renderBottomBar, renderThread, pickProject, threadOnly, chatState, slashMenu, HOME_FILTERS } from '/home.mjs';
+import { renderBottomBar, renderThread, pickProject, threadOnly, chatState, chatStateClass, slashMenu, HOME_FILTERS } from '/home.mjs';
 // META-CI-WORKCLASS R2 (DEC-332): body.dataset.step = the last boot / render() step reached (a test timeout names where ready stalled)
 const step = n => { document.body.dataset.step = n; };
 step('imports');
@@ -650,11 +661,12 @@ async function paintThread() {
     const d = await get(`/api/home?project=${encodeURIComponent(S.project)}`), k = homeKeep();
     S.last = d; S.lastTab = 'home';
     $('#thread').innerHTML = renderThread(d.events || [], { project: d.project ?? S.project, filter: S.homeFilter, open: S.homeOpen });
-    const st = $('#chat-state'); if (st) st.textContent = chatState(d.status);
+    const st = $('#chat-state'); if (st) { st.textContent = chatState(d.status); st.className = chatStateClass(d.status); }
     const nb = $('[data-act="home-filter"][data-filter="needs"] b'); if (nb) nb.textContent = d.needs_you ?? 0;
     homeRestore(k); err('');
   } catch (e) { err('Refresh failed: ' + e.message); }
 }
+// the state line's clock moves with the chat stream (each event re-renders it), never by a timer (META-VISUAL-B)
 let chatEs = null, chatFor = null;
 function chatLive(project) {
   if (project === chatFor) return;
@@ -683,7 +695,7 @@ async function chatSend() {
   const t = $('#chat-text'), text = t?.value.trim(); if (!text) return;
   const btn = $('[data-act="chat-send"]'); if (btn) btn.disabled = true;
   // a live line may have re-painted the composer while the post was in flight: clear the one on the page now
-  try { const r = await post('/api/chat/send', { project: S.project, text }); if (r?.command) render(true); const cur = $('#chat-text'); if (cur && cur.value.trim() === text) cur.value = ''; S.chatDraft = ''; err(''); const st = $('#chat-state'); if (st) st.textContent = 'sent - the controller is on it ...'; }
+  try { const r = await post('/api/chat/send', { project: S.project, text }); if (r?.command) render(true); const cur = $('#chat-text'); if (cur && cur.value.trim() === text) cur.value = ''; S.chatDraft = ''; err(''); const st = $('#chat-state'); if (st) { st.textContent = r?.queued ? 'sent - waiting in Norn until the chat restarts ...' : 'sent - the controller is on it ...'; st.className = 'small chat-live'; } }
   catch (e) { err('Not sent: ' + e.message); }
   finally { if (btn) btn.disabled = false; }
 }
@@ -818,21 +830,41 @@ function addEv(e) {
   } else {
     list.insertAdjacentHTML('beforeend', renderFeedEvent(e));
     if (e.kind === 'tool' && e.id) F.tools.set(e.id, { ts: e.ts, el: list.lastElementChild });
-    if (e.kind === 'step' || e.kind === 'text') $('#feed-now').innerHTML = `<b>now</b> ${esc(e.summary)}`;
+    if ((e.kind === 'step' || e.kind === 'text') && !F.hoNow) $('#feed-now').innerHTML = `<b>now</b> ${esc(e.summary)}`;
   }
   while (list.childElementCount > 600) list.firstElementChild.remove();
   if (F.tools.size > 400) F.tools.delete(F.tools.keys().next().value);
   if ($('#feed-follow').checked) list.scrollTop = list.scrollHeight;
 }
+// the live hand-off state (head.handoff, lanes.mjs handoffOf): while the next session is on its way, or once the chain went on in
+// another run, the "now" line is the hand-off, not this session's last words ("I stopped this run with a hand-off ..." read as stopped)
+function feedHead(h) {
+  F.head = h; $('#feed-head').innerHTML = renderFeedHead(h);
+  const ho = h.handoff, now = ho && (ho.phase === 'pending' || ho.run !== h.run) ? hoChip(ho, h.run) : '';
+  if (now !== (F.hoNow || '')) { F.hoNow = now; if (now) $('#feed-now').innerHTML = `<b>now</b> ${now}`; }
+}
+// a run that ended in a hand-off: ask for its head again until the supervisor names the next run, then follow that run's feed
+function feedEnded(project, run, tries = 0) {
+  if (F.run !== run) return;
+  const ho = F.head?.handoff;
+  if (ho && ho.run !== run && ho.phase) { openFeed(project, ho.run); $('#feed-status').textContent = `followed the hand-off from ${run} to ${ho.run} · live`; return; }
+  if (!ho || ho.phase !== 'pending' || tries >= 20) { $('#feed-status').textContent = 'run ended · feed closed'; return; }
+  $('#feed-status').textContent = 'run ended in a hand-off · waiting for the next session ...';
+  setTimeout(() => { if (F.run !== run) return;
+    const es = new EventSource(`/api/feed?project=${encodeURIComponent(project)}&run=${encodeURIComponent(run)}`);   // head only: its backlog is on screen
+    es.addEventListener('head', m => { if (F.run === run) feedHead(JSON.parse(m.data)); });
+    es.addEventListener('end', () => { es.close(); feedEnded(project, run, tries + 1); });
+    es.onerror = () => { es.close(); feedEnded(project, run, tries + 1); }; }, 3000);
+}
 function openFeed(project, run) {
-  closeFeed(); F.run = run; F.project = project; markFeed();
+  closeFeed(); F.head = null; F.hoNow = ''; F.run = run; F.project = project; markFeed();
   $('#feed').hidden = false; $('#feed-head').innerHTML = `<span class="id">${esc(run)}</span>`; $('#feed-list').innerHTML = ''; $('#feed-now').textContent = '';
   $('#feed-status').textContent = 'connecting ...';
   const es = F.es = new EventSource(`/api/feed?project=${encodeURIComponent(project)}&run=${encodeURIComponent(run)}`);
   es.onopen = () => { $('#feed-status').textContent = 'live · the server polls the run files every 2 s'; };
-  es.addEventListener('head', m => { $('#feed-head').innerHTML = renderFeedHead(JSON.parse(m.data)); });
+  es.addEventListener('head', m => feedHead(JSON.parse(m.data)));
   es.addEventListener('ev', m => addEv(JSON.parse(m.data)));
-  es.addEventListener('end', () => { es.close(); $('#feed-status').textContent = 'run ended · feed closed'; });
+  es.addEventListener('end', () => { es.close(); feedEnded(project, run); });
   es.onerror = () => { if (F.es !== es) return; $('#feed-status').textContent = es.readyState === EventSource.CLOSED ? 'feed refused or gone (at most 4 live feeds: close one)' : 'reconnecting ...'; };
 }
 $('#feed-close').onclick = closeFeed;
@@ -964,7 +996,7 @@ document.addEventListener('click', e => {
   if (d.act === 'settings-discard') { S.setDirty = 0; S.setProfile = null; $('#settings-diff').innerHTML = ''; render(true); return; }
   if (d.act?.startsWith('adopt-')) { adoptAct(b, d); return; }
   if (d.act === 'answer') act(() => post('/api/answer', { project: p, id: d.id, choice: d.choice, text: d.text }));
-  if (d.act === 'handedit' && (d.choice === 'keep' || confirm('Let Norn take it back: your text is saved beside it as .bak, then Norn rewrites the file.'))) act(() => post('/api/handedit', { project: d.project || p, file: d.file, choice: d.choice }));   // GAP-8
+  if (d.act === 'handedit') act(() => post('/api/handedit', { project: d.project || p, file: d.file, choice: d.choice }));   // GAP-8
   if (d.act === 'hold-resume') act(() => post('/api/pause', { project: d.project || p, paused: false }));   // GAP-1: the hold row of a PAUSED file
   if (d.act === 'advice-apply') act(() => post('/api/advice', { project: p, key: d.key, verdict: 'apply' }));   // META-TEND P4: the one tap (writes Settings + a decision)
   if (d.act === 'audit-accept' && confirm('Accept: a decision + a directive ask the check-in to apply this hunk. Norn edits nothing itself.')) act(() => post('/api/audit', { project: d.project || p, id: d.id, verdict: 'accept' }));   // META-TEND P5
