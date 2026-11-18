@@ -18,6 +18,7 @@ import path from 'node:path';
 import { loadState, record, readEvents, recordsFile, fold } from './records.mjs';
 import { makeEval, workOnMain } from './after.mjs';
 import { makeGit } from './dlvgit.mjs';
+import { readJsonS } from './fsnap.mjs';
 
 export const IDLE_H = 6, ARCHIVE_DAYS = 7;
 const H = 3600e3, D = 24 * H;
@@ -74,9 +75,9 @@ export function laneRules(st, { now = Date.now(), idleH = IDLE_H, archiveDays = 
 
 // the tick's git answers for the Lanes page (the dash never runs git per lane): { at, landed: [lane], merged: [lane] }
 export const laneRulesFile = state => path.join(state, 'lane-rules.json');
-/** lanesView's landed / merged hooks from the tick's cache: a ruling, or the lane named there */
+/** lanesView's landed / merged hooks from the tick's cache: a ruling, or the lane named there (a snapshot read in a dash GET: it primes the file) */
 export function laneHooks(state) {
-  let c = null; try { c = JSON.parse(fs.readFileSync(laneRulesFile(state), 'utf8')); } catch { c = null; }
+  const c = readJsonS(laneRulesFile(state));
   const has = k => (l, r) => !!r.landed || !!c?.[k]?.includes(l);
   return { landed: has('landed'), merged: has('merged') };
 }
