@@ -5,7 +5,7 @@
 // file, the run records, the ledger entries and the inbox rows); renderThread is the reusable component (Look 2's dock later
 // mounts the same list); renderHome is the Look 3 page around it. C3: approval cards (Approve once / Deny -> POST /api/chat/approve)
 // and done cards (Undo -> POST /api/chat/undo) come from the chat profile's outbox lines; a card without a verb keeps its button disabled.
-import { dodChips } from './widgets.mjs';   // META-DOD 1: a run's Ready / Done chips
+import { dodChips, hoChip } from './widgets.mjs';   // META-DOD 1: a run's Ready / Done chips; the live hand-off chip
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fin = v => typeof v === 'number' && Number.isFinite(v);
 const hhmm = iso => { const t = Date.parse(iso ?? ''); return Number.isFinite(t) ? new Date(t).toISOString().slice(11, 16) : ''; };
@@ -210,7 +210,7 @@ const sh = (h, body) => `<section class="hs"><h4>${esc(h)}</h4>${body}</section>
 const NOW_GLYPH = { running: ['run', '▶'], queued: ['idle', '‖'], claimed: ['idle', '‖'] };
 function left(s, ctx) {
   const now = (s.now || []).map(n => { const [c, g] = NOW_GLYPH[n.state] ?? ['idle', '○'];
-    return `<div class="hrow"><span class="gl gl-${c}" aria-label="${esc(n.state)}">${g}</span>${rid(n.run)} <span class="ell">${esc(n.lane ?? n.name ?? '')}</span><span class="spacer"></span><span class="mute small">${n.state === 'running' ? `${fin(n.age_min) ? `${Math.round(n.age_min)} min` : ''}${fin(n.ctx) ? ` · ${kTok(n.ctx)}` : ''}` : esc(n.state)}</span></div>`; }).join('')
+    return `<div class="hrow"><span class="gl gl-${c}" aria-label="${esc(n.state)}">${g}</span>${rid(n.run)} <span class="ell">${esc(n.lane ?? n.name ?? '')}</span><span class="spacer"></span><span class="mute small">${n.state === 'running' ? `${fin(n.age_min) ? `${Math.round(n.age_min)} min` : ''}${fin(n.ctx) ? ` · ${kTok(n.ctx)}` : ''}` : esc(n.state)}</span></div>${n.handoff ? `<div class="hrow ho-row">${hoChip(n.handoff, n.run)}</div>` : ''}`; }).join('')
     || '<div class="mute small">no run is running or queued</div>';
   const u = s.usage || {}, pct = fin(u.used) ? u.used : null;
   const usage = `<div class="hbar"><i style="width:${pct === null ? 0 : Math.min(100, pct)}%"></i>${fin(u.stop) ? `<b style="left:${Math.min(100, u.stop)}%"></b>` : ''}</div>
