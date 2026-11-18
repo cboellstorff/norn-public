@@ -6,7 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { startRun, liveRuns, stopOrphans, fillQueue, readiness, STALE_MS } from './runs.mjs';
+import { startRun, liveRuns, stopOrphans, fillQueue, readiness, sweepLost, relaunchLost, lostNotice, STALE_MS } from './runs.mjs';
 import { trackHold, holdNoticeDue, noticeMin } from './holds.mjs';
 import { writeStatus } from './status.mjs';
 import { tryDigest } from './digest.mjs';
@@ -134,7 +134,8 @@ export function tick(o) {
   try {
     const g = {};
     r = tickPass(o, g);
-    if (g.raised?.length) r = { ...r, guard: g.raised, guard_push: g.push };   // META-GUARD R1: the caller sends them (class usage)
+    if (g.raised?.length) r = { ...r, guard: g.raised, guard_push: g.push };
+    if (g.lost) r = { ...r, lost_notice: g.lost };   // META-CATCH S1: one notice per sweep that handled dead runs (the caller sends it, class alert)   // META-GUARD R1: the caller sends them (class usage)
     // META-AUTH: the one owner notice of a login outage (authguard.mjs; the caller sends it: meta tick -> meta notify, class alert)
     try {   // META-AUTH-VENDOR: a vendor-class notice counts the runs it holds
       const held = h => loginHolds(o.project.state, Object.values(fold(readEvents(recordsFile(o.project.state, 'run'))).items),
@@ -171,6 +172,14 @@ function tickPass(o, g = {}) {
   const held = takeLock(lockF, `pid ${process.pid} start ${new Date().toISOString()} reason ${o.reason || '-'}`);
   if (held) return { code: 0, msg: `${tag}: ${held}` };
   try {
+    // META-CATCH S1: dead runs by code, no model - recorded lost at once (machine boot after the start / supervisor gone / never
+    // started), then the HANDOFF auto-resume policy relaunches them (runs.mjs relaunchLost); before the orphan stop, so their helpers go too
+    try {
+      sweepLost(state, { staleMs, by: 'status' });
+      const rl = relaunchLost(state, o.now ? { now: o.now().getTime() } : {});
+      for (const x of rl) tickLog(state, `${tag}: lost ${x.id} (${x.cause}) -> ${x.next ? 'relaunched ' + x.next : 'not relaunched: ' + x.refused}`);
+      g.lost = lostNotice(rl, p.name);
+    } catch (e) { tickLog(state, `${tag}: dead runs: ${e.message}`); }
     stopOrphans(state);   // helpers of a lost / ended parent (metadelegate sec. 2)
     // META-GUARD R1: the usage watch before the status - a new GRD alarm is in this tick's digest and wakes the check-in (gate probe); never fails the tick
     try { const w = guardWatch(state, p, { projectsDir: o.machine?.claude?.projects_dir }); g.raised = w.raised; g.push = guardPolicy(p.policy).push; } catch (e) { tickLog(state, `${tag}: guard: ${e.message}`); }

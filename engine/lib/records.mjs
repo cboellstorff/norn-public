@@ -62,8 +62,9 @@ export const KINDS = {
     end: { from: ['running'], to: 'exited', roles: ['launcher'] },
     lost: { from: ['running'], to: 'lost', roles: ['launcher', 'status'] },
     kill: { from: ['running'], to: 'killed', roles: [...OWNER, 'controller'] },
-    // the supervisor's auto-resume verdict after a HANDOFF exit: { next: RUN-n } or { refused: why } (design 5)
-    resume: { from: ['exited'], to: null, roles: ['launcher'] },
+    // the supervisor's auto-resume verdict after a HANDOFF exit: { next: RUN-n } or { refused: why } (design 5); META-CATCH S1: the
+    // same verdict on a run lost for a certain death (runs.mjs relaunchLost)
+    resume: { from: ['exited', 'lost'], to: null, roles: ['launcher'] },
     // META-CHECKIN-DIET R1: the launcher reviews a ROUTINE end itself ({ refs, routine, why[, queued, brief] }: checkins.mjs)
     review: { from: ['exited', 'lost', 'killed'], to: null, roles: ['checkin', 'controller', 'launcher'] },
     // META-GT12 queue: a run waiting for a cap slot (all start fields + not_before); filled by the launcher ({ next: RUN-m }) or withdrawn

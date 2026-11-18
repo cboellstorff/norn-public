@@ -664,6 +664,9 @@ function s5Cmd(argv, env, out, err) {
         // GAP-1: ONE notice per hold of all queued work (holds.mjs: hold.json notified) - the owner must act, so class alert
         if (r.hold_notice) flushes.push(import('../lib/notify.mjs').then(({ notify }) => notify({ title: r.hold_notice.title, body: r.hold_notice.body, cls: 'alert', machine: m.machine, state: proj.state, env }))
           .then(x => out(`tick ${proj.name}: notify: hold notice ${x.sent ? 'sent' : 'recorded'}`), e => err(`tick ${proj.name}: notify (hold) failed: ${e.message}`)));
+        // META-CATCH S1: ONE notice per sweep that handled dead runs ("machine rebooted at T: n runs lost, m relaunched"), class alert
+        if (r.lost_notice) flushes.push(import('../lib/notify.mjs').then(({ notify }) => notify({ title: r.lost_notice.title, body: r.lost_notice.body, cls: 'alert', machine: m.machine, state: proj.state, env }))
+          .then(x => out(`tick ${proj.name}: notify: lost-runs notice ${x.sent ? 'sent' : 'recorded'}`), e => err(`tick ${proj.name}: notify (lost runs) failed: ${e.message}`)));
         // META-GUARD R1: one "usage" notice per new GRD alarm - batched into the FYI digest unless policy guard.push
         for (const g of r.guard || []) flushes.push(import('../lib/notify.mjs').then(({ notify, batchHours }) => notify({ title: `${g.run} ${g.cls}`, body: `${g.id}${g.lane ? ' ' + g.lane : ''}: ${g.why}`,
           cls: 'usage', push: !!r.guard_push, batchH: batchHours(proj), machine: m.machine, state: proj.state, env }))
