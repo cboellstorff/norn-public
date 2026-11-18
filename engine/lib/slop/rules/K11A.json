@@ -3,8 +3,8 @@
   "level": "BLOCK",
   "kind": "ast",
   "tool": "eslint",
-  "title": "a new compatibility shim, by its shape: an alias map, or x.new ?? x.old",
-  "how": "a variable named ALIAS / REDIRECT / OLD_... holding an object of literal values; a ?? between two properties of one object",
+  "title": "a new compatibility shim, by its shape: an alias map, or x.new ?? x.oldName",
+  "how": "a variable named ALIAS / REDIRECT / OLD_... holding an object of literal values; x.a ?? x.oldA (a ?? whose right side is an old / legacy / deprecated key of the same object; a plain default between two keys is no finding: replay 8 of 50)",
   "files": [
     "**/*.mjs",
     "**/*.js",
@@ -21,7 +21,7 @@
     },
     {
       "selector": "LogicalExpression[operator='??'][left.type='MemberExpression'][right.type='MemberExpression']",
-      "text": "^([\\w$.]+)\\.[\\w$]+\\s*\\?\\?\\s*\\1\\.[\\w$]+$",
+      "text": "^([\\w$.]+)\\.[\\w$]+\\s*\\?\\?\\s*\\1\\.(?:[Oo]ld|[Ll]egacy|[Dd]eprecated)[\\w$]*$",
       "message": "x.new ?? x.old reads an old key: migrate the data once and delete the old key"
     }
   ],
@@ -31,7 +31,7 @@
         "src/a.mjs": "export const a = 1;\n"
       },
       "head": {
-        "src/a.mjs": "const TAB_ALIAS = { agents: 'runs' };\nexport const tab = id => TAB_ALIAS[id] || id;\nexport const end = p => p.slop_on ?? p.run_end;\n"
+        "src/a.mjs": "const TAB_ALIAS = { agents: 'runs' };\nexport const tab = id => TAB_ALIAS[id] || id;\nexport const end = p => p.label ?? p.oldLabel;\n"
       },
       "recorded": {
         "head": [
@@ -54,15 +54,9 @@
                 "line": 3,
                 "column": 25,
                 "endLine": 3,
-                "endColumn": 47
+                "endColumn": 46
               }
             ]
-          }
-        ],
-        "base": [
-          {
-            "filePath": "src/a.mjs",
-            "messages": []
           }
         ]
       }
@@ -72,7 +66,7 @@
         "src/a.mjs": "export const a = 1;\n"
       },
       "head": {
-        "src/a.mjs": "const TABS = { runs: 'Runs' };\nexport const label = id => TABS[id];\nexport const pick = (a, b) => a.x ?? b.x;\nexport const OLD_LIMIT = 3;\n"
+        "src/a.mjs": "const TABS = { runs: 'Runs' };\nexport const label = id => TABS[id];\nexport const pick = (a, b) => a.x ?? b.oldX;\nexport const w = o => o.width ?? o.size;\nexport const OLD_LIMIT = 3;\n"
       },
       "recorded": {
         "head": [
@@ -86,15 +80,18 @@
                 "line": 3,
                 "column": 31,
                 "endLine": 3,
-                "endColumn": 41
+                "endColumn": 44
+              },
+              {
+                "ruleId": "no-restricted-syntax",
+                "severity": 2,
+                "message": "K11A: x.new ?? x.old reads an old key: migrate the data once and delete the old key",
+                "line": 4,
+                "column": 23,
+                "endLine": 4,
+                "endColumn": 40
               }
             ]
-          }
-        ],
-        "base": [
-          {
-            "filePath": "src/a.mjs",
-            "messages": []
           }
         ]
       }
