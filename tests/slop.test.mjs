@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { loadRules, slopCheck } from '../engine/lib/slop/check.mjs';
+import { loadRules, effectiveRules, slopCheck, explainOf, EXPLAIN, RULES_DIR } from '../engine/lib/slop/check.mjs';
+import { slopPrompt } from '../engine/lib/slop/runend.mjs';
 import { hostWrite, openBlocks, slopHolds } from '../engine/lib/slop/host.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { loadState } from '../engine/lib/records.mjs';
@@ -62,6 +63,47 @@ for (const rule of [...loadRules(), ...projectRules]) {
     }
   });
 }
+
+// RM-27: every finding explains itself - the rule's what / why / fix sits beside the rule, and a rule without it does not load
+test('every rule explains itself in plain words: what was found, why the rule exists, what to do; a rule without it does not load', () => {
+  const projectDir = path.dirname(path.dirname(PROJECT_RULES)), rules = effectiveRules({ projectDir });
+  assert.ok(rules.length >= 21 && rules.some(r => r.id.startsWith('P-')), 'the built-ins and the project rules');
+  for (const r of rules) for (const k of EXPLAIN) {
+    assert.equal(typeof r.explain?.[k], 'string', `${r.id}: explain.${k}`);
+    assert.ok(r.explain[k].length >= 20 && r.explain[k].length <= 300, `${r.id}: explain.${k} is a short sentence or three`);
+    assert.deepEqual(explainOf(r.id, projectDir), r.explain);
+  }
+  assert.equal(explainOf('K99'), null);
+  assert.equal(explainOf('P-hide'), null, 'a project rule is read from its project folder');
+  const own = mkTmp('meta-slop-prule-'), p = JSON.parse(fs.readFileSync(path.join(PROJECT_RULES, 'P-hide.json'), 'utf8'));
+  delete p.explain; fs.mkdirSync(path.join(own, 'rules', 'slop'), { recursive: true }); fs.writeFileSync(path.join(own, 'rules', 'slop', 'P-hide.json'), JSON.stringify(p));
+  assert.throws(() => effectiveRules({ projectDir: own }), /P-hide.json: a rule explains itself/, 'a project rule without explain does not load either');
+  for (const k of EXPLAIN) {
+    const dir = mkTmp('meta-slop-rules-'), r = JSON.parse(fs.readFileSync(path.join(RULES_DIR, 'K2.json'), 'utf8'));
+    delete r.explain[k];
+    fs.writeFileSync(path.join(dir, 'K2.json'), JSON.stringify(r));
+    assert.throws(() => loadRules(dir), new RegExp(`K2.json: a rule explains itself`), `no explain.${k}: the rule does not load`);
+  }
+});
+
+test('norn slop check: each finding names what / why / fix once per rule and the waiver path with its fingerprint; --json blocks carry explain', () => {
+  const fx = { base: { 'a.mjs': 'export const a = 1;\n' }, head: { 'a.mjs': 'export const a = 1;\n', 'a.mjs.orig': 'x\n', 'b.mjs.rej': 'y\n' } };
+  const repo = fixtureRepo(fx);
+  const c = spawnSync(process.execPath, [NORN, 'slop', 'check', '--diff', 'main..HEAD'], { cwd: repo, encoding: 'utf8', env: { ...process.env, META_ROOT: mkTmp('meta-slop-root-') } });
+  assert.equal(c.status, 1, c.stdout + c.stderr);
+  const x = explainOf('K15'), out = c.stdout;
+  assert.match(out, /^BLOCK K15 a\.mjs\.orig /m);
+  for (const s of [`what: ${x.what}`, `why:  ${x.why}`, `fix:  ${x.fix}`]) assert.equal(out.split(s).length - 1, 1, `once per rule: ${s}`);
+  const fp = /^BLOCK K15 a\.mjs\.orig .*\[([0-9a-f]{16})\]$/m.exec(out)[1];
+  assert.ok(out.includes(`norn rec add waiver --rule K15 --scope ${fp} --why`), 'the waiver path names the finding');
+  const j = spawnSync(process.execPath, [NORN, 'slop', 'check', '--diff', 'main..HEAD', '--json'], { cwd: repo, encoding: 'utf8', env: { ...process.env, META_ROOT: mkTmp('meta-slop-root-') } });
+  const blocks = JSON.parse(j.stdout).blocks;
+  assert.equal(blocks.length, 2);
+  for (const b of blocks) assert.deepEqual(b.explain, x);
+  const p = slopPrompt(blocks);
+  assert.match(p, /\n- K15 a\.mjs\.orig [^\n]*\n  what: /, 'the resume prompt explains the rule under its first finding');
+  assert.equal(p.split(`why:  ${x.why}`).length - 1, 1);
+});
 
 test('only new: a finding the base already had never blocks, even in a renamed file; the fingerprint follows the rename', () => {
   const body = 'export function old(f) {\n  try { f(); } catch (e) {}\n}\n';
