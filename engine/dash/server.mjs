@@ -28,6 +28,7 @@ import { writeViewsAsync, renderQuestions, renderDirectives } from '../lib/views
 import { hbPath, stopRunAsync, requeueRun, queueOf, STALE_MS } from '../lib/runs.mjs';
 import { lanesView, sortLanes, handoffOf } from '../lib/lanes.mjs';
 import { laneDriver, laneBriefFiles, laneType, laneOutput } from '../lib/purpose.mjs';
+import { lanePolicy, laneHooks } from '../lib/lifecycle.mjs';
 import { overlapFile, overlapOn, githubRepo } from '../lib/overlap.mjs';
 import { agentsTree, primeAgents, shownRunIds, runTalked, tailA } from '../lib/agents.mjs';
 import { runProgress, workInit, onWork, mergeWork, sessionsOf, laneSteps } from '../lib/progress.mjs';
@@ -418,7 +419,8 @@ export function createDashboard(o) {
   // GAP-12: the overlap cache (overlap.mjs; the tick / a lane start refresh it) on its running lanes - read only, never a fetch here
   function lanes(p, all) {
     const ov = overlapOn(p.policy) ? readJsonS(overlapFile(p.state))?.lanes || {} : {};
-    return lanesView(st(p), { all, hbAge: hbAge(p), ...hoHooks(p), oldDays: withDefaults(settingsState(p).view).policy.done_lanes.old_days }).map(l => ({ ...l, project: p.name, ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}) }));
+    const pol = withDefaults(settingsState(p).view).policy;   // lifecycle.mjs: the row's rule (idle / stopped / archives in n days) from the tick's git answers
+    return lanesView(st(p), { all, hbAge: hbAge(p), ...hoHooks(p), oldDays: pol.done_lanes.old_days, ...lanePolicy(pol), ...laneHooks(p.state) }).map(l => ({ ...l, project: p.name, ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}) }));
   }
   // gap #9: API billing only - one project's $ per lane: today / 7 days / to date (ended runs = the CLI's figure, running = a live estimate)
   const apiOn = ps => billingOf(withDefaults(settingsState(ps[0]).view))?.type === 'api';

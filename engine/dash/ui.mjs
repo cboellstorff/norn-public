@@ -543,8 +543,10 @@ function lanes(d, ctx) {
   const all = (d.lanes || []).filter(l => !hide.has(laneKey(l.project, l.name))), n = k => all.filter(l => laneShowOf(l) === k).length;
   const usd = all.some(l => l.usd);   // gap #9: API billing - each lane's $ to date (its runs; a running one counted live, an estimate)
   const usdCell = l => !usd ? '' : `<td class="mono lane-usd">${l.usd?.runs ? `${l.usd.live ? '~' : ''}$${l.usd.total.toFixed(2)}` : dash}</td>`;
-  // a done lane says how long ago it ended; an old one reads stopped (its row is faded)
-  const nowText = l => l.group !== 'done' || !l.ended ? l.text : `${l.old ? 'stopped' : l.text} · done ${laneAge(ctx.now - Date.parse(l.ended))} ago`;
+  // a done lane says how long ago it ended; an old one reads stopped (its row is faded); lifecycle.mjs: then which rule acts on it and
+  // when ("archives in 3 days", "stopped: needs a check-in decision") unless the text already says it (idle)
+  const ruleText = l => !l.rule || l.text === l.rule.text ? '' : ` · ${l.rule.text}`;
+  const nowText = l => (l.group !== 'done' || !l.ended ? l.text : `${l.old ? 'stopped' : l.text} · done ${laneAge(ctx.now - Date.parse(l.ended))} ago`) + ruleText(l);
   // MAIL-29: the type filter - one type at a time (none = all); its chips are the types of the rows the state chips leave, counted
   const kind = ctx.laneType ?? null, typeOf = l => l.lane_type?.type ?? 'no type', shown = all.filter(l => show.has(laneShowOf(l)));
   const kinds = [...new Set([...shown.map(typeOf), ...(kind ? [kind] : [])])].sort();
@@ -552,7 +554,8 @@ function lanes(d, ctx) {
     // the lane's run opens in the live feed drawer (as a Runs row does), not the supervisor's plain-text tail in a new browser tab
     const [cls, word] = stateOf(l.text), log = l.run ? `<button data-act="lane-feed" data-project="${esc(l.project)}" data-run="${esc(l.run)}" title="Open ${esc(l.run)} in the live feed">Feed</button>` : '';
     const act = cls === 'running' ? `${log} <button data-act="stop" data-project="${esc(l.project)}" data-run="${esc(l.run)}">Stop</button>`
-      : l.state === 'parked' ? `<button data-tab="inbox">Open Q</button>` : l.state !== 'archived' ? `${log} <button class="ghost" data-act="archive" data-project="${esc(l.project)}" data-lane="${esc(l.name)}">Archive</button>` : log;
+      : l.state === 'parked' ? `<button data-tab="inbox">Open Q</button>` : l.state !== 'archived' ? `${log} <button class="ghost" data-act="archive" data-project="${esc(l.project)}" data-lane="${esc(l.name)}">Archive</button>`
+      : `${log} <button class="ghost" data-act="lane-undo" data-project="${esc(l.project)}" data-lane="${esc(l.name)}">Unarchive</button>`;   // an archive by the tick (lifecycle.mjs) is undone here too
     const why = refused[laneKey(l.project, l.name)];   // a refused Archive keeps its reason here: S, not err(), so a live re-render keeps it
     return `<tr id="lane-${esc(l.name)}"${l.old ? ' class="old"' : ''}><td>${laneCard(l.card, `<button class="lnk lname" aria-haspopup="dialog"><b>${projTag(ctx, l.project)}${esc(l.name)}</b></button>`)}<div class="id">${esc(l.id)}</div>${laneKind(l)}${laneWhy(l.driver)}${overlapChips(l.overlap)}${why ? `<div class="lane-refused small">${esc(why)}</div>` : ''}</td><td>${chip(l.state)}</td><td>${chip(cls, word)}${hoChip(l.handoff, l.run)}</td>
       <td>${l.executor ? chip(exClass(l.executor), l.executor) : dash}</td><td>${esc(nowText(l))}${progLine(l.progress)}</td><td><span class="id">${esc(l.run ?? '-')}</span>${l.run_name ? `<div>${aname(l.run_name)}</div>` : ''}</td>${usdCell(l)}<td><div class="rowacts">${act}</div></td></tr>`;
