@@ -121,3 +121,26 @@ test('the gate probe: a lane with a live run is never idle; a lane rule wakes th
   const probe = lanesProbe({})({ at: T0 + 8 * H, items: items.filter(i => i.kind !== 'run'), runs: items.filter(i => i.kind === 'run') });
   assert.deepEqual(probe, ['lanes:idle:L:quiet']);
 });
+
+test('CI reds on main: two successive reds -> one lane (ci-fix), two runs; the second resets the branch from main once the first landed', async () => {
+  const { ciFixPlan } = await import('../engine/lib/lifecycle.mjs');
+  const state = mkTmp('lc-ci-');
+  const p1 = ciFixPlan(loadState(state), { run: 101 });
+  assert.deepEqual([p1.lane, p1.stage, p1.round, p1.create, p1.reset], ['ci-fix', 'CI-101', 1, true, false]);
+  lane(state, p1.lane, T0, { by: 'checkin' });
+  const a = start(state, p1.lane, T0, { stage: p1.stage, round: p1.round });
+  const mid = ciFixPlan(loadState(state), { run: 102 });
+  assert.equal(mid.live, a, 'a red while the fix runs waits for it (one writer)'); assert.match(mid.line, new RegExp(`after run:${a}:ended`));
+  end(state, a, T0 + H, 'done');
+  rec(state, { kind: 'run', ev: 'landed', id: a, by: 'checkin', data: { why: 'DEC-3 merged' } });
+  const p2 = ciFixPlan(loadState(state), { run: 102 });
+  assert.deepEqual([p2.lane, p2.stage, p2.round, p2.create, p2.reset, p2.live], ['ci-fix', 'CI-102', 1, false, true, null]);
+  assert.match(p2.line, /reset the lane branch from main/);
+  start(state, p2.lane, T0 + 2 * H, { stage: p2.stage, round: p2.round });
+  const st = loadState(state), lanes = Object.values(st.items).filter(i => i.kind === 'lane');
+  assert.deepEqual(lanes.map(l => l.id), ['L:ci-fix'], 'one lane');
+  assert.equal(Object.values(st.items).filter(i => i.kind === 'run' && i.data.lane === 'ci-fix').length, 2, 'two runs');
+  assert.equal(ciFixPlan(st, { run: 102 }).round, 2, 'the same red again = the next round of its stage');
+  rec(state, { kind: 'lane', ev: 'archive', id: 'L:ci-fix', by: 'tick', data: { why: 'done, merged, old' } });
+  assert.match(ciFixPlan(loadState(state), { run: 103 }).line, /META rec unarchive L:ci-fix/, 'archived by the rules: unarchived, never a new lane');
+});

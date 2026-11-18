@@ -66,9 +66,11 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
 - Resolve: each row `META deliverables --resolve` lists (DONE, merge rehearsal conflicts or > resolve_behind behind main, not native, open, no live resolve run): `META deliverables resolve DLV-n` once (one cheap run on its own worktree via `norn run --queue`; it refuses native = install-session work).
 
 ## 2d. CI red on main (META-CIWATCH; the digest's "CI red on main" row: run, sha, failing tests; STATUS `CI main:` line)
-- A red main CI is a FIX TASK: queue a lane (`META run --queue`) whose brief names the run id, the sha and the failing tests and
-  asks for the cause fixed red-first - never a re-run to green it, never a retry or a longer timeout. The row leaves only when a
-  later run on main is green; one fix lane per red run (check the queue / live runs first).
+- A red main CI is a FIX TASK on the ONE lane `ci-fix` (never a new lane per red): queue it (`META run --queue`) with the stage and
+  round the row's "fix task" names, and do the steps it lists (create / unarchive the lane, wait after a live fix run, a first
+  brief step resetting the lane branch from main when its last work landed). The brief names the run id, the sha and the failing
+  tests and asks for the cause fixed red-first - never a re-run to green it, never a retry or a longer timeout. The row leaves only
+  when a later run on main is green; one fix stage per red run (check the queue / live runs first).
 
 ## 2e. Roadmap (status is derived from the records, never typed; skip while the project has no roadmap: `META road list` empty)
 - A new owner directive lands on the roadmap the SAME tick: `META road add --from DIR-n --theme RM-n` (a new item) or

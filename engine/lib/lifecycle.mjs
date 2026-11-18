@@ -123,3 +123,21 @@ function dropWorktree(wt, { root, main, git }) {
   if (git(repo, ['worktree', 'remove', wt], { allowFail: true }) === null || fs.existsSync(wt)) return { worktree: 'kept', at_risk: `${wt}: git worktree remove failed` };
   return { worktree: 'removed' };
 }
+
+// ---------- one CI-fix lane (lane norn-lifecycle item 7: ci-fix2, ci-fix3, ci-fix4 were a new lane per red; ci-fix2 died at start and sat) ----------
+// Every red on main is a new stage (CI-<run id>) on THE one lane ci-fix - created on the first red, unarchived when the rules above
+// archived it, never a second lane. Its branch is reset from main before the new stage when its previous work landed (the worker's
+// first step: the lane worktree is clean and its HEAD is on main). A red met while a fix run is live waits for it (one writer).
+// -> { lane, stage, round, create, unarchive, live (RUN id | null), reset, line (the digest's words) }
+export const CI_FIX_LANE = 'ci-fix';
+export function ciFixPlan(st, red, { landed = r => !!r.landed } = {}) {
+  const l = st.items[`L:${CI_FIX_LANE}`], stage = `CI-${red.run}`;
+  const runs = Object.values(st.items).filter(r => r.kind === 'run' && r.data?.lane === CI_FIX_LANE).sort((a, b) => runNum(a.id) - runNum(b.id));
+  const live = runs.find(r => LIVE.includes(r.state))?.id ?? null, last = runs.at(-1);
+  const round = Math.max(0, ...runs.filter(r => r.data.stage === stage).map(r => Number(r.data.round) || 1)) + 1;
+  const reset = !!last && last.data.stage !== stage && landed(last);
+  const steps = [!l ? `META rec add lane --name ${CI_FIX_LANE}` : l.state === 'archived' ? `META rec unarchive L:${CI_FIX_LANE}` : l.state === 'parked' ? `unpark L:${CI_FIX_LANE} (or rule its Q)` : null,
+    live ? `queue it after ${live} (--after run:${live}:ended)` : null, reset ? `the brief's first step: reset the lane branch from main (its last work ${last.id} landed)` : null].filter(Boolean);
+  return { lane: CI_FIX_LANE, stage, round, create: !l, unarchive: l?.state === 'archived', live, reset,
+    line: `fix it on lane ${CI_FIX_LANE} stage ${stage} round ${round}${steps.length ? ' - ' + steps.join('; ') : ''}` };
+}

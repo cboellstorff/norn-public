@@ -24,7 +24,7 @@ import { critiqueRows } from './critique.mjs';
 import { dupPairs } from './dupdirs.mjs';
 import { wholeHold, readHold, holdItem, noticeMin } from './holds.mjs';
 import { overlapRows, overlapOn } from './overlap.mjs';
-import { laneRules, lanePolicy } from './lifecycle.mjs';
+import { laneRules, lanePolicy, ciFixPlan } from './lifecycle.mjs';
 
 const H = 3600e3;
 export const WINDOW_H = 72;
@@ -150,12 +150,12 @@ function queued(runs, { evalAfter, ready }) {
 }
 
 // META-CIWATCH: the cached gh read of ciwatch.mjs (one gh call at most; gh absent = no row); the cache lives in the digest's state dir.
-function ciRed(project, { now }) {
+function ciRed(project, { now, st }) {
   let c = null;
   try { c = projectCi(project, new Date(now)); } catch { c = null; }
   const r = c?.red;
   return r ? [{ id: `CI-${r.databaseId}`, repo: project.ci.repo, run: r.databaseId, sha: r.headSha ?? null, conclusion: r.conclusion, created: r.createdAt,
-    hours: age(now, r.createdAt), failing: r.failing }] : [];
+    hours: age(now, r.createdAt), failing: r.failing, fix: ciFixPlan(st, { run: r.databaseId }) }] : [];   // lifecycle.mjs: the ONE ci-fix lane
 }
 
 /**
@@ -175,7 +175,7 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
     questions: questions(items, { now }),
     ended: ended(runs, { now }),
     directives: directives(items, { now }),
-    ci: ciRed({ ...project, state: stateDir }, { now }),
+    ci: ciRed({ ...project, state: stateDir }, { now, st }),
   };
   // META-CONTROLLER C4 (SPEC sec. 2): the lanes the controller holds - a check-in skips them (its writes there exit 5); only while one is held
   const held = heldLanes(st.items, now);

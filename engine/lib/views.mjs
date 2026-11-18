@@ -251,7 +251,7 @@ export function renderDigest(d, { level = 2 } = {}) {
     + `${r.dirty !== null ? ` dirty=${r.dirty}` : ''}${r.external_term ? ' external_term' : ''} ended ${r.ended} (${r.hours} h)${r.worktree ? ' wt ' + r.worktree : ''}`);
   sec('5 Directives with no action', s.directives, r => `- ${r.id} (${r.hours} h): ${r.text}`);
   if (s.ci) sec('6 CI red on main', s.ci, r => `- ${r.id} ${r.repo} run ${r.run} ${String(r.sha ?? '-').slice(0, 9)} ${r.conclusion} created ${r.created} (${r.hours} h); failing: `
-    + `${r.failing === null ? 'not read yet' : r.failing.length ? r.failing.slice(0, 8).join('; ') : 'none named in the log'}; fix task: queue a lane, never a re-run`);
+    + `${r.failing === null ? 'not read yet' : r.failing.length ? r.failing.slice(0, 8).join('; ') : 'none named in the log'}; fix task (never a re-run): ${r.fix?.line ?? 'queue it on lane ci-fix'}`);
   // META-ROADMAP S3: the audit's Unplaced list (only once the project has a roadmap); place each with norn road add --from / link
   if (s.roadmap) sec('7 Unplaced on the roadmap', s.roadmap, r => `- ${r.id} ${r.kind}: ${r.why}`);
   // META-GUARD R1: open usage alarms; the check-in rules each (let it run / mail it / stop it), Norn never kills a run by itself
