@@ -47,7 +47,9 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
 - Then: `META runs review RUN-n --refs <DEC/Q/RUN ids>`.
 
 ## 2b. Records
-- Every answered Q: act on it (rule / dispatch / unpark), then `META rec apply Q-n --refs <ids>`.
+- FIRST, every answered Q (above all one that parks a lane): act on it this pass (rule / dispatch / unpark), then
+  `META rec apply Q-n --refs <ids>`. The owner has ruled; an answered Q left for a later pass is a miss. A ruling to waive a slop
+  finding is yours to write: `META rec add waiver --rule K --scope S --why W --q Q-n`, then apply - never mail it to the controller.
 - Every digest row "Q-n open, possibly answered by DEC-m" (the owner answered in a chat that wrote only a decision): read the DEC;
   when its owner words answer Q-n, `META rec answer Q-n --from DEC-m` (the words copied from the DEC, + apply); else
   `META rec not-an-answer DEC-m --q Q-n --why W`. Either one; the row leaves.
