@@ -80,4 +80,3 @@ export function lookHold(row, { item, run, headMs, stat = fs.statSync }) {
   if (mtimeOf(v.image, stat) === null) return `${pre}the verdict image ${fwd(v.image)} does not exist`;
   return null;
 }
-
