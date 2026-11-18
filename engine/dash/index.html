@@ -661,8 +661,7 @@ async function paintThread() {
     homeRestore(k); err('');
   } catch (e) { err('Refresh failed: ' + e.message); }
 }
-// the state line's clock: one tick a second while a turn runs (text only - no fetch, no repaint)
-setInterval(() => { const st = $('#chat-state'), s = S.lastTab === 'home' ? S.last?.status : null; if (st && s?.busy && s.since) st.textContent = chatState(s); }, 1000);
+// the state line's clock moves with the chat stream (each event re-renders it), never by a timer (META-VISUAL-B)
 let chatEs = null, chatFor = null;
 function chatLive(project) {
   if (project === chatFor) return;
