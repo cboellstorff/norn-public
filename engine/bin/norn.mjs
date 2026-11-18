@@ -51,7 +51,7 @@ import { remoteSetup, remoteOff } from '../lib/remote.mjs';
 import { fwd } from '../lib/config.mjs';
 import { newLane, lanePaths, LaneError } from '../lib/lanenew.mjs';
 import { renderMergeBrief, shotsMode, briefMarker } from '../lib/mergebrief.mjs';
-import { landProject, landLine, LAND_EXIT } from '../lib/mergeland.mjs';
+import { openProjectPrs, prLine, LAND_EXIT } from '../lib/mergeland.mjs';
 import { isMergeStage } from '../lib/usageguard.mjs';
 import { delegateStart, delegateWait, ASK_MAX_S } from '../lib/delegate.mjs';
 import { askStart, askWait } from '../lib/ask.mjs';
@@ -953,19 +953,22 @@ function mergeBriefCmd(argv, env, out, err) {
   }
 }
 
-// ---------- GAP-6: norn merge-land (a MERGE run lands its merge worktree on main: fast-forward, short lock, never a force) ----------
-const LAND_USAGE = 'usage: norn merge-land --project project.json --worktree <merge worktree> [--no-push] [--attempts N] [--locks D]    (exit 0 LANDED, 4 REMERGED: main moved and was merged in - re-test, then land again, 3 NOT LANDED: nothing landed)';
+// ---------- RM-7: norn merge-land (a MERGE run's tested merge goes to main as a PR per lane branch; Norn never pushes main) ----------
+const LAND_USAGE = 'usage: norn merge-land --project project.json --worktree <merge worktree> --branch B [--branch B2 ..]    (exit 0: every branch has its PR to main (PR OPENED / PR ALREADY OPEN <url>), 3 NOT OPENED: some branch has none)';
 function mergeLandCmd(argv, env, out, err) {
   try {
-    const f = h1Flags(argv, ['project', 'worktree', 'attempts', 'locks', 'no-push!']);
-    if (!f.project || !f.worktree) throw new Usage('--project and --worktree are required', null);
-    const attempts = f.attempts === undefined ? undefined : Number(f.attempts);
-    if (attempts !== undefined && !(Number.isInteger(attempts) && attempts > 0)) throw new Usage('--attempts wants a whole number > 0', null);
+    const branches = [], rest = [];
+    for (let i = 0; i < argv.length; i++) {
+      if (argv[i] !== '--branch') { rest.push(argv[i]); continue; }
+      if (i + 1 >= argv.length) throw new Usage('--branch needs a value', null);
+      branches.push(argv[++i]);
+    }
+    const f = h1Flags(rest, ['project', 'worktree']);
+    if (!f.project || !f.worktree || !branches.length) throw new Usage('--project, --worktree and --branch are required', null);
     const p = loadProject(f.project, { meta: metaRoot(env) });
-    const r = landProject(p, { wt: path.resolve(f.worktree), locksDir: f.locks || path.join(path.dirname(path.resolve(p.state)), 'locks'), run: env.META_RUN_ID || 'merge-land',
-      push: !f['no-push'], attempts });
-    out(landLine(r));
-    return LAND_EXIT[r.status] ?? 1;
+    const rs = openProjectPrs(p, { wt: path.resolve(f.worktree), branches, run: env.META_RUN_ID || null });
+    for (const r of rs) out(prLine(r));
+    return rs.every(r => r.status !== 'refused') ? LAND_EXIT.opened : LAND_EXIT.refused;
   } catch (e) {
     err('error: ' + e.message); err(LAND_USAGE);
     return e instanceof Usage || e instanceof ConfigError ? 2 : 1;
@@ -1333,7 +1336,7 @@ Inside a run:
 Plumbing:
   norn ready                       what can start now
   norn merge-brief                 write the brief of one staged merge
-  norn merge-land                  land a merge worktree on main (fast-forward, never a force)
+  norn merge-land                  open the PR of a tested merge's lane branch(es) to main (never pushes main)
   norn gen                         regenerate (or --check) the generated agent files
   norn billing                     how the Claude account is paid for: a plan (weekly limit) or API billing
   norn calib                       record a weekly usage reading

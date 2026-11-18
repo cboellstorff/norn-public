@@ -93,6 +93,8 @@ export const KINDS = {
     unpark: { from: ['parked'], to: 'open', roles: [...CK, ...OWNER] },
     // META-GTP-MERGEQ piece 0: the work landed another way (another DLV, or a port commit): terminal, never resurfaces
     supersede: { from: ['open', 'parked'], to: 'superseded', roles: [...CK, ...OWNER] },
+    // RM-7: norn merge-land opened (or found open) the branch's PR to main: { url, number, repo, head, base, merge, run? }
+    pr: { from: ['open', 'parked'], to: null, roles: ['launcher', ...CK] },
   } },
   // META-GTP-DAG piece 2 (GT-PARITY-PLAN 2.3, a Gas Town convoy): a group of runs / deliverables with a priority. Its own file
   // (epics.jsonl), so loadState stays as is; members = create.members + add - remove (epics.mjs); DONE is derived, never an event.

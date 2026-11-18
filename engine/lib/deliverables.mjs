@@ -134,6 +134,7 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
     const parkEv = it.state === 'parked' ? lastEv(it, ['park']) : null;
     // META-GTP-MERGEQ piece 0: superseded = terminal (the work landed another way): at its target, never due / resolved / rehearsed
     const supEv = it.state === 'superseded' ? lastEv(it, ['supersede']) : null;
+    const prEv = lastEv(it, ['pr']), pr = prEv?.data?.url ? { url: prEv.data.url, number: prEv.data.number ?? null } : null;   // the PR norn merge-land opened
     const superseded = supEv ? { by: supEv.data.by, why: supEv.data.why, at: supEv.ts } : null;
     const park = parkEv ? { why: parkEv.data.why, by: parkEv.by, at: parkEv.ts, days: +((now - Date.parse(parkEv.ts)) / DAY).toFixed(1),
       expired: now - Date.parse(parkEv.ts) > cfg.park_days * DAY } : null;
@@ -150,7 +151,7 @@ export function deliverablesView({ stateDir, project = {}, now = Date.now(), git
       : Number.isFinite(g.behind) && g.behind > cfg.resolve_behind ? { why: `${g.behind} behind main (> ${cfg.resolve_behind})` } : null;
     return { id: it.id, record_state: it.state, state, target, at_target: at_target || !!superseded, repo: fwd(d.repo), branch: d.branch, lane: d.lane ?? null, run: lastDone?.data?.run || d.run || null,
       delivers: d.delivers ?? g.subject ?? '', tip: g.tip, done_tip: tipAtDone, branch_exists: g.exists ?? null, done_utc: doneUtc, days, behind: g.behind, ahead: g.ahead,
-      native: g.native, native_files: g.native_files, park, asked, due, rehearsal, resolve, ...(superseded ? { superseded } : {}) };
+      native: g.native, native_files: g.native_files, pr, park, asked, due, rehearsal, resolve, ...(superseded ? { superseded } : {}) };
     };
   });
   for (const sc of scanner.scans()) if (sc.s && sc.want.length) sc.s.rehearseMany(sc.want);
@@ -299,12 +300,12 @@ export function onRunDone(stateDir, runId, { now, git = makeGit() } = {}) {
 // the merge rehearsal in a few words (META-DLV-R2): clean | conflict: a, b, c +n | '' (none: merged, or git failed)
 export const rehearsalWord = r => !r.rehearsal ? '' : r.rehearsal.clean ? 'clean'
   : `conflict: ${r.rehearsal.files.slice(0, 3).join(', ')}${r.rehearsal.files.length > 3 ? ` +${r.rehearsal.files.length - 3}` : ''}`;
-// one listing line: id, state, age, behind main, native, branch, park / question, merge rehearsal, what it delivers
+// one listing line: id, state, age, behind main, native, branch, its PR, park / question, merge rehearsal, what it delivers
 export function formatDeliverable(r) {
   const flag = r.superseded ? `superseded by ${r.superseded.by}: ${r.superseded.why}` : r.park ? `parked ${Math.floor(r.park.days)}d${r.park.expired ? ' (expired)' : ''}: ${r.park.why}` : r.asked ? `asked ${r.asked}` : r.due ? 'DUE' : '';
   const mt = rehearsalWord(r);
   return [r.id, pad(r.state, 9), pad(`${r.days}d`, 7), pad(r.behind === null ? '' : `-${r.behind}`, 6), pad(r.native === null ? '?' : r.native ? 'native' : '', 6),
-    pad(r.branch, 34), flag ? flag + ' |' : '', mt ? mt + ' |' : '', pad(r.delivers, 80).trimEnd()].join(' ').replace(/ +\| ?$/, '');
+    pad(r.branch, 34), r.pr ? `PR #${r.pr.number ?? '?'} |` : '', flag ? flag + ' |' : '', mt ? mt + ' |' : '', pad(r.delivers, 80).trimEnd()].join(' ').replace(/ +\| ?$/, '');
 }
 
 /**
