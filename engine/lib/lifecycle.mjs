@@ -103,26 +103,26 @@ export function tickLanes(state, { project = {}, now = Date.now(), git = makeGit
   if (!dry) try { fs.writeFileSync(laneRulesFile(state), JSON.stringify({ at: new Date(now).toISOString(), ...seen }) + '\n'); } catch { /* the Lanes page falls back to the rulings */ }
   for (const x of rules) {
     if (x.act !== 'tick' || (x.at && Date.parse(x.at) > now)) continue;
-    const wt = x.run ? st.items[x.run]?.data?.worktree : null, w = x.rule === 'orphan' ? { worktree: 'none' } : dry ? { worktree: 'kept' } : dropWorktree(wt, { root: project.root, main, git });
+    const wt = x.run ? st.items[x.run]?.data?.worktree : null, w = x.rule === 'orphan' || dry ? { worktree: 'none' } : worktreeVerdict(wt, { main, git });
     const data = { why: `${x.why} - by the tick`, rule: x.rule, ...w };
-    if (!dry) record(state, { kind: 'lane', ev: 'archive', id: x.id, by: 'tick', data }, { views: project.views || {} });
+    // a guard's refusal (records.mjs archiveGuard: a deliverable done and not merged) leaves this lane as it is, the others go on
+    if (!dry) try { record(state, { kind: 'lane', ev: 'archive', id: x.id, by: 'tick', data }, { views: project.views || {} }); } catch (e) { out.push({ id: x.id, rule: x.rule, refused: e.message }); continue; }
+    if (w.worktree === 'removed' && !removeWorktree(wt, { root: project.root, git })) { w.worktree = 'kept'; w.at_risk = `${wt}: git worktree remove failed`; }
     out.push({ id: x.id, rule: x.rule, why: data.why, worktree: w.worktree, ...(w.at_risk ? { at_risk: w.at_risk } : {}) });
   }
   return out;
 }
 
 // the archived lane's worktree goes only when it is clean (no change, no untracked file) and its HEAD is on main; otherwise it stays
-// and the archive names it: { worktree: removed | kept | none, at_risk?: '<path>: <why>' }
-function dropWorktree(wt, { root, main, git }) {
+// and the archive names it: { worktree: removed | kept | none, at_risk?: '<path>: <why>' } (removed = to remove, after the archive is written)
+function worktreeVerdict(wt, { main, git }) {
   if (!wt || !fs.existsSync(wt)) return { worktree: 'none' };
   const dirty = git(wt, ['status', '--porcelain'], { allowFail: true });
   const head = git(wt, ['rev-parse', 'HEAD'], { allowFail: true })?.trim();
   const why = dirty === null || dirty === undefined ? 'not a git worktree' : dirty.trim() ? 'uncommitted changes' : !head || !workOnMain(wt, head, main, { git }) ? 'commits not on main' : null;
-  if (why) return { worktree: 'kept', at_risk: `${wt}: ${why}` };
-  const repo = root && fs.existsSync(root) ? root : path.dirname(wt);
-  if (git(repo, ['worktree', 'remove', wt], { allowFail: true }) === null || fs.existsSync(wt)) return { worktree: 'kept', at_risk: `${wt}: git worktree remove failed` };
-  return { worktree: 'removed' };
+  return why ? { worktree: 'kept', at_risk: `${wt}: ${why}` } : { worktree: 'removed' };
 }
+const removeWorktree = (wt, { root, git }) => git(root && fs.existsSync(root) ? root : path.dirname(wt), ['worktree', 'remove', wt], { allowFail: true }) !== null && !fs.existsSync(wt);
 
 // ---------- one CI-fix lane (lane norn-lifecycle item 7: ci-fix2, ci-fix3, ci-fix4 were a new lane per red; ci-fix2 died at start and sat) ----------
 // Every red on main is a new stage (CI-<run id>) on THE one lane ci-fix - created on the first red, unarchived when the rules above
