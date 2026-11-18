@@ -161,22 +161,22 @@ export function depLock(rule, ctx) {
   const allowed = s => s.startsWith('.') || s.startsWith('/') || (rule.bare || []).some(a => new RegExp(a).test(s));
   return both(side => {
     const out = [];
-    if (rule.bare) for (const { e, text } of sideFiles(rule, ctx, side, e => isJs(e.path))) {
+    if (rule.bare) for (const { e, text } of sideFiles(rule, ctx, side, e => isJs(e.path) && !ctx.match(rule.vendor?.dirs, e.path))) {   // a vendored file's own imports are the vendor row's business
       const cls = classify(text);
       for (const m of text.matchAll(SPEC_RE)) {
-        const spec = m[1] ?? m[2], at = m.index + m[0].search(/\S/);
-        if (cls[at] !== CODE || allowed(spec)) continue;
+        const spec = m[1] ?? m[2], at = m.index + m[0].search(/\S/), quote = m.index + m[0].lastIndexOf(spec) - 1;
+        if (cls[at] !== CODE || cls[quote] !== CODE || allowed(spec)) continue;   // a real import's quote mark is code; one written inside a template is not
         out.push({ file: e.path, line: lineAt(text, at), msg: `bare import '${spec}': Norn runs on Node built-ins only; a package needs the owner's approval (a waiver)`, snippet: `import '${spec}'` });
       }
     }
     const key = SIDE_KEY[side];
-    if (rule.manifests) for (const { e, file, text } of sideFiles({ files: rule.manifests }, ctx, side)) {
+    if (rule.manifests) for (const { e, file, text } of sideFiles({ files: rule.manifests, exclude: rule.exclude }, ctx, side)) {
       out.push({ file: e.path, line: 0, msg: `dependency manifest ${file}: needs the owner's approval (a waiver)`, snippet: `manifest ${e.path}` });
       for (const d of depsOf(file, text)) out.push({ file: e.path, line: 0, msg: `dependency ${d} in ${file}: needs the owner's approval (a waiver)`, snippet: `dep ${d}` });
     }
     if (rule.vendor) {
       const tree = new Set(ctx.tree(side));
-      for (const e of ctx.entries.filter(x => x.status !== 'D' && x[key] && ctx.match(rule.vendor.dirs, x.path) && path.posix.basename(x.path) !== rule.vendor.table)) {
+      for (const e of ctx.entries.filter(x => x.status !== 'D' && x[key] && ctx.match(rule.vendor.dirs, x.path) && !ctx.match(rule.exclude, x.path) && path.posix.basename(x.path) !== rule.vendor.table)) {
         let d = path.posix.dirname(e[key]), table = null;
         for (; d !== '.' && !table; d = path.posix.dirname(d)) if (tree.has(`${d}/${rule.vendor.table}`)) table = `${d}/${rule.vendor.table}`;
         const name = path.posix.basename(e[key]);
