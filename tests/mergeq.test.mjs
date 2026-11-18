@@ -60,7 +60,7 @@ test('merge brief --sha: merges THAT commit in its own merge worktree and never 
   assert.match(txt, new RegExp(`merge-base --is-ancestor ${sha} origin/feat/vis`));
   assert.doesNotMatch(txt, /rebase origin|force-with-lease|-C \/h\/dev\/sdd-codex-vis (fetch|rebase|push|merge)/, 'nothing runs in the lane worktree');
   assert.match(txt, /NEVER touch the lane worktree \/h\/dev\/sdd-codex-vis/);
-  for (const s of ['git -C /h/dev/sdd-codex revert -m 1', 'norn.mjs" smoke', 'norn.mjs" done', 'MERGE-NOTES.md', 'SHOTS AFTER']) assert.ok(txt.includes(s), s);
+  for (const s of ['merge-land --project', '--branch feat/vis', 'norn.mjs" smoke', 'norn.mjs" done', 'MERGE-NOTES.md', 'SHOTS AFTER']) assert.ok(txt.includes(s), s);
   const land = { repo: '/h/dev/sdd-codex', slots: 2, main_branch: 'main', remote: 'origin' };
   assert.deepEqual(briefMarker(txt), { mode: 'staged', lane: 'meta-vis', branch: 'feat/vis', worktree: '/h/dev/sdd-codex-vis', sha, merge_wt: mergeWtPath(P.state, 'meta-vis', sha), ...land, notes: '/h/r/meta-vis/MERGE-NOTES.md' });
   assert.match(txt, new RegExp(`git -C ${mergeWtPath(P.state, 'meta-vis', sha)} merge --no-ff --no-commit ${sha}`), 'the merge is made in the merge worktree');
@@ -242,6 +242,39 @@ test('MR score = Gas Town score.go: 1000 + epic_h*10 + (4-P)*100 - min(retries*5
   record(state, { kind: 'deliverable', ev: 'supersede', id: 'DLV-4', by: 'controller', data: { by: 'DLV-2', why: 'same work' } }, { views: false });
   g(f.repo, 'merge', '-q', '--no-ff', '-m', 'merge c', 'feat/c');
   assert.deepEqual(mergeQueue({ stateDir: state, project: qProject(f.repo), now: NOW }).rows.map(r => r.id), ['DLV-2']);
+});
+
+// META-CATCH S2: the entry check of a look item's row - a DONE whose end names an image newer than its start, and a pass verdict
+// newer than the row's head; nothing else in the queue changes (the other rows keep their order)
+test('look item: its row enters the queue only with a proven DONE and a pass verdict newer than the head; held rows are named', () => {
+  const f = qRepo(), state = qState(f), d = tmp('look-img'), shot = path.join(d, 'after.png'), sheet = path.join(d, 'sheet.png');
+  fs.writeFileSync(shot, 'png'); fs.writeFileSync(sheet, 'png');
+  const ct = Number(g(f.repo, 'show', '-s', '--format=%ct', f.tips['feat/a'])) * 1000, start = Date.now() - 3600e3;
+  const run = record(state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'fake', worktree: '/x', lane: 'a', brief: '/b/s3.md', stage: 'S3' } }, { now: () => new Date(start), views: false }).id;
+  record(state, { kind: 'run', ev: 'end', id: run, by: 'launcher', data: { exit: 0, outcome: 'done', look: fwd(shot) } }, { views: false });
+  record(state, { kind: 'deliverable', ev: 'done', id: 'DLV-1', by: 'controller', data: { run, tip: f.tips['feat/a'] } }, { views: false });
+  const item = (ev, data, id, by = 'controller', now) => record(state, { kind: 'item', ev, id, by, data }, { views: false, ...(now ? { now: () => new Date(now) } : {}) });
+  item('create', { title: 'Theme', kind: 'theme' }); item('create', { title: 'Look', kind: 'item', parent: 'RM-1', links: ['lane:a'] });
+  const q = () => mergeQueue({ stateDir: state, project: qProject(f.repo), now: NOW });
+  const base = q().rows.map(r => r.id);
+  assert.deepEqual([[...base].sort(), q().held], [['DLV-1', 'DLV-2', 'DLV-3', 'DLV-4'], []], 'no look item: every row queued');
+  item('edit', { proof: 'look', views: ['front'] }, 'RM-2');
+  const old = (start - 60e3) / 1000;
+  fs.utimesSync(shot, old, old);
+  assert.deepEqual(q().rows.map(r => r.id), base.filter(x => x !== 'DLV-1'), 'an unproven DONE does not enter; the others keep their order');
+  assert.match(q().held[0].why, /^RM-2 look: unproven done: RUN-\d+: look image .*after\.png is older than the run's start/);
+  fs.utimesSync(shot, Date.now() / 1000, Date.now() / 1000);
+  assert.match(q().held[0].why, /^RM-2 look: no look verdict/);
+  item('verdict', { verdict: 'pass', image: fwd(sheet) }, 'RM-2', 'owner', ct - 5000);
+  assert.match(q().held[0].why, /verdict .* is older than the head of DLV-1/, 'a verdict older than the head is stale');
+  item('verdict', { verdict: 'fail', image: fwd(sheet) }, 'RM-2', 'checkin', ct + 60e3);
+  assert.match(q().held[0].why, /latest verdict is fail/);
+  item('verdict', { verdict: 'pass', image: fwd(sheet) }, 'RM-2', 'controller', ct + 120e3);
+  assert.deepEqual([q().rows.map(r => r.id), q().held], [base, []], 'the pass path');
+  const pj = path.join(tmp('pj'), 'project.json');
+  fs.writeFileSync(pj, JSON.stringify({ schema: 1, name: 't', title: 't', root: fwd(f.repo), deliverables: { native: ['**/*.rs'], receipts: [] } }));
+  item('verdict', { verdict: 'fail', image: fwd(sheet) }, 'RM-2', 'owner', ct + 180e3);
+  assert.match(cli(['mergeq', '--project', pj, '--state', state]).out, /^HELD DLV-1 feat\/a: RM-2 look: the latest verdict is fail/m);
 });
 
 test('norn mergeq [--json] lists the queue in score order with the rehearsal word and the gate kind', () => {

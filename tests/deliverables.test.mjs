@@ -8,7 +8,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { record, loadState, RecordError } from '../engine/lib/records.mjs';
 import { scanRepo, globToRe, makeGit } from '../engine/lib/dlvgit.mjs';
-import { deliverablesView, loadDeliverables, lastInstall, deliverableConfig } from '../engine/lib/deliverables.mjs';
+import { deliverablesView, loadDeliverables, lastInstall, deliverableConfig, formatDeliverable } from '../engine/lib/deliverables.mjs';
 import { mkTmp, cleanTmp } from './helpers/tmp.mjs';
 import { fromTemplate } from './helpers/git-template.mjs';
 
@@ -92,6 +92,18 @@ test('target main: a deliverable on another repo is done once MERGED (no install
   const r2 = deliverablesView({ stateDir: state, project: p, now: NOW }).rows[0];
   assert.equal(r2.state, 'merged'); assert.equal(r2.at_target, true);
   void a;
+});
+
+test('the PR norn merge-land opened shows on its row and listing line; the newest pr event wins', () => {
+  const { repo } = fixture();
+  const state = tmp('state'), p = { ...project(repo, tmp('doors')), state };
+  const id = mkDlv(state, { repo, branch: 'fix/b', delivers: 'docs b', done_utc: at(-30).toISOString() }).id;
+  const row = () => deliverablesView({ stateDir: state, project: p, now: NOW }).rows[0];
+  assert.equal(row().pr, null);
+  assert.doesNotMatch(formatDeliverable(row()), /PR #/);
+  for (const n of [4, 7]) record(state, { kind: 'deliverable', ev: 'pr', id, by: 'launcher', data: { url: `https://github.com/o/r/pull/${n}`, number: n, repo: 'o/r', head: 'fix/b', base: 'main' } }, { now: () => at(-1), views: false });
+  assert.deepEqual(row().pr, { url: 'https://github.com/o/r/pull/7', number: 7 });
+  assert.match(formatDeliverable(row()), /fix\/b +PR #7 \| DUE \| clean \| docs b$/);
 });
 
 test('a deliverable whose branch is gone falls back to its recorded tip', () => {
