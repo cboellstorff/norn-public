@@ -103,9 +103,12 @@ export function lanesView(st, { all = false, now = Date.now(), hbAge = null, sta
   return sortLanes(items.filter(l => l.kind === 'lane' && (all || l.state === 'active' || l.state === 'parked')).map(l => {
     const name = l.id.slice(2), r = latest[name];
     const park = l.state === 'parked' ? [...l.history].reverse().find(h => h.ev === 'park')?.data || {} : null;
-    const text = park ? (park.q ? `parked by ${park.q}` : `parked: ${park.why ?? ''}`.trimEnd())
+    // item 8 (MAIL-9): parked on a question the owner answered = the owner's part is done; it waits for a check-in to apply the ruling
+    const ruled = park?.q && st.items[park.q]?.state === 'answered' ? st.items[park.q] : null;
+    const text = ruled ? `waiting: your ruling is being applied (you ruled: ${ruled.answer?.choice ?? ruled.answer?.text ?? '?'}, ${ruled.updated}; the next check-in applies ${ruled.id})`
+      : park ? (park.q ? `parked by ${park.q}` : `parked: ${park.why ?? ''}`.trimEnd())
       : r ? runText(r, { now, hbAge, staleMs, items: st.items }) : rules.get(name)?.rule === 'idle' ? rules.get(name).text : 'no runs';
-    const group = rules.get(name)?.rule === 'idle' ? 'needs' : laneGroup(l, r), ended = r?.history.findLast(h => h.ev === 'end')?.ts ?? l.history.findLast(h => h.ev === 'done')?.ts ?? null;
+    const group = ruled ? 'queued' : rules.get(name)?.rule === 'idle' ? 'needs' : laneGroup(l, r), ended = r?.history.findLast(h => h.ev === 'end')?.ts ?? l.history.findLast(h => h.ev === 'done')?.ts ?? null;
     const at = group === 'running' || group === 'queued' ? r?.created ?? l.created : group === 'done' ? ended ?? l.updated : l.updated;
     const old = group === 'done' && !!ended && now - Date.parse(ended) > oldDays * 864e5;
     return { name, id: l.id, state: l.state, data: l.data, run: r?.id ?? null, run_name: r ? runName(r) : null, executor: r?.data.executor ?? null, run_state: r?.state ?? null, text,

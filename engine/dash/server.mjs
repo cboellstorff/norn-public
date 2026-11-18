@@ -391,7 +391,10 @@ export function createDashboard(o) {
     // META-UX-BUILD S7: the fixer's result - ONE card per run (every file, every hunk; Apply all / Skip this file / Discard)
     for (const c of fixCards(s.items, { batch: fixBatch(withDefaults(settingsState(p).view).policy), root: p.root })) out.push({ type: 'fixresult', id: c.run, project: p.name, title: `Fixer result ${c.run}: ${c.n} hunk(s) in ${c.files.length} file(s)`, card: c, created: c.created });
     for (const q of items.filter(i => i.kind === 'question' && i.state === 'answered')) out.push({ type: 'answered', id: q.id, project: p.name, lane: q.data.lane, title: q.data.title, answer: q.answer, updated: q.updated });
-    for (const l of items.filter(i => i.kind === 'lane' && i.state === 'parked')) out.push({ type: 'parked', id: l.id, project: p.name, why: l.park?.why ?? null, q: l.park?.q ?? null });
+    // item 8 (MAIL-9): a lane parked on a question the owner answered carries the ruling (ruled) - not a need: it waits for the check-in
+    for (const l of items.filter(i => i.kind === 'lane' && i.state === 'parked')) { const q = l.park?.q ? s.items[l.park.q] : null;
+      out.push({ type: 'parked', id: l.id, project: p.name, why: l.park?.why ?? null, q: l.park?.q ?? null,
+        ...(q?.state === 'answered' ? { ruled: { q: q.id, choice: q.answer?.choice ?? null, text: q.answer?.text ?? null, at: q.updated } } : {}) }); }
     // META-TEND P4: model advice = one card each, one tap applies the Settings change or keeps it (both a decision record)
     let adv = [];
     try { adv = (await adviceOf(p)).cards; } catch { adv = []; }
@@ -1373,7 +1376,9 @@ data: ${JSON.stringify(l)}
       }
       const text = str(data.text, 'Answer', 4000);
       if (data.choice !== undefined && typeof data.choice !== 'string') throw fail(400, 'choice must be a string');
-      return rec(p, { kind: 'question', ev: 'answer', id: String(data.id), by: 'dashboard', data: { text, via: 'dashboard', ...(data.choice ? { choice: data.choice } : {}) } });
+      const r = await rec(p, { kind: 'question', ev: 'answer', id: String(data.id), by: 'dashboard', data: { text, via: 'dashboard', ...(data.choice ? { choice: data.choice } : {}) } });
+      try { await platform.tick(p); } catch { /* the scheduled tick applies it then */ }   // item 8 (MAIL-9 d): an answer starts a tick at once
+      return r;
     }
     if (route === '/api/first-task') {   // META-OOTB F-1: the owner's first task = a directive + lane `first` + its worktree / branch / brief
       const text = str(data.text, 'Task', 4000);
