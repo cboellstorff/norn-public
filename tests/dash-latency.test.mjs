@@ -30,6 +30,7 @@ test('timing log: Server-Timing on every answer, slow requests and loop stalls i
     const st = d.stalls.find(s => s.ms >= 400);
     assert.ok(st, JSON.stringify(d.stalls));
     assert.ok(st.requests.includes('GET /api/records?project=kestrel'), JSON.stringify(st));
+    assert.deepEqual([d.file_lost, d.file_error], [0, null], 'every entry reached the jsonl');
     await f.app.close();
     const lines = fs.readFileSync(path.join(f.root, 'local', 'dash-timing.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
     assert.ok(lines.some(l => l.kind === 'slow') && lines.some(l => l.kind === 'stalls' && l.ms >= 400), JSON.stringify(lines));

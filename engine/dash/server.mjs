@@ -1406,10 +1406,11 @@ data: ${JSON.stringify(l)}
   // the snapshot read of a GET); a request over o.slowMs (1 s; the SSE streams excepted) and an event-loop stall over o.stallMs
   // (250 ms: every request waited that long) go to a ring of the last 100 (GET /api/timing) and <norn>/local/dash-timing.jsonl. A
   // stall names the requests that ran in its window: one of them blocked the loop (a sync build), or the box starved this process.
-  const timing = { slow: [], stalls: [], recent: [], writes: Promise.resolve() }, STALL_TICK = 100;
+  const timing = { slow: [], stalls: [], recent: [], writes: Promise.resolve(), lost: 0, error: null }, STALL_TICK = 100;
   const timingFile = metaRootDir ? path.join(metaRootDir, 'local', 'dash-timing.jsonl') : null;
   const noteTiming = (k, e) => { const a = timing[k]; a.push(e); if (a.length > 100) a.shift();
-    if (timingFile) timing.writes = timing.writes.then(() => fs.promises.appendFile(timingFile, JSON.stringify({ kind: k, ...e }) + '\n')).catch(() => {}); };
+    if (timingFile) timing.writes = timing.writes.then(() => fs.promises.appendFile(timingFile, JSON.stringify({ kind: k, ...e }) + '\n'))
+      .catch(x => { timing.lost++; timing.error = String(x.message).slice(0, 200); }); };   // the ring keeps the entry; /api/timing says the file missed it
   let tickAt = performance.now();
   const stallTimer = setInterval(() => {
     const now = performance.now(), gap = now - tickAt - STALL_TICK; tickAt = now;
@@ -1454,7 +1455,7 @@ data: ${JSON.stringify(l)}
           await primeFor(route === '/api/projects' || want === 'all' ? projects : projects.filter(x => x.name === want));
           tr.prime = performance.now() - t;
         }
-        if (route === '/api/timing') return send(200, { slow: timing.slow, stalls: timing.stalls, slow_ms: o.slowMs ?? 1000, stall_ms: o.stallMs ?? 250, file: timingFile });
+        if (route === '/api/timing') return send(200, { slow: timing.slow, stalls: timing.stalls, slow_ms: o.slowMs ?? 1000, stall_ms: o.stallMs ?? 250, file: timingFile, file_lost: timing.lost, file_error: timing.error });
         if (route === '/') return send(200, (await readA(path.join(DASH, 'index.html'))).replace('__TOKEN__', JSON.stringify(token)).replace('__REMOTE__', JSON.stringify(who.device ? { device: who.device.id, name: who.device.name } : null)), 'text/html; charset=utf-8');
         if (route === '/api/remote' && remote) return send(200, remoteView(who));
         if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/terms.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
