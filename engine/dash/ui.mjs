@@ -6,7 +6,7 @@ import { renderMarkdown } from './docs.mjs';
 import { parseLedger, ledgerInline, LEDGER_KINDS, recordBlocks } from './ledger.mjs';
 import { renderAdopt, adoptStep } from './adopt.mjs';
 import { renderHome } from './home.mjs';
-import { bars, columns, stack, board, lines, meter, dodChips, critiqueChip, critiqueWord } from './widgets.mjs';
+import { bars, columns, stack, board, lines, meter, dodChips, critiqueChip, critiqueWord, hoChip } from './widgets.mjs';
 import { orcLine, badgeLabel } from './norn/orc.mjs';
 import { INS_CAPS, LADDER_ORDER, LADDER_STATES, CONTEXT_SUBS, contextParts, contextNumbers, standingRows, perDay, worstFiles, fileAdvice } from './insparts.mjs';
 import { SUB_CAP, pickSub, subviewPage, subMore } from './subviews.mjs';
@@ -352,7 +352,7 @@ function overview(d, ctx) {
     const n = byId[l.run] || {}, age = n.age_min, b = n.budget_min;
     const ageCell = fin(b) ? `${meter(age, b * 2, b, age > b ? 'hot' : '')}<div class="small mute">${fmtMin(age)} / budget ${b} min</div>` : `<div class="small mute">${fmtMin(age)} (no time budget)</div>`;
     const ctxCell = ctxMeter(n, { codexNote: true });
-    return `<tr id="run-${esc(l.run)}"><td><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="small mute"><span class="id">${esc(l.run)}</span>${aname(l.run_name ?? n.name)}${n.stage ? ' ' + esc(n.stage) : ''}</div></td>
+    return `<tr id="run-${esc(l.run)}"><td><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="small mute"><span class="id">${esc(l.run)}</span>${aname(l.run_name ?? n.name)}${n.stage ? ' ' + esc(n.stage) : ''}</div>${hoChip(n.handoff ?? l.handoff, l.run)}</td>
       <td>${exChip(n.executor ?? l.executor, n.model, n.effort)}</td><td style="width:24%">${ageCell}</td><td style="width:22%">${ctxCell}</td>
       <td class="mono run-burn">${burnCell(l)}</td></tr>`;
   }).join('') || `<tr><td colspan="5" class="mute">${art(ctx, 'empty-no-runs', 'empty')}No lane is running.</td></tr>`;
@@ -435,7 +435,7 @@ function lanes(d, ctx) {
     const [cls, word] = stateOf(l.text), log = l.run ? `<a href="/log?run=${encodeURIComponent(l.run)}&project=${encodeURIComponent(l.project)}" target="_blank"><button>Log</button></a>` : '';
     const act = cls === 'running' ? `${log} <button data-act="stop" data-project="${esc(l.project)}" data-run="${esc(l.run)}">Stop</button>`
       : l.state === 'parked' ? `<button data-tab="inbox">Open Q</button>` : l.state !== 'archived' ? `${log} <button class="ghost" data-act="archive" data-project="${esc(l.project)}" data-lane="${esc(l.name)}">Archive</button>` : log;
-    return `<tr id="lane-${esc(l.name)}"><td><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="id">${esc(l.id)}</div>${overlapChips(l.overlap)}</td><td>${chip(l.state)}</td><td>${chip(cls, word)}</td>
+    return `<tr id="lane-${esc(l.name)}"><td><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="id">${esc(l.id)}</div>${overlapChips(l.overlap)}</td><td>${chip(l.state)}</td><td>${chip(cls, word)}${hoChip(l.handoff, l.run)}</td>
       <td>${l.executor ? chip(exClass(l.executor), l.executor) : dash}</td><td>${esc(l.text)}</td><td><span class="id">${esc(l.run ?? '-')}</span>${l.run_name ? `<div>${aname(l.run_name)}</div>` : ''}</td>${usdCell(l)}<td>${act}</td></tr>`;
   }).join('') || `<tr><td colspan="${usd ? 8 : 7}" class="mute">No LANE records.</td></tr>`;
   return `<div class="banner">Lanes come from LANE records only (no folder scan); state = the latest run on the lane, whatever executor owns the tree.</div>
@@ -486,7 +486,7 @@ function runs(d, ctx) {
     const feed = /^RUN-\d+$/.test(n.id) ? ` data-feed="${esc(n.id)}" data-project="${esc(n.project)}" title="Open the live feed"` : '';
     return `<div class="node lvl${lvl}" id="node-${esc(n.id)}"${lvl ? ` data-p="${esc(pid)}"` : ''}${feed}><div class="name">${kids ? `<span class="caret" data-t="${esc(pid)}">&#9662;</span>` : '<span class="caret"></span>'}${chip(n.kind === 'subagent' ? 'idle' : exClass(n.executor), n.kind ?? 'run')}<span class="t">${projTag(ctx, n.project)}${name(n)}</span>${n.dod_ready || n.dod ? dodChips(n.dod_ready, n.dod) : ""}${critiqueChip(n.critique)}${(n.guard || []).map(g => `<span class="guard-chip" title="${esc(`${g.id}: ${g.why}`)}">${chip(g.state === 'ruled' ? 'idle' : g.cls === 'runaway' ? 'bad' : 'warn', `${g.cls}${g.action ? ': ' + g.action : ''}`)}</span>`).join('')}${guardChip(guardOn(d.guard, r => r.run === n.id), { tab: 'slop' })}</div>
      <div>${exChip(n.kind === 'subagent' ? null : n.executor, n.model, n.effort)}</div><div>${runChip(n.state)}</div><div class="small">${age(n)}</div><div class="mono small">${tok(n)}</div>
-     <div>${fin(n.ctx) ? ctxMeter(n) : dash}</div><div class="mono small">${fin(b?.pct_per_h) ? b.pct_per_h.toFixed(2) + ' %/h' : fin(n.burn30) && n.burn30 > 0 ? mTok(n.burn30) + ' /30 min' : '-'}</div></div>`;
+     <div>${fin(n.ctx) ? ctxMeter(n) : dash}</div><div class="mono small">${fin(b?.pct_per_h) ? b.pct_per_h.toFixed(2) + ' %/h' : fin(n.burn30) && n.burn30 > 0 ? mTok(n.burn30) + ' /30 min' : '-'}</div>${n.handoff ? `<div class="horow">${hoChip(n.handoff, n.id)}</div>` : ''}</div>`;
   };
   // META-CHECKIN-GUARDS R1: a move a guard refused in code, as a plain row under the run that tried it
   const refusedRows = n => (n.refused || []).map(x => `<div class="node lvl1 refusedrow" data-p="p-${esc(n.id)}"><div class="small" style="grid-column:1/-1">${chip('refused', `refused: ${x.words}`)} ${esc([x.lane, x.stage ?? x.answers].filter(Boolean).join(' '))} <span class="mute">${esc(String(x.ts ?? '').slice(11, 16))} - ${esc(x.why)}</span></div></div>`).join('');
@@ -701,15 +701,18 @@ function edgePath(a, b, kind) {
 }
 function mapNode(n, project) {
   if (n.critique) n = { ...n, sub: `${n.id} · ${critiqueWord(n.critique)[1]}` };   // META-DOD 3: a plan run shows its review
+  // the live hand-off state (lanes.mjs handoffOf): its words take the sub line, a pulsing dot sits before them
+  const ho = n.handoff?.text ? `<circle class="pulse ho-${n.handoff.phase === 'resumed' ? 'resumed' : 'pending'}" cx="18" cy="${n.h - (n.h < 46 ? 11 : 16)}" r="4"/>` : '';
+  if (ho) n = { ...n, sub: n.handoff.short ?? n.handoff.text, hoX: 26, hoTip: n.handoff.text };
   const small = n.h < 46, feed = n.feed ? ` data-feed="${esc(n.feed)}" data-project="${esc(project)}" role="button" tabindex="0"` : '';
-  const tip = [n.label, n.sub, n.word, n.feed ? 'click: live feed' : ''].filter(Boolean).join(' · ');
+  const tip = [n.label, n.hoTip ?? n.sub, n.word, n.feed ? 'click: live feed' : ''].filter(Boolean).join(' · ');
   const more = n.type === 'lane' && (n.more > 0 || n.expanded)
     ? `<text class="more" x="12" y="${n.h + 14}" data-act="map-more" data-lane="${esc(n.lane)}">${n.expanded ? `${n.capped ? 'latest 30 · ' : ''}show last 3` : `+${n.more} more`}</text>` : '';
   const room = Math.max(6, Math.floor((n.w - 30 - String(n.word ?? '').length * 7) / 7.6)); // label chars beside the state word
   return `<g class="mn t-${n.type} c-${esc(n.cls)}${n.faded ? ' faded' : ''}${n.needs ? ' needs' : ''}" id="mn-${esc(n.id)}" transform="translate(${n.x} ${n.y})"${feed}><title>${esc(tip)}</title>
     <rect class="box" width="${n.w}" height="${n.h}" rx="8"/><rect class="st" width="5" height="${n.h}" rx="2"/>
     <text class="nl" x="14" y="${small ? 16 : 22}">${esc(cut(n.label, Math.min(room, small ? 22 : 24)))}</text><text class="nw" x="${n.w - 10}" y="${small ? 16 : 22}" text-anchor="end">${esc(n.word)}</text>
-    <text class="ns" x="14" y="${n.h - (small ? 8 : 12)}">${esc(cut(n.sub, 40))}</text>${more}</g>`;
+    ${ho}<text class="ns${ho ? ' ho-w' : ''}" x="${n.hoX ?? 14}" y="${n.h - (small ? 8 : 12)}">${esc(cut(n.sub, 40))}</text>${more}</g>`;
 }
 // ---------- Map in the Norn look (META-VISUAL-B S2): the Well (default) or the Tapestry (the dense view) - a three.js stage the
 // page mounts into #map-host (norn/mapview.mjs), live from the state stream. This is only its frame: view switch, archived-lanes
@@ -805,7 +808,7 @@ export function renderFeedHead(h, now = Date.now()) {
   const [cls, word] = stateOf(st);
   const over = fin(h.elapsed_min) && fin(h.budget_min) && h.elapsed_min > h.budget_min;
   const c = h.commit;
-  return `<div class="fh-top"><b class="aname">${esc(h.name ?? h.run)}</b><span class="id">${esc(h.run)}</span>${h.lane ? `<span class="tag">${esc(h.lane)}</span>` : ''}${chip(cls, word)}${h.marker ? chip(MARK[h.marker] ?? 'idle', h.marker) : ''}</div>
+  return `<div class="fh-top"><b class="aname">${esc(h.name ?? h.run)}</b><span class="id">${esc(h.run)}</span>${h.lane ? `<span class="tag">${esc(h.lane)}</span>` : ''}${chip(cls, word)}${h.marker ? chip(MARK[h.marker] ?? 'idle', h.marker) : ''}</div>${h.handoff ? `<div class="fh-ho">${hoChip(h.handoff, h.run)}</div>` : ''}
    <div class="fh-ex">${exChip(h.executor, h.model, h.effort)}${h.role === 'helper' ? ' <span class="tag">helper</span>' : ''}</div>
    <div class="kv small fh-kv"><span class="mute">elapsed</span><span>${fmtMin(h.elapsed_min)}${fin(h.budget_min) ? ` of ${fmtMin(h.budget_min)} budget` : ''}${fin(h.budget_min) ? meter(h.elapsed_min, Math.max(h.budget_min, h.elapsed_min ?? 0), h.budget_min, over ? 'over' : '') : ''}</span>
    <span class="mute">context</span><span>${fin(h.ctx) ? ctxMeter(h) : kTok(h.ctx)}${fin(h.ctx_window) ? ` <span class="small mute">(window ${kTok(h.ctx_window)})</span>` : ''}</span>
