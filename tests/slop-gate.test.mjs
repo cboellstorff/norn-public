@@ -186,7 +186,7 @@ test('D3 K14: drift in a generated file whose source the diff does not touch nev
   const repo = repoWith({ 'agents/impl.md': 'v1\n', 'other.txt': 'o\n' });
   git(repo, 'checkout', '-q', '-b', 'feat/x');
   commit(repo, { 'other.txt': 'o2\n' }, 'unrelated');
-  const home = 'C:/Users/someone/.claude/agents';
+  const home = 'D:/agent-home/.claude/agents';
   const out = src => `PROBLEM ${home}/impl.md: drift (edited after generation; never overwritten) [source ${src}]\ngen --check: 1 problem(s)\n`;
   const tool = text => rule => (rule.kind === 'command' ? text : null);
   const k14 = r => r.blocks.filter(b => b.rule === 'K14');
