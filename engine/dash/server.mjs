@@ -228,7 +228,7 @@ export function createDashboard(o) {
   const one = url => pick(url)[0];
   // st(p): the request snapshot's fold (primed on fs.promises by primeFor) - the sync loadState only outside a snapshot
   const st = p => snap.getStore()?.folds.get(p.state) ?? loadState(p.state);
-  const viewsA = async p => writeViewsAsync(p.state, await stAsync(p), p.views || {});
+  const viewsA = async p => writeViewsAsync(p.state, await stAsync(p), p.views || {}, { role: 'dashboard' });
   const hbAge = p => id => { const x = statS(hbPath(p.state, id)); return x ? Date.now() - x.mtimeMs : Infinity; };
   // the live hand-off state (lanes.mjs handoffOf, one home): wrote = the run's own result.json says HANDOFF, written since its start
   // (result.mjs readResult's rule); talked = its session's first model event (agents.mjs runTalked, the tree's tail cache)
