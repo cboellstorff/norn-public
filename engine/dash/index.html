@@ -891,7 +891,8 @@ document.addEventListener('click', e => {
     if (S.tab === 'records') S.find = id; if (S.tab === 'lanes') { S.find = id.slice(2); S.allLanes = true; }
     S.jump = { inbox: 'q-' + id, runs: 'node-' + id, records: 'rec-' + id }[S.tab] ?? null;
     history.replaceState(null, '', `?project=${encodeURIComponent(S.project)}&tab=${S.tab}`); render(); return; }
-  const b = e.target.closest('button,[data-t]'); if (!b) return;
+  const b = e.target.closest('button,[data-t],a[data-tab]'); if (!b) return;
+  if (b.tagName === 'A') { if (e.ctrlKey || e.metaKey || e.shiftKey || e.button) return; e.preventDefault(); }   // RM-18 S2: a strip link - a plain click stays in the page, a modified one opens its URL
   const p = b.dataset.project, d = b.dataset;
   // R1: the filter lives in the URL too (a reload keeps it); a paint uses Home data only (S.last of another tab = a fresh render)
   if (d.act === 'home-filter') { S.homeFilter = d.filter; history.replaceState(null, '', `?project=${encodeURIComponent(S.project)}&tab=home${S.homeFilter === 'all' ? '' : '&filter=' + S.homeFilter}`);

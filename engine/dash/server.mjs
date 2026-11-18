@@ -483,6 +483,29 @@ export function createDashboard(o) {
     }
     return Object.values(by);
   }
+  // RM-18 S2: the Overview strip, one count set per Norn. Urd = what landed (a MERGE run that ended done, or a run ruled landed: norn
+  // runs landed), Verdandi = what runs and what is parked, Skuld = open questions, queued runs, the next check-in (the last check-in's
+  // start + the cadence; null = not known)
+  function stripOf(ps, running, m) {
+    const day = new Date(); day.setHours(0, 0, 0, 0);
+    const evTs = (i, ev) => [...i.history].reverse().find(h => h.ev === ev)?.ts ?? null;
+    const landed = [], n = { parked: 0, questions: 0, queued: 0 };
+    let ck = null;
+    for (const p of ps) for (const i of Object.values(st(p).items)) {
+      if (i.kind === 'question' && i.state === 'open') n.questions++;
+      else if (i.kind === 'lane' && i.state === 'parked') n.parked++;
+      else if (i.kind === 'run') {
+        if (i.data.kind === 'checkin') { const t = evTs(i, 'start'); if (t && (!ck || t > ck)) ck = t; continue; }
+        if (i.state === 'queued' && i.data.role !== 'helper') n.queued++;
+        const ts = i.landed ? evTs(i, 'landed') : String(i.data.stage ?? '').toUpperCase() === 'MERGE' && i.end?.outcome === 'done' ? evTs(i, 'end') : null;
+        if (ts) landed.push({ run: i.id, lane: i.data.lane ?? null, project: p.name, ts });
+      }
+    }
+    landed.sort((a, b) => String(b.ts).localeCompare(String(a.ts)));
+    const every = m.policy?.cadence?.checkin_interval_min ?? null;
+    return { landed_today: landed.filter(l => Date.parse(l.ts) >= day.getTime()).length, last_landed: landed[0] ?? null, running: running.length, ...n,
+      checkin: { every_min: every, next: Number.isFinite(every) && ck ? new Date(Date.parse(ck) + every * 60000).toISOString() : null } };
+  }
   async function overview(ps) {
     const m = withDefaults(settingsState(ps[0]).view);
     let needs = [], running = [], tree = [];
@@ -502,7 +525,7 @@ export function createDashboard(o) {
     return { now: iso(), projects: ps.map(p => p.name), needs_you: needsYou(needs), needs,
       running: { claude: { n: claude, cap: m.max_claude_workers ?? null }, codex: { n: codex, cap: m.max_codex ?? null }, lanes: running },
       burn: { usage: usage(ps[0], m), top: burners, executors: providerUsage(ps) },
-      paused: ps.some(p => pausedFiles(p).some(existsS)), checkin_locked: ps.some(p => lockFresh(p)),
+      strip: stripOf(ps, running, m), paused: ps.some(p => pausedFiles(p).some(existsS)), checkin_locked: ps.some(p => lockFresh(p)),
       // META-OOTB F-1: a project with no records yet gets the first-task box (+ the caps in force; null = unset = no limit)
       first_run: ps.length === 1 && !Object.keys(st(ps[0]).items).length ? { project: ps[0].name, lane: FIRST_LANE,
         caps: Object.fromEntries(['max_claude_workers', 'max_codex', 'weekly_stop_pct', 'usage_rate_cap_pct_per_h'].map(k => [k, m[k] ?? null])) } : null,

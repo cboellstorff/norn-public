@@ -74,14 +74,6 @@ const oneProject = tab => panel(tab, `<div class="card"><p class="mute">Choose o
 
 export const needsCount = ov => (ov && fin(ov.needs_you) ? ov.needs_you : 0);
 export const pageTitle = (n, project, look = 'classic') => `${n > 0 ? `(${n}) ` : ''}${look === 'norn' ? 'Norn' : 'norn'} - ${project === 'all' ? 'all projects' : project}`;
-// Norn vocabulary (META-VISUAL-B S3, VISUAL-A2 CONCEPTS): the Norn look's Overview hero carries the three Norns' lore lines (and Wyrd,
-// all three). The bar is NAV in both looks (UX review 2).
-export const NORN_LORE = {
-  verdandi: 'Verdandi - what is: the threads being spun at the Well of Urd right now.',
-  urd: 'Urd - what was: every knot tied stays tied; the record cannot be unwoven.',
-  skuld: 'Skuld - what shall be: the loose ends, the questions, the cloth not yet hung.',
-  wyrd: 'Wyrd - all three: one thread from what was through what is to what shall be.',
-};
 // UX review 2: the bar is 7 destinations with plain names (both looks). Home, Overview, Inbox and Settings are one page each; Work,
 // Health and History are pages of their own (a hub: one card per page under it, with what needs a look) and, while one of them or one of
 // its pages is open, a second row lists its pages. Label, tab id and URL (?tab=<id>) are the same word for every page.
@@ -356,6 +348,18 @@ function apiBurn(b) {
      <span class="mute small">runs</span><div class="small" id="burn-api-parts">${$(b.ended_usd ?? b.usd)} from ${plural(b.runs, 'Claude run')} ended in the last 24 h · ${$(b.live_usd)} running${b.live_runs ? ` (${plural(b.live_runs, 'run')}, estimate)` : ''}${b.chat_turns ? ` · ${$(b.chat_usd)} dashboard chats` : ''}</div>
      <span class="mute small">guard</span><div class="small mute">none weekly: API billing has no weekly limit${cap === null ? '. Set a daily cap in Settings (API daily cap) to stop spend past it' : ''}</div></div>`;
 }
+// RM-18 S2: the Overview strip in place of the hero (both looks): three real links, one per Norn in its time colour (norn.css .ostrip),
+// each opening its destination - Urd History, Verdandi Work, Skuld Inbox (DEST_NORN)
+export function overviewStrip(s, ctx = {}) {
+  if (!s) return '';
+  const q = ctx.project ? `?project=${encodeURIComponent(ctx.project)}&tab=` : '?tab=';
+  const part = (tone, tab, name, facts) => `<a class="np tone-${tone}" id="strip-${tone}" href="${esc(q + tab)}" data-tab="${tab}"><b>${name}</b><span>${facts.join(' · ')}</span></a>`;
+  const ll = s.last_landed, ck = s.checkin || {};
+  const next = ctx.paused ? 'check-ins paused' : ck.next ? `next check-in ${esc(fmtTime(ck.next, ctx.now))}` : fin(ck.every_min) ? `check-in every ${int(ck.every_min)} min` : 'next check-in -';
+  return `<nav class="ostrip" id="strip" aria-label="Was, is, shall be">${part('urd', 'history', 'Urd', [`${int(s.landed_today)} landed today`, ll ? `last ${esc(ll.lane ?? ll.run)} ${esc(fmtTime(ll.ts, ctx.now))}` : 'none landed yet'])}`
+    + `${part('verd', 'work', 'Verdandi', [`${int(s.running)} running`, `${int(s.parked)} parked`])}`
+    + `${part('skuld', 'inbox', 'Skuld', [`${plural(s.questions, 'open question')}`, `${int(s.queued)} queued`, next])}</nav>`;
+}
 function overview(d, ctx) {
   const o = d.overview, tree = d.agents?.tree || [], byId = Object.fromEntries(tree.map(n => [n.id, n]));
   const top = Object.fromEntries((o.burn.top || []).map(t => [t.id, t]));
@@ -384,9 +388,8 @@ function overview(d, ctx) {
   const recs = d.records ? [...d.records.decisions, ...d.records.directives].sort((a, b) => String(b.updated).localeCompare(String(a.updated))).slice(0, 5)
     .map(r => `<tr><td class="id">${esc(r.id)}</td><td>${chip(r.state)}</td><td>${r.kind === 'decision' ? `<b>${esc(r.data.lane ?? '')}</b> ${esc(r.data.question ?? '')}<div class="small mute">${esc(r.data.choice ?? '')}${r.data.why ? ' - ' + esc(r.data.why) : ''}</div>` : esc(r.data.text)}</td><td class="small mute">${esc(r.by)} ${fmtTime(r.updated, ctx.now)}</td></tr>`).join('') : '';
   const led = d.ledger ? ledgerRows(parseLedger(d.ledger.ledger).slice(-4), d.ledger, ctx, true) : '';
-  const hero = ctx.look === 'norn' && ctx.art ? `<div class="hero">${art(ctx, 'hero-night', 'hero-n')}${art(ctx, 'hero-day', 'hero-d')}<div class="lore">${Object.values(NORN_LORE).map(l => `<p>${esc(l)}</p>`).join('')}</div></div>` : '';
   const prof = o.setup?.profile_now ? `<p class="small" id="profile-now" style="margin:0 0 10px">Profile: <b>${esc(profileWords(o.setup.profile_now, ctx.now))}</b> <button class="ghost" data-tab="settings">Settings</button></p>` : '';
-  return `${hero}${firstTask(o.first_run)}${setupGaps(o.setup)}${prof}<div class="glance">
+  return `${overviewStrip(o.strip, { ...ctx, paused: o.paused })}${firstTask(o.first_run)}${setupGaps(o.setup)}${prof}<div class="glance">
    <section class="card${o.needs_you ? ' needs' : ''}" id="needs"><h2>Needs you <b>${o.needs_you}</b></h2>${needs}</section>
    <section class="card" id="running"><h2>Running <b>${o.running.claude.n}/${o.running.claude.cap ?? '-'}</b> Claude · <b>${o.running.codex.n}/${o.running.codex.cap ?? '-'}</b> Codex</h2>
      <table><thead><tr><th>lane</th><th>executor</th><th>age vs time budget (mark = budget, end = 2x)</th><th>context</th><th>${apiB ? '<span title="spent so far: an estimate from its tokens at list price until the run ends">$ so far</span>' : 'burn'}</th></tr></thead><tbody>${rows}</tbody></table></section>
