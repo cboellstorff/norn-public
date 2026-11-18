@@ -451,11 +451,14 @@ export function createDashboard(o) {
     return c.val ? { ...c.val, pending: false } : { project: p.name, pending: true };
   }
   // META-ROADMAP S2 (SPEC sec. 3 "Live"): the roadmap tree = `norn road show --json` in a child process (its derive asks git; git
-  // never blocks a poll), cached on the records files' mtime + size. A changed file = a new build that the request AWAITS, so the
-  // fetch a `rec` event triggers already shows the append; git-derived facts refresh after o.roadmapTtlMs (60 s, served stale while
-  // the child runs) and a changed tree then reaches the page as the stream's `derived` event (its hash is in the stream sig).
+  // never blocks a poll), cached on the records files' mtime + size. A changed roadmap file (an item append) = a new build that the
+  // request AWAITS, so the fetch a `rec` event triggers already shows the append. A change to the other record files only (runs,
+  // records: they churn while workers run) serves the last tree at once and rebuilds behind it (dash-latency: the child takes 3 s
+  // idle, 4-13 s with workers running, and every Roadmap render waited on it). Git-derived facts refresh after o.roadmapTtlMs (60 s,
+  // served stale while the child runs); a changed tree reaches the page as the stream's `derived` event (its hash is in the stream sig).
   const rm = new Map();
   const rmSig = p => RECORD_FILES.map(f => { const s = statS(path.join(p.state, f + '.jsonl')); return s ? s.mtimeMs + ':' + s.size : '-'; }).join('|');
+  const rmOwn = sig => sig.split('|')[RECORD_FILES.indexOf('roadmap')];   // the item records' own file in a sig
   function roadmapOf(p, { kick = false } = {}) {
     let c = rm.get(p.name);
     if (!c) { if (kick) return null; c = { sig: null, at: 0, val: null, busy: null, want: null }; rm.set(p.name, c); }
@@ -469,6 +472,7 @@ export function createDashboard(o) {
       return c.busy;
     };
     if (c.val && c.sig === sig) { if (!c.busy && Date.now() - c.at > (o.roadmapTtlMs ?? o.deliverablesTtlMs ?? 60000)) build(); return c.val; }
+    if (c.val && rmOwn(c.sig) === rmOwn(sig)) { if (!c.busy) build(); return c.val; }   // no item append: the last tree now, one rebuild behind it
     if (c.busy && c.want === sig) return c.busy;
     return kick ? (build(), null) : build();
   }
