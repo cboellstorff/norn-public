@@ -119,7 +119,7 @@ test('jobguard hold: ends when the held process exits even while its stdin stays
     let out = ''; late.stdout.on('data', d => { out += d; });
     const code = await Promise.race([new Promise(r => late.once('exit', r)), new Promise(r => setTimeout(() => r('alive'), 20000))]);
     assert.equal(code, 1, `the hold of a gone pid exits 1 (${out.trim()})`); assert.match(out, /^err /m);
-  } finally { try { late.kill(); } catch { /* gone */ } }
+  } finally { late.kill(); }   // a no-op (false) once it has exited
   const p = spawn(process.execPath, ['-e', 'process.stdin.resume(); process.stdin.on("end", () => setTimeout(() => process.exit(0), 200))'], { stdio: ['pipe', 'ignore', 'ignore'] });
   await new Promise(r => p.once('spawn', r));
   assert.equal(await holdGone({ proc: p }), true, 'holdGone ends its stdin and resolves at its exit');
