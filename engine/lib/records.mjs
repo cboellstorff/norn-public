@@ -12,8 +12,9 @@ import { ownerPickGuard, carriesOwnerPick, ownerWordsOf, choiceKeyOf } from './q
 import { ownerOnlyRefusal, OWNER_ONLY_EXIT } from './checkinguards.mjs';
 import { checkinBelow } from './floor.mjs';
 
-// worker (META-GTP-MAIL): a supervised run speaking for itself (META_RUN_ID) - only mail events allow it
-export const ROLES = ['owner', 'controller', 'checkin', 'launcher', 'dashboard', 'migration', 'status', 'worker'];
+// worker (META-GTP-MAIL): a supervised run speaking for itself (META_RUN_ID) - only mail events allow it; tick (lifecycle.mjs): the
+// tick archiving a lane by its rules - only the lane archive allows it
+export const ROLES = ['owner', 'controller', 'checkin', 'launcher', 'dashboard', 'migration', 'status', 'worker', 'tick'];
 const OWNER = ['owner', 'dashboard']; // the dashboard's buttons act for the owner
 const CK = ['controller', 'checkin'];
 const MAILERS = ['worker', ...CK];
@@ -51,7 +52,8 @@ export const KINDS = {
     park: { from: ['active'], to: 'parked', roles: CK },
     unpark: { from: ['parked'], to: 'active', roles: CK },
     done: { from: ['active', 'parked'], to: 'done', roles: CK },
-    archive: { from: ['active', 'parked', 'done'], to: 'archived', roles: [...OWNER, 'controller'] },
+    // lifecycle.mjs: the check-in archives an idle / stopped lane (CHECKIN.md 2j); the tick its orphan / landed / merged-and-old ones
+    archive: { from: ['active', 'parked', 'done'], to: 'archived', roles: [...OWNER, ...CK, 'tick'] },
     unarchive: { from: ['archived'], to: 'active', roles: [...OWNER, 'controller'] },
     // META-CONTROLLER C4 (SPEC sec. 2): a hold (a lease) - { until ISO, holder?, why?, via? }; a later claim extends it, release ends it,
     // the clock ends it at `until`. While held, a check-in write on the lane is refused with exit 5 (HELD_EXIT). Never a check-in's.

@@ -263,5 +263,7 @@ export function renderDigest(d, { level = 2 } = {}) {
   // gap #5: one active directive restating another; the check-in folds the pair (CHECKIN.md 2b), the row leaves when one is not active
   if (s.dupdirs) sec('12 Possible duplicate directives', s.dupdirs, r => `- possible duplicate directives: ${r.older} ~ ${r.newer} (${r.why}): fold them, `
     + `e.g. META rec supersede ${r.older} --by ${r.newer} --why "restated by ${r.newer}"`);
+  // lifecycle.mjs: no lane sits - act on each this pass (CHECKIN.md 2j); the row leaves when the lane runs, is parked or archived
+  if (s.lanes) sec('13 Lanes nothing acts on (act this pass)', s.lanes, r => `- ${r.id} ${r.rule}${r.run ? ' (' + r.run + ')' : ''}: ${r.why}`);
   return L.join('\n') + '\n';
 }

@@ -116,6 +116,16 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
   A directive that names no item gets one first (sec. 2e).
 - Ledger: `dispatched: <lane/stage> -> <executor>` or `queued: <lane/stage> (<why>)` for each; "none" only when both lists are empty.
 
+## 2j. Lanes nothing acts on (digest sec. 13; no lane sits)
+- The tick archives by itself: a lane a check-in created and dispatched nothing on (so write the brief on the lane you dispatch, or
+  dispatch on the lane you created), a STOPPED lane whose work landed anyway, and a done lane merged on main past policy.done_lanes.archive_days.
+- Every `idle` row (an active lane with no run, or none for policy.idle_lanes.hours) and every `stopped` row (its work did not land) is
+  yours THIS pass, one of three: start / resume it (a brief exists and its item is due: sec. 2i / 3); park it with a why
+  (`META rec park L:x --why W`, or a Q with `--blocks` when the owner must pick); or archive it (`META rec archive L:x`) when its work
+  landed elsewhere, is obsolete or a duplicate - cite why in the ledger line. Never archive a stopped lane whose work did not land
+  without the owner's word.
+- A `work at risk` row: an archived lane's worktree kept (uncommitted changes or commits not on main) - name it in the ledger line.
+
 ## 3. Dispatch (only within caps; caps come from the BUDGET file + STATUS)
 - {{policy}} <!-- policy:checkin -->
 - First apply BUDGET `lanes[<lane>]` (missing = `{executor: auto}`). `paused` = NEVER dispatch that lane;

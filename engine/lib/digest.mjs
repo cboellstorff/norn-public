@@ -3,7 +3,8 @@
 // and leaves only when the target state is reached - never because someone reviewed or read it. Read-only: writes no record.
 // Sections: finished (not on main), queued (+ after / inputs, evaluated by S4), questions, ended (no clean successor), directives,
 // ci (META-CIWATCH: the project's main CI is red - the run, its sha, its failing tests; leaves when a LATER main run is green),
-// overlap (GAP-12: a running lane's changed files overlap a remote branch or open PR; leaves when the lane stops or the overlap goes).
+// overlap (GAP-12: a running lane's changed files overlap a remote branch or open PR; leaves when the lane stops or the overlap goes),
+// lanes (lifecycle.mjs: an idle or stopped lane the check-in must start / resume, park or archive; a worktree an archive left at risk).
 import { loadState, readEvents, recordsFile, fold, heldLanes, holdWho } from './records.mjs';
 import { deliverablesView, deliverableConfig } from './deliverables.mjs';
 import { makeGit, isAncestor } from './dlvgit.mjs';
@@ -23,6 +24,7 @@ import { critiqueRows } from './critique.mjs';
 import { dupPairs } from './dupdirs.mjs';
 import { wholeHold, readHold, holdItem, noticeMin } from './holds.mjs';
 import { overlapRows, overlapOn } from './overlap.mjs';
+import { laneRules, lanePolicy } from './lifecycle.mjs';
 
 const H = 3600e3;
 export const WINDOW_H = 72;
@@ -210,9 +212,20 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   // cache, the digest only reads it) - the check-in decides: carry on, rebase onto it, or ask the owner
   const ov = overlapOn(project?.policy) ? overlapRows(stateDir, st.items) : [];
   if (ov.length) sections.overlap = ov;
+  // lane norn-lifecycle item 5: no lane sits - each idle / stopped lane is the check-in's to act on this pass (CHECKIN.md 2j); a worktree a
+  // tick archive kept (dirty or not on main) stays a row while it exists. Only while any.
+  const ln = [...laneRules(st, { now, ...lanePolicy(project?.policy) }).filter(x => x.act === 'checkin').map(x => ({ id: x.id, lane: x.lane, rule: x.rule, run: x.run, why: x.why })),
+    ...atRisk(items)];
+  if (ln.length) sections.lanes = ln;
   const counts = Object.fromEntries(Object.entries(sections).map(([k, v]) => [k, v.length]));
   return { project: project?.name ?? null, at: new Date(now).toISOString(), window_h: WINDOW_H, sections, counts };
 }
+
+// an archived lane whose archive kept its worktree (lifecycle.mjs dropWorktree: uncommitted changes / commits not on main), while it exists
+const atRisk = items => items.filter(l => l.kind === 'lane' && l.state === 'archived').flatMap(l => {
+  const a = l.history.findLast(h => h.ev === 'archive')?.data?.at_risk, wt = a ? a.slice(0, a.lastIndexOf(': ')) : null;
+  return wt && fs.existsSync(wt) ? [{ id: l.id, lane: l.id.slice(2), rule: 'at-risk', run: null, why: `work at risk: ${a} - commit / merge it or remove the worktree by hand` }] : [];
+});
 
 // git unreadable: every open deliverable record counts as done (listing too much beats dropping work)
 function fallbackDlv(stateDir) {
