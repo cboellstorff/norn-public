@@ -34,7 +34,7 @@ function repoWith(base = { 'a.txt': 'a\n' }) {
   commit(dir, base, 'base');
   return dir;
 }
-const noTool = () => null;   // no command rule output: K14 has nothing to say in these repos
+const noTool = rule => (rule.kind === 'command' ? null : '[]');   // K14 has nothing to say in these repos; ESLint finds nothing (an empty JSON list)
 const stateDir = () => mkTmp('meta-slopgate-st-');
 
 test('D5: every check appends one line to checks.jsonl (branch, base, head, rule-set hash, the new findings of every level); holds.json stays the BLOCK view', () => {
@@ -179,7 +179,7 @@ test('D1 run end: a red Done check and a BLOCK go back as ONE resume carrying bo
   assert.equal(res.slop, 1); assert.ok(res.dod, 'the resume names both');
   const txt = fs.readFileSync(notes, 'utf8');
   assert.match(txt, /Norn's slop check found 1 BLOCK finding\(s\)[^]*- K15 a\.txt\.orig [^]*Norn's Done check failed/, 'slop first, then the Done check, in one prompt');
-  assert.equal((txt.match(/^prompt: /gm) || []).length, 1, 'one resume');
+  assert.equal((txt.match(/^resumed session /gm) || []).length, 1, 'one resume');
 });
 
 test('D3 K14: drift in a generated file whose source the diff does not touch never holds; a touched source does', () => {
