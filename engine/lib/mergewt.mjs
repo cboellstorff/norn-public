@@ -25,7 +25,6 @@ const isMergeWtName = n => /^merge-[\w.-]+$/.test(n);
 
 // lock keys (runs.lockPath), never files in the repo: the merge slots of a repo, and its land lock (the ref update, seconds)
 export const slotKey = (repo, i) => fwd(path.join(repo, `.norn-merge-slot-${i}`));
-export const landKey = repo => fwd(path.join(repo, '.norn-merge-land'));
 
 // the commit of the first ref that exists
 function firstRef(repo, names, git) {
