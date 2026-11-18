@@ -104,6 +104,7 @@ export function ctxOrder(state, run) {
   const f = sentFile(state, run), sent = readJson(f)?.sent || [];
   if (sent.includes(order)) return null;
   fs.mkdirSync(path.dirname(f), { recursive: true });
-  fs.writeFileSync(f, JSON.stringify({ sent: [...sent, order], ctx, at: new Date().toISOString() }));
+  const { role: _r, ...marks } = c;   // WORK-SIZING S1: the marks this order went out under (the live policy may change after it)
+  fs.writeFileSync(f, JSON.stringify({ sent: [...sent, order], marks, ctx, at: new Date().toISOString() }));
   return { text: runOrder(order, ctx, c), level: order, ctx, limits: c };
 }
