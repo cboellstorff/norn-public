@@ -366,6 +366,7 @@ function validateData(kind, ev, d, target, st, by) {
       str(d.owner_words, 'owner_words', { req: false, max: 4000 });   // META-Q-RECONCILE R1
       if (d.not_an_answer !== undefined && d.not_an_answer !== true) fail('not_an_answer must be true');
       if (d.not_an_answer && d.answers) fail('--answers and --not-an-answer exclude each other');
+      if (d.approach_review !== undefined && !/^RM-\S+$/.test(d.approach_review)) fail('approach_review must name a roadmap item (RM-n)');   // META-CATCH S1 (stuck.mjs)
     }
     if (ev === 'notanswer') {
       if (kindOfId(d.q) !== 'question' || st.items[d.q]?.kind !== 'question') fail(`q must name an existing Q-n (got ${JSON.stringify(d.q)})`);
