@@ -433,7 +433,7 @@ details.ck .ck-full{text-align:left;margin:6px 0 2px;padding:8px 10px;border:1px
 </aside>
 <script>const TOKEN = __TOKEN__, REMOTE = __REMOTE__;</script>
 <script type="module">
-import { TABS, loadTab, loadParts, partsKey, renderTab, renderNav, pageTitle, needsCount, fmtTime, esc, matchText, renderFeedHead, renderFeedEvent, rmScopeNext, rmUrlHash, parseRmHash } from '/ui.mjs';
+import { TABS, loadTab, loadParts, partsKey, renderTab, renderNav, healthStates, pageTitle, needsCount, fmtTime, esc, matchText, renderFeedHead, renderFeedEvent, rmScopeNext, rmUrlHash, parseRmHash } from '/ui.mjs';
 import DOMPurify from '/vendor/purify.es.mjs';
 import { renderDeliverable, renderRmEditor, rmEditBody } from '/ui.mjs';
 import { initLook, setLook, setTheme, setQuiet, look, ground, assetImg, assetUrl, motion } from '/norn/look.mjs';
@@ -489,11 +489,11 @@ $('#theme').onclick = () => { theme(modes[(modes.indexOf($('#theme').textContent
 
 async function header() {
   if (!S.project) {   // META-ADOPT A3: zero projects - the page is Add a project; nothing to pause or check in
-    S.needs = 0; document.title = pageTitle(0, 'no project yet', look());
+    S.needs = 0; S.usage = null; document.title = pageTitle(0, 'no project yet', look());
     $('#status').textContent = 'no project yet'; $('#pause').disabled = $('#tick').disabled = true; return null;
   }
   const ov = await get(`/api/overview?project=${encodeURIComponent(S.project)}`);
-  S.needs = needsCount(ov); S.paused = ov.paused; S.at = Date.now();
+  S.needs = needsCount(ov); S.usage = ov.burn?.usage ?? null; S.paused = ov.paused; S.at = Date.now();
   document.title = pageTitle(S.needs, S.project, look());
   $('#status').innerHTML = `status ${fmtTime(ov.now)} · check-ins <b>${ov.paused ? 'paused' : 'on'}</b>${ov.checkin_locked ? ' · tick running' : ''} · ${S.live ? 'live' : 'reconnecting ...'}${REMOTE ? ` · remote: ${esc(REMOTE.name)}` : ''}`;
   $('#pause').textContent = ov.paused ? 'Resume check-ins' : 'Pause check-ins';
@@ -520,10 +520,12 @@ function paintOrc() {
   b.setAttribute('aria-label', mutedUntil() > Date.now() ? 'SloppaChoppa: muted' : badgeLabel(n));
   b.innerHTML = look() === 'norn' ? `${assetImg('orc-32', 'o32')}${assetImg('orc-16', 'o16')}${n ? `<span class="obadge${hot ? ' hot' : ''}">${n}</span>` : ''}` : `<span class="ocl">Choppa${n ? ' ' + n : ''}</span>`;
 }
+// RM-18 S1: the bar in its Norn colours; Health's colour needs the Guard rows, so the bar repaints (alone) when they land
+function paintNav() { const nav = $('#tabs'), navX = nav.scrollLeft; nav.innerHTML = renderNav(S.tab, { inbox: S.needs }, healthStates({ usage: S.usage, rows: S.guard?.rows ?? null })); nav.scrollLeft = navX; }
 function guardHeader() {
   if (!S.project || S.project === 'all') { S.guard = null; paintOrc(); return; }
   const want = S.project;
-  get(`/api/guard?project=${encodeURIComponent(want)}`).then(g => { if (S.project !== want) return; S.guard = g; if (S.tab === 'slop') ls(orcKey('seen'), Date.now()); paintOrc(); popUp(); }).catch(() => {});
+  get(`/api/guard?project=${encodeURIComponent(want)}`).then(g => { if (S.project !== want) return; S.guard = g; if (S.tab === 'slop') ls(orcKey('seen'), Date.now()); paintNav(); paintOrc(); popUp(); }).catch(() => {});
 }
 function callUp() {
   if (S.guard?.slop === false) return;
@@ -575,7 +577,7 @@ async function render(force = false, why = []) {
     document.body.dataset.tab = S.tab; $('#bbar').innerHTML = S.project ? renderBottomBar(S.tab, { inbox: S.needs }) : '';
     const more = $('#bbar [data-act=more]'); if (more) more.setAttribute('aria-expanded', String(document.body.classList.contains('more')));
     chatLive(S.tab === 'home' && S.project && S.project !== 'all' ? S.project : null);
-    const nav = $('#tabs'), navX = nav.scrollLeft; nav.innerHTML = renderNav(S.tab, { inbox: S.needs }); nav.scrollLeft = navX;
+    paintNav();
     if (S.navTab !== S.tab) { S.navTab = S.tab; const show = () => nav.querySelector('[aria-selected=true]')?.scrollIntoView({ inline: 'nearest', block: 'nearest' }); show(); document.fonts.ready.then(show); }
     if (!S.project) S.tab = 'adopt';
     step('render:loadTab ' + S.tab); const d = await loadTab(S.tab, S.project, get, { allLanes: S.allLanes, doc: S.doc, docLine: S.docLine, docSrc: S.docSrc, wide: !matchMedia('(max-width:700px)').matches, mapMore: S.mapMore, mapAll: S.mapAll, ledgerN: S.ledgerN, adoptAdd: S.adoptAdd, adoptScan: S.adoptScan, projects: S.projects, parts: S.parts, sub: S.sub, limit: S.subLimit, batch: S.batch, fixall: S.tab === 'slop' ? S.fixall : null });

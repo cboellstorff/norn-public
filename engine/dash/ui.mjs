@@ -98,10 +98,32 @@ export const NAV = [
 /** the destination a page sits in ([id, label, pages]): itself or the one whose pages hold it; null for the setup page */
 export const destOf = tab => NAV.find(([g, , ids]) => g === tab || ids.includes(tab)) ?? null;
 const countBadge = n => (n ? `<span class="count" aria-label="${n} need you">${n}</span>` : '');
-export function renderNav(tab, counts = {}) {
+// RM-18 S1: a Norn colour on the nav as a meaning. History = Urd (was), Work = Verdandi (is) but its Plan and Roadmap = Skuld (shall be),
+// Inbox = Skuld; Health = its worst state; Home, Overview, Settings neutral. CSS: norn.css .tone-* (both looks).
+export const DEST_NORN = { history: 'urd', work: 'verd', inbox: 'skuld' };
+export const PAGE_NORN = { plan: 'skuld', roadmap: 'skuld' };
+const RANK = { ok: 0, warn: 1, bad: 2 };
+/** the worst of { page: 'ok'|'warn'|'bad'|null } states; null when none is known */
+export const worstState = st => Object.values(st || {}).filter(v => v in RANK).reduce((w, v) => (w === null || RANK[v] > RANK[w] ? v : w), null);
+/** the Health pages' states from what the header holds: usage = the overview's burn.usage (guard STOP or over the hourly cap = bad,
+ *  guard ok = ok), slop / tests / context = the Guard rows of their types (a warn-level row = warn, else ok); null = not known */
+export function healthStates({ usage = null, rows = null } = {}) {
+  const u = !usage || usage.billing?.type === 'api' ? null : usage.guard === 'STOP' || usage.rateOK === false ? 'bad' : usage.guard === 'ok' ? 'ok' : null;
+  const of = types => (rows ? (rows.some(r => types.includes(r.type) && (r.severity === 'high' || r.severity === 'medium')) ? 'warn' : 'ok') : null);
+  return { usage: u, slop: of(['code']), tests: of(['tests']), context: of(['instructions', 'memory', 'rules', 'docs']) };
+}
+/** a page's tone: its Norn colour, a Health state, or '' (neutral) */
+export function navTone(id, health = {}) {
+  const d = destOf(id)?.[0];
+  if (d === 'health') return (id === 'health' ? worstState(health) : health[id]) ?? '';   // a page whose state is not known yet: neutral
+  return PAGE_NORN[id] ?? DEST_NORN[d] ?? '';
+}
+const toneCls = t => (t ? ` class="tone-${t}"` : '');
+export function renderNav(tab, counts = {}, health = {}) {
   const label = Object.fromEntries(TABS), cur = destOf(tab);
-  const top = NAV.map(([g, name, ids]) => `<button role="tab" id="tab-${g}" data-tab="${g}" aria-selected="${cur?.[0] === g}"${ids.length ? ` aria-controls="pages-${g}"` : ''}>${esc(name)}${countBadge([g, ...ids].reduce((n, k) => n + (counts[k] || 0), 0))}</button>`).join('');
-  const pages = cur && cur[2].length ? `<div class="pages" id="pages-${cur[0]}" role="tablist" aria-label="${esc(cur[1])}">${cur[2].map(k => `<button role="tab" id="tab-${k}" data-tab="${k}" aria-selected="${k === tab}">${esc(label[k])}${countBadge(counts[k])}</button>`).join('')}</div>` : '';
+  const top = NAV.map(([g, name, ids]) => `<button role="tab" id="tab-${g}" data-tab="${g}" aria-selected="${cur?.[0] === g}"${ids.length ? ` aria-controls="pages-${g}"` : ''}${toneCls(navTone(g, health))}>${esc(name)}${countBadge([g, ...ids].reduce((n, k) => n + (counts[k] || 0), 0))}</button>`).join('');
+  const pt = cur ? navTone(cur[0], health) : '';
+  const pages = cur && cur[2].length ? `<div class="pages${pt ? ' tone-' + pt : ''}" id="pages-${cur[0]}" role="tablist" aria-label="${esc(cur[1])}">${cur[2].map(k => `<button role="tab" id="tab-${k}" data-tab="${k}" aria-selected="${k === tab}"${toneCls(navTone(k, health))}>${esc(label[k])}${countBadge(counts[k])}</button>`).join('')}</div>` : '';
   return `<div class="dests" role="tablist" aria-label="Sections">${top}</div>${pages}`;
 }
 // a picked art image (the asset map) - Norn look only, and only where the page passes its asset function (none in node)

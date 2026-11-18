@@ -131,6 +131,14 @@
    running / mute), Norn: one Norn colour each (past = Urd, present = Verdandi, future = Skuld). Palette lock holds: var() only. ---------- */
 :root { --rm-past: var(--ok); --rm-now: var(--run); --rm-fut: var(--mute); --rm-inv: var(--panel); }
 :root.norn { --rm-past: var(--nu); --rm-now: var(--nv); --rm-fut: var(--ns); --rm-inv: var(--ninv); }
+/* RM-18 S1: the nav in the same colours, both looks (ui.mjs navTone): Urd / Verdandi / Skuld = the three time colours, Health = its
+   worst state. A thin underline in the colour; the open one filled in it with the inverse ink (each fill >= 4.5:1 on --rm-inv, AA, both
+   looks, both grounds); the open destination's pages row carries its colour on its top rule. Neutral buttons keep the plain bar. */
+.tone-urd { --t: var(--rm-past); } .tone-verd { --t: var(--rm-now); } .tone-skuld { --t: var(--rm-fut); }
+.tone-ok { --t: var(--ok); } .tone-warn { --t: var(--warn); } .tone-bad { --t: var(--bad); }
+:root nav button[class*=tone-] { --g: var(--t); border-bottom-color: var(--t); }
+:root nav button[class*=tone-][aria-selected=true] { background: var(--t); color: var(--rm-inv); border-bottom-color: var(--t); }
+:root nav .pages[class*=tone-] { border-top-color: var(--t); }
 .rmtop { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
 .rmtop .chip { border: 0; cursor: pointer; }
 /* the scope switch: three toggle buttons, the pressed one filled in its time colour */
