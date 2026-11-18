@@ -52,3 +52,18 @@ test('the dashboard: an answer starts a tick at once; the parked lane leaves the
     assert.equal(after.needs_you, before.needs_you - 2, 'the Q and its parked lane both leave the count');
   } finally { await f.done(); }
 });
+
+test('RUN-61 / RUN-68 in the digest: a check-in that ended after the answer without applying it is named on the Q row - a finding', async () => {
+  const { digest } = await import('../engine/lib/digest.mjs');
+  const { renderDigest } = await import('../engine/lib/views.mjs');
+  const state = mkTmp('ruled-miss-'), q = parkedOnQ(state);
+  rec(state, { kind: 'question', ev: 'answer', id: q, by: 'owner', data: { choice: 'waive', text: 'yes', via: 'chat' } });
+  const ck = rec(state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'checkin', executor: 'claude', lane: 'checkin' } }).id;
+  let row = digest(state, {}, { git: () => null }).sections.questions.find(x => x.id === q);
+  assert.deepEqual(row.missed ?? [], [], 'a check-in still running has not missed it yet');
+  rec(state, { kind: 'run', ev: 'end', id: ck, by: 'launcher', data: { exit: 0, outcome: 'done' } });
+  const d = digest(state, {}, { git: () => null });
+  row = d.sections.questions.find(x => x.id === q);
+  assert.deepEqual(row.missed, [ck]);
+  assert.match(renderDigest(d), new RegExp(`${q} answered .*MISSED by ${ck}: apply it first`));
+});

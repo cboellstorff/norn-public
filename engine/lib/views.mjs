@@ -244,7 +244,7 @@ export function renderDigest(d, { level = 2 } = {}) {
   sec('2 Queued + triggers', s.queued, r => `- ${r.id} ${r.lane ?? '-'}${r.stage ? ' ' + r.stage : ''} not_before ${r.not_before ?? '-'}`
     + `${r.after.length ? '; after ' + r.after.map(a => `${a.cond}=${a.met === null ? '?' : a.met ? 'met' : a.gone ? 'gone' : 'unmet'}`).join(', ') : ''}`
     + `${r.inputs.length ? '; inputs ' + r.inputs.join(', ') : ''}${r.terms ? '; ' + readyWords(r) : ''}`);
-  sec('3 Questions', s.questions, r => `- ${r.id} ${r.state}${r.owner_only ? ' OWNER-ONLY' : ''} ${r.lane ?? '-'} (${r.hours} h): ${r.title}`
+  sec('3 Questions', s.questions, r => `- ${r.id} ${r.state}${r.owner_only ? ' OWNER-ONLY' : ''} ${r.lane ?? '-'} (${r.hours} h): ${r.title}${r.missed?.length ? ` - MISSED by ${r.missed.join(', ')}: apply it first` : ''}`
     + (r.answered_by ? `
   - ${r.id} open, possibly answered by ${r.answered_by} (${r.answered_why}): close it with META rec answer ${r.id} --from ${r.answered_by}, or META rec not-an-answer ${r.answered_by} --q ${r.id}` : ''));
   sec('4 Ended without a clean successor', s.ended, r => `- ${r.id} ${r.lane ?? '-'}${r.stage ? ' ' + r.stage : ''} ${r.state} ${r.outcome} exit=${r.exit ?? '-'}`

@@ -128,9 +128,12 @@ function questions(items, { now }) {
   const rank = q => (q.state === 'open' ? (q.data.owner_only ? 0 : 1) : 2);
   // META-Q-RECONCILE R1: an open Q a later DEC on its lane may already answer (owner words / OWNER PICK / its evidence paths)
   const pa = new Map(possibleAnswers(items).map(x => [x.q, x]));
+  // item 8 (MAIL-9 c): the check-ins that started after the owner's answer and ended without applying it (RUN-61, RUN-68 on Q-1) - a miss
+  const checkins = items.filter(i => i.kind === 'run' && i.data?.kind === 'checkin' && !['queued', 'claimed', 'running'].includes(i.state));
+  const missed = q => { const at = q.history.findLast(h => h.ev === 'answer')?.ts; return at ? checkins.filter(r => r.created >= at).map(r => r.id) : []; };
   return qs.sort((a, b) => rank(a) - rank(b) || Date.parse(a.created) - Date.parse(b.created))
     .map(q => ({ id: q.id, state: q.state, owner_only: !!q.data.owner_only, lane: q.data.lane ?? null, title: q.data.title ?? '', hours: age(now, q.created),
-      ...(pa.has(q.id) ? { answered_by: pa.get(q.id).dec, answered_why: pa.get(q.id).why } : {}) }));
+      ...(pa.has(q.id) ? { answered_by: pa.get(q.id).dec, answered_why: pa.get(q.id).why } : {}), ...(q.state === 'answered' ? { missed: missed(q) } : {}) }));
 }
 
 function directives(items, { now }) {
