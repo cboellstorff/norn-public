@@ -23,7 +23,7 @@ These are tech debt. SloppaChoppa reports them as slop. If removing one really b
 ## Git
 
 - Never use `git stash`. Its list is shared by every worktree of this repo, so one worker's pop can take another worker's changes. To set work aside, commit it on your branch, or copy the files into a folder under `%TEMP%`.
-- Commit on your lane branch in small conventional commits (`fix(queue): ...`). The merge step lands lanes on `main`.
+- Commit on your lane branch in small conventional commits (`fix(queue): ...`). The merge step (`norn merge-land`) pushes nothing to `main`: it opens a pull request from the lane branch; the owner approves and merges it. Never merge or push `main` yourself.
 
 ## Editing
 
