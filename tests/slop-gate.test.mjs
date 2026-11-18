@@ -241,3 +241,14 @@ test('D7: the batch result is checked against main - an import cycle that exists
   record(state, { kind: 'waiver', ev: 'create', by: 'owner', data: { rule: 'K10', scope: open[0].fp, why: 'reviewed: the cycle is broken next' } });
   assert.deepEqual(batchSlop(state, { n: 3, base, merge_tip: tip }, { repo, tool: noTool }), [], 'a waiver clears it');
 });
+
+test('K10 on Norn itself: the engine has no import cycle (the chat -> checkins -> digest -> guard -> look -> roadmap -> standing -> stuck one is broken)', () => {
+  const engine = path.join(import.meta.dirname, '..', 'engine'), repo = repoWith({ 'README.md': 'empty base\n' });
+  const files = {};
+  for (const f of fs.readdirSync(engine, { recursive: true })) if (/\.(mjs|js|cjs)$/.test(f) && !f.includes('node_modules')) files['engine/' + fwd(f)] = fs.readFileSync(path.join(engine, f), 'utf8');
+  commit(repo, files, 'the engine as it stands');
+  const k10 = slopCheck({ repo, base: 'HEAD~1', only: ['K10'], tool: noTool }).blocks;
+  // every cycle is new against an empty base; the older after -> fed -> records -> views one predates PR 11 and is not this break's
+  const named = /engine\/lib\/(chat|checkins|digest|guard|look|roadmap|standing|stuck)\.mjs/;
+  assert.deepEqual(k10.map(b => b.msg).filter(m => named.test(m)), [], 'no cycle through the chat / roadmap modules');
+});
