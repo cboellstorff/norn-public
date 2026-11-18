@@ -98,7 +98,7 @@ const line = s => String(s).replace(/[\r\n\u0000-\u001f]+/g, ' ').trim();
 const read = (p, fallback = '') => { const t = readText(p); return t === null ? fallback : t; };
 /** the async read: missing -> fallback; the text lands in the request's snapshot (a second read() of it is a lookup) */
 const readA = async (p, fallback = '') => { const t = await readTextA(p); return t === null ? fallback : t; };
-const NO_STATE = /^\/api\/(sessions(\/|$)|remote$|adopt\/repos$)/;   // GET routes that read no project state: no snapshot to prime
+const NO_STATE = /^\/api\/(sessions(\/|$)|remote$|adopt\/repos$|timing$)/;   // GET routes that read no project state: no snapshot to prime
 async function tail(p, count) {
   const text = await readA(p, null);
   if (text === null) return [];
@@ -1402,8 +1402,35 @@ data: ${JSON.stringify(l)}
     }
     throw fail(403, 'Pair this device first: on the desktop dashboard open Settings > Notifications > Reach Norn from your phone > Pair a device');
   }
+  // dash-latency: the server's own timings, always on and cheap. Every answer carries Server-Timing (app = ms in this process, prime =
+  // the snapshot read of a GET); a request over o.slowMs (1 s; the SSE streams excepted) and an event-loop stall over o.stallMs
+  // (250 ms: every request waited that long) go to a ring of the last 100 (GET /api/timing) and <norn>/local/dash-timing.jsonl. A
+  // stall names the requests that ran in its window: one of them blocked the loop (a sync build), or the box starved this process.
+  const timing = { slow: [], stalls: [], recent: [], writes: Promise.resolve() }, STALL_TICK = 100;
+  const timingFile = metaRootDir ? path.join(metaRootDir, 'local', 'dash-timing.jsonl') : null;
+  const noteTiming = (k, e) => { const a = timing[k]; a.push(e); if (a.length > 100) a.shift();
+    if (timingFile) timing.writes = timing.writes.then(() => fs.promises.appendFile(timingFile, JSON.stringify({ kind: k, ...e }) + '\n')).catch(() => {}); };
+  let tickAt = performance.now();
+  const stallTimer = setInterval(() => {
+    const now = performance.now(), gap = now - tickAt - STALL_TICK; tickAt = now;
+    if (gap <= (o.stallMs ?? 250)) return;
+    const from = now - gap - STALL_TICK, during = timing.recent.filter(r => r.t0 <= now && (r.t1 ?? now) >= from).map(r => r.url);
+    noteTiming('stalls', { at: new Date().toISOString(), ms: Math.round(gap), requests: [...new Set(during)].slice(0, 10) });
+  }, STALL_TICK);
+  stallTimer.unref();
+  function timed(req, res) {
+    const r = { url: `${req.method} ${String(req.url).slice(0, 160)}`, t0: performance.now(), t1: null, prime: null };
+    timing.recent.push(r); if (timing.recent.length > 50) timing.recent.shift();
+    res.on('finish', () => { r.t1 = performance.now(); const ms = r.t1 - r.t0;
+      if (ms > (o.slowMs ?? 1000) && !String(res.getHeader('content-type') ?? '').startsWith('text/event-stream'))
+        noteTiming('slow', { at: new Date().toISOString(), url: r.url, ms: Math.round(ms), prime: r.prime === null ? null : Math.round(r.prime), status: res.statusCode }); });
+    return r;
+  }
   const serve = async (req, res, store) => {
-    const send = (status, data, type = 'application/json; charset=utf-8') => { res.writeHead(status, { 'content-type': type }); res.end(type.startsWith('application/json') ? JSON.stringify(data) : data); };
+    const tr = timed(req, res);
+    const send = (status, data, type = 'application/json; charset=utf-8') => {
+      res.setHeader('Server-Timing', `app;dur=${(performance.now() - tr.t0).toFixed(1)}${tr.prime === null ? '' : `, prime;dur=${tr.prime.toFixed(1)}`}`);
+      res.writeHead(status, { 'content-type': type }); res.end(type.startsWith('application/json') ? JSON.stringify(data) : data); };
     res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
     try {
@@ -1423,9 +1450,11 @@ data: ${JSON.stringify(l)}
       }
       if (req.method === 'GET') {
         if ((route.startsWith('/api/') || route === '/log') && !NO_STATE.test(route)) {   // the snapshot of the projects this GET reads (fs.promises, concurrently)
-          const want = url.searchParams.get('project') ?? firstP()?.name;
+          const want = url.searchParams.get('project') ?? firstP()?.name, t = performance.now();
           await primeFor(route === '/api/projects' || want === 'all' ? projects : projects.filter(x => x.name === want));
+          tr.prime = performance.now() - t;
         }
+        if (route === '/api/timing') return send(200, { slow: timing.slow, stalls: timing.stalls, slow_ms: o.slowMs ?? 1000, stall_ms: o.stallMs ?? 250, file: timingFile });
         if (route === '/') return send(200, (await readA(path.join(DASH, 'index.html'))).replace('__TOKEN__', JSON.stringify(token)).replace('__REMOTE__', JSON.stringify(who.device ? { device: who.device.id, name: who.device.name } : null)), 'text/html; charset=utf-8');
         if (route === '/api/remote' && remote) return send(200, remoteView(who));
         if (route === '/ui.mjs' || route === '/docs.mjs' || route === '/ledger.mjs' || route === '/adopt.mjs' || route === '/home.mjs' || route === '/widgets.mjs' || route === '/insparts.mjs' || route === '/subviews.mjs' || route === '/terms.mjs' || route === '/guardparts.mjs' || route === '/docparts.mjs') return send(200, await readA(path.join(DASH, route.slice(1))), 'text/javascript; charset=utf-8');
@@ -1562,7 +1591,7 @@ data: ${JSON.stringify(l)}
   server.requestTimeout = 300000; server.headersTimeout = 15000;
   // close also stops a running account refresh and instructions rebuilds: their workers write the state-dir cache, so a caller
   // that removes the state after close (the test fixtures' temp dirs) never races them (ENOTEMPTY under load)
-  const close = async () => { sessions.stopAll(); feeds.close(); streams.close();
+  const close = async () => { sessions.stopAll(); feeds.close(); streams.close(); clearInterval(stallTimer); await timing.writes;
     for (const r of chatStreams) r.end();
     await Promise.all([...chats.values()].map(c => c.close())); if (acct.worker) await acct.worker.terminate().catch(() => {});
     await Promise.all([...insWorkers].map(w => w.terminate()));

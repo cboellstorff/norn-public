@@ -3,6 +3,8 @@
 // headless browser; the page's fetch is wrapped so the test sees when each request starts.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
 
@@ -10,6 +12,29 @@ import { openPage, skipWhy } from './helpers/cdp.mjs';
 const wrap = (slow, ms) => `(() => { window.__req = []; const of = window.__of ??= window.fetch, re = new RegExp(${JSON.stringify(slow)});
   window.fetch = async (u, ...a) => { window.__req.push({ u: String(u), t0: performance.now() }); if (re.test(String(u))) await new Promise(r => setTimeout(r, ${ms})); return of(u, ...a); }; return true; })()`;
 const tap = id => `(() => { document.body.dataset.ready = ''; document.querySelector('#tab-${id}').click(); return true; })()`;
+
+// the server's own timing log: Server-Timing on every answer; a slow request and a loop stall (with the requests in its window) in
+// GET /api/timing and <norn>/local/dash-timing.jsonl
+test('timing log: Server-Timing on every answer, slow requests and loop stalls in /api/timing and the jsonl', async () => {
+  const f = await fixture({ dash: { slowMs: 0, stallMs: 200 } });
+  try {
+    const x = await fetch(f.url + '/api/lanes?project=kestrel'); await x.text();
+    assert.match(x.headers.get('server-timing') ?? '', /^app;dur=[\d.]+, prime;dur=[\d.]+$/);
+    const y = await fetch(f.url + '/ui.mjs'); await y.text();
+    assert.match(y.headers.get('server-timing') ?? '', /^app;dur=[\d.]+$/, 'no snapshot read: no prime');
+    // a request that blocks the server's loop for 600 ms (a listener after the handler: the request is being served) -> a stall naming it
+    f.app.server.once('request', () => { const t = performance.now(); while (performance.now() - t < 600) { /* the loop is blocked */ } });
+    await fetch(f.url + '/api/records?project=kestrel').then(r => r.text()); await new Promise(r => setTimeout(r, 300));
+    const d = (await f.get('/api/timing')).data;
+    assert.ok(d.slow.some(s => s.url === 'GET /api/lanes?project=kestrel' && s.status === 200 && Number.isFinite(s.prime)), JSON.stringify(d.slow));
+    const st = d.stalls.find(s => s.ms >= 400);
+    assert.ok(st, JSON.stringify(d.stalls));
+    assert.ok(st.requests.includes('GET /api/records?project=kestrel'), JSON.stringify(st));
+    await f.app.close();
+    const lines = fs.readFileSync(path.join(f.root, 'local', 'dash-timing.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l));
+    assert.ok(lines.some(l => l.kind === 'slow') && lines.some(l => l.kind === 'stalls' && l.ms >= 400), JSON.stringify(lines));
+  } finally { await f.done(); }
+});
 
 test('the browser: a tab render fetches the header and the tab at once, and /api/overview once', { skip: skipWhy, timeout: 180000 }, async () => {
   const f = await fixture(), pg = await openPage();
