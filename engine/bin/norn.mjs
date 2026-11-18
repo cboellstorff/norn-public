@@ -443,7 +443,7 @@ function runSpec(flags, env, { project, state, locks }) {
     policy: { auto_resume_handoff: cadence.auto_resume_handoff, auto_resume_max: cadence.auto_resume_max, trigger_on_exit: cadence.trigger_on_exit,
       fill: { ...FILL_DEFAULTS, ...(project?.policy?.fill || {}) },   // META-GTP-DAG piece 5: the resource gate of the fill
       mail: { nudge_after_min: project?.policy?.mail?.nudge_after_min ?? POLICY_DEFAULTS.mail.nudge_after_min },   // META-GTP-MAIL piece 3
-      slop: { enabled: slopOn(project?.policy), project_dir: project?.project_dir } },   // META-BETA-PREP (DIR-52): the run-end slop check obeys the project's one switch
+      slop: { enabled: slopOn(project?.policy) } },   // META-BETA-PREP (DIR-52): the run-end slop check obeys the project's one switch
     // the nudge waits while these exist: the project's QUIET flag (common-rules.txt line 1) and its GPU lock file (gpu_lock.ps1)
     quiet: project ? quietFlag(project) : undefined, gpu_lock: project?.gpu_lock_file,
     budget, budget_file: path.resolve(bf),   // GAP-2: the fill reads the budget of NOW from here (runs.mjs liveBudget); budget = the copy for a resume
