@@ -48,7 +48,7 @@ export function slopCmd(argv, { env = process.env, out = console.log, err = cons
     repo = toplevel(repo);
     const [base, head] = f.diff ? f.diff.split('..') : [null, 'HEAD'];
     if (f.diff && !(base && head)) { err('error: --diff wants base..head'); return 2; }
-    const c = checkBranch({ repo, state, base, head });
+    const c = checkBranch({ repo, state, base, head, projectDir: project?.project_dir });
     if (!c) { out('slop check: no lane branch here (detached, on main, or no main to diff against): nothing to check'); return 0; }
     const ws = state ? activeWaivers(state) : [];
     const blocks = c.result.blocks.map(b => ({ ...b, waived: ws.find(x => covers(x, b))?.id }));

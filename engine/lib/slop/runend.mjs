@@ -1,7 +1,8 @@
 // META-SLOP-A (REVIEW-FABLE 3.1-3.2): the run-end backstop. A lane run that ends DONE is checked on its branch's diff against
 // main (the merge base); open BLOCK findings go back to the SAME lane as one resume with the list (the supervisor), and the
 // branch's merge waits (merge-brief, the merge queue) until the list is empty or each finding is waived.
-import { gitRun, slopCheck } from './check.mjs';
+import { gitRun, slopCheck, effectiveRules } from './check.mjs';
+import { loadState } from '../records.mjs';
 import { makeTool } from './tools.mjs';
 import { baselineOf, findingLine } from './host.mjs';
 
@@ -17,12 +18,16 @@ export function branchBase(repo, { main = 'main', remote = 'origin' } = {}) {
   return null;
 }
 
-/** check a checkout's committed branch: { branch, base, result } | null (no lane branch to check) */
-export function checkBranch({ repo, state = null, base = null, head = 'HEAD', rules, tool } = {}) {
+/**
+ * check a checkout's committed branch: { branch, base, result } | null (no lane branch to check). projectDir: the project folder
+ * (its rules/slop/ P-*.json and overrides.json join the built-ins); state: the record ids K22 cites resolve there.
+ */
+export function checkBranch({ repo, state = null, base = null, head = 'HEAD', rules, tool, projectDir = null } = {}) {
   const bb = base ? { branch: branchBase(repo)?.branch ?? null, base } : branchBase(repo);
   if (!bb) return null;
   const t = tool || makeTool({ baseline: state ? { K14: baselineOf(state, 'K14') } : {} });
-  return { branch: bb.branch, base: bb.base, result: slopCheck({ repo, base: bb.base, head, tool: t, ...(rules ? { rules } : {}) }) };
+  const resolve = state ? (items => id => items[id]?.state ?? null)(loadState(state).items) : null;
+  return { branch: bb.branch, base: bb.base, result: slopCheck({ repo, base: bb.base, head, tool: t, resolve, rules: rules || effectiveRules({ projectDir }) }) };
 }
 
 /** the resume prompt: the list and what to do with it */

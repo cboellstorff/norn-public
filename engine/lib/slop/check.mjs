@@ -249,17 +249,18 @@ const DETECT = {
  * shadow rule's findings are marked shadow (recorded, never held).
  */
 export function pairFindings(rule, got, { renamed = new Map(), inBase = () => false } = {}) {
+  // got.head null: the tool had no output for head (nothing to report)
   const out = [], one = (f, fp, isNew, base) => out.push({ rule: rule.id, level: f.level || rule.level, file: f.file, line: f.line, msg: f.msg,
     snippet: norm(f.snippet).slice(0, 200), fp, new: isNew, ...(f.value !== undefined ? { value: f.value } : {}),
     ...(base?.value !== undefined ? { base_value: base.value } : {}), ...(f.token !== undefined ? { token: f.token } : {}), ...(rule.shadow ? { shadow: true } : {}) });
   if (rule.key === 'match') {
     const seen = new Set();
-    for (const f of got.head) if (!seen.has(f.token)) { seen.add(f.token); one(f, fingerprint(rule.id, '*', f.token), !inBase(f.token)); }
+    for (const f of got.head || []) if (!seen.has(f.token)) { seen.add(f.token); one(f, fingerprint(rule.id, '*', f.token), !inBase(f.token)); }
     return out;
   }
   const left = new Map();
   for (const f of got.base || []) { const fp = fingerprint(rule.id, renamed.get(f.file) || f.file, f.snippet); (left.get(fp) || left.set(fp, []).get(fp)).push(f); }
-  for (const f of got.head) { const fp = fingerprint(rule.id, f.file, f.snippet), b = left.get(fp)?.shift(); one(f, fp, !b, b); }
+  for (const f of got.head || []) { const fp = fingerprint(rule.id, f.file, f.snippet), b = left.get(fp)?.shift(); one(f, fp, !b, b); }
   return out;
 }
 
