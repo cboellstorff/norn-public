@@ -81,7 +81,8 @@ import { replayReportFile } from '../lib/eval/report.mjs';
 import { GUARD_WORDS } from '../lib/checkinguards.mjs';
 import { guardRows, guardView } from '../lib/guardview.mjs';
 import { crossingsAsync } from '../lib/advisory.mjs';
-import { slopHolds, openBlocks, slopFiles } from '../lib/slop/host.mjs';
+import { slopHolds, openBlocks, slopFiles, waiverCmd } from '../lib/slop/host.mjs';
+import { explainOf } from '../lib/slop/check.mjs';
 import { refusals, withRefusals, REFUSAL_DAYS, refusalsFile } from '../lib/scope.mjs';
 
 const DASH = path.dirname(fileURLToPath(import.meta.url));
@@ -839,7 +840,9 @@ export function createDashboard(o) {
     const bf = path.join(p.state, 'advisory', 'guard-baseline.json');
     let at = null; try { at = Date.parse(JSON.parse(await readA(bf, 'null')).at); } catch { at = null; }
     const refused = !slop ? [] : part('scope', () => refusals(p.state, { since: Date.now() - REFUSAL_DAYS * 86400000 }), []);   // META-DOD 2
-    const crossed = await crossingsAsync(p.state, guardRows({ ins, tests, advice, holds, refusals: refused, docs: docsList(p) }));
+    // RM-27: a SloppaChoppa row carries its rule's what / why / fix and the waiver path (the same text norn slop check prints)
+    const told = new Map(holds.flatMap(h => h.blocks.map(b => ['S-' + b.fp, { ...explainOf(b.rule, p.project_dir), waiver: waiverCmd(b) }])));
+    const crossed = (await crossingsAsync(p.state, guardRows({ ins, tests, advice, holds, refusals: refused, docs: docsList(p) }))).map(r => (told.has(r.id) && told.get(r.id).what ? { ...r, explain: told.get(r.id) } : r));
     if (!Number.isFinite(at) && !ig.pending) { at = Date.now(); try { await fs.promises.mkdir(path.dirname(bf), { recursive: true }); await fs.promises.writeFile(bf, JSON.stringify({ at: new Date(at).toISOString() })); forget(bf); } catch { /* read-only state: no baseline */ } }
     const rows = crossed.map(r => (r.new && !(Number.isFinite(at) && Date.parse(r.first_seen) > at) ? { ...r, new: false } : r));   // no baseline yet (the scan is pending): nothing is new
     const v = guardView(rows, { rules: ins?.rules?.counts ?? null, slop }), sent = fixSent(p, v.rows || []);
