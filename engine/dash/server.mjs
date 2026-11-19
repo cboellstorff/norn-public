@@ -85,7 +85,7 @@ import { crossingsAsync } from '../lib/advisory.mjs';
 import { slopHolds, openBlocks, slopFiles, waiverCmd } from '../lib/slop/host.mjs';
 import { explainOf } from '../lib/slop/check.mjs';
 import { refusals, withRefusals, REFUSAL_DAYS, refusalsFile } from '../lib/scope.mjs';
-import { PAUSE_MODES, parsePause, stopsCheckins, holdsStarts, pickHalf, nearEndMin } from '../lib/pause.mjs';
+import { PAUSE_MODES, parsePause, stopsCheckins, holdsStarts, pickHalf, nearEndMin, pauseState } from '../lib/pause.mjs';
 
 const DASH = path.dirname(fileURLToPath(import.meta.url));
 const META_CLI = path.join(DASH, '..', 'bin', 'norn.mjs');
@@ -282,8 +282,8 @@ export function createDashboard(o) {
     const row = r => ({ run: r.id, lane: r.data.lane ?? null, project: r.project, stage: r.data.stage ?? null });
     return { pause: pz ? { ...pz, project: p.name, says: PAUSE_MODES[pz.mode].says, checkins: stopsCheckins(pz) } : null,
       modes: Object.entries(PAUSE_MODES).map(([mode, m]) => ({ mode, ...m })),
-      waiting: { held: holdsStarts(pz) ? runs.filter(r => r.state === 'queued').length : 0, asked: runs.filter(r => r.state === 'running' && r.pause).map(row),
-        handoffs: runs.filter(r => r.state === 'exited' && r.end?.paused && !r.resume?.next).map(row) } };
+      waiting: { held: holdsStarts(pz) ? runs.filter(r => r.state === 'queued').length : 0, asked: runs.filter(r => pauseState(r) === 'asked').map(row),
+        handoffs: runs.filter(r => pauseState(r) === 'handoff').map(row) } };
   };
 
   // ---------- budget (machine) + policy (project) ----------
@@ -435,7 +435,8 @@ export function createDashboard(o) {
   function lanes(p, all) {
     const ov = overlapOn(p.policy) ? readJsonS(overlapFile(p.state))?.lanes || {} : {};
     const pol = withDefaults(settingsState(p).view).policy;   // lifecycle.mjs: the row's rule (idle / stopped / archives in n days) from the tick's git answers
-    return lanesView(st(p), { all, hbAge: hbAge(p), ...hoHooks(p), oldDays: pol.done_lanes.old_days, ...lanePolicy(pol), ...laneHooks(p.state) }).map(l => ({ ...l, project: p.name, ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}) }));
+    const s = st(p), pz = l => pauseState(s.items[l.run]);   // RM-37: the lane's latest run: Pause / pausing / Resume
+    return lanesView(s, { all, hbAge: hbAge(p), ...hoHooks(p), oldDays: pol.done_lanes.old_days, ...lanePolicy(pol), ...laneHooks(p.state) }).map(l => ({ ...l, project: p.name, ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}), ...(pz(l) ? { pause: pz(l) } : {}) }));
   }
   // gap #9: API billing only - one project's $ per lane: today / 7 days / to date (ended runs = the CLI's figure, running = a live estimate)
   const apiOn = ps => billingOf(withDefaults(settingsState(ps[0]).view))?.type === 'api';
@@ -515,8 +516,8 @@ export function createDashboard(o) {
     // RM-39: a worker run's progress line + the lane overview card on its Lane cell (the lane's row data, this run's progress)
     const pg = await progressOf(p, tree.map(n => n.id), id => tree.find(n => n.id === id)?.ctx ?? null), names = new Set(tree.map(n => n.lane).filter(Boolean));
     const items = st(p).items, rows = new Map(names.size ? withDriver(p, lanes(p, true).filter(l => names.has(l.name))).map(l => [l.name, l]) : []);
-    return tree.map(n => { const rf = refused(n.id), g = pg.get(n.id), l = n.lane && n.kind !== 'checkin' ? rows.get(n.lane) : null;
-      return { ...n, project: p.name, ...(gc.has(n.id) ? { guard: gc.get(n.id) } : {}), ...(rf.length ? { refused: rf } : {}), ...(g ? { progress: g } : {}),
+    return tree.map(n => { const rf = refused(n.id), g = pg.get(n.id), pz = pauseState(byId.get(n.id)), l = n.lane && n.kind !== 'checkin' ? rows.get(n.lane) : null;
+      return { ...n, project: p.name, ...(gc.has(n.id) ? { guard: gc.get(n.id) } : {}), ...(rf.length ? { refused: rf } : {}), ...(g ? { progress: g } : {}), ...(pz ? { pause: pz } : {}),
         ...(l ? { lane_card: cardOf({ ...l, stage: n.stage, steps: laneSteps(l.name, items) }, g) } : {}) }; });
   }
   // the Ledger tab (LEDGER-UX R1): `count` lines (default 100, max 2000) ending `offset` lines before the end ("show older" pages);

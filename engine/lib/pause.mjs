@@ -96,9 +96,13 @@ export function pauseRun(state, { run, by, why }) {
   record(state, { kind: 'run', ev: 'pause', id: run, by, data: { mail: m.id, ...(why ? { why: String(why).slice(0, 300) } : {}) } });
   return { run, mail: m.id };
 }
+/** a run's pause row state (the Runs / Lanes row actions): running = a work run that can be paused, asked = its order is out,
+ *  handoff = a paused hand-off not yet resumed; null = no pause action */
+export const pauseState = r => r?.kind !== 'run' ? null : r.state === 'running' && isWork(r) ? (r.pause ? 'asked' : 'running')
+  : r.state === 'exited' && r.end?.paused && !r.resume?.next ? 'handoff' : null;
 /** the paused hand-offs not yet resumed, merges first, then oldest first */
 export function pausedHandoffs(state) {
-  return Object.values(runsOf(state)).filter(r => r.kind === 'run' && r.state === 'exited' && r.end?.paused && !r.resume?.next)
+  return Object.values(runsOf(state)).filter(r => pauseState(r) === 'handoff')
     .sort((a, b) => (isMergeStage(b.data.stage) - isMergeStage(a.data.stage)) || Number(a.id.slice(4)) - Number(b.id.slice(4)));
 }
 /** queue the resume of paused hand-off RUN-n at the front (P0, or the owner's priority) -> { run, next } */
