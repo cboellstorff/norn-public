@@ -23,6 +23,7 @@ import { critiqueRows } from './critique.mjs';
 import { dupPairs } from './dupdirs.mjs';
 import { wholeHold, readHold, holdItem, noticeMin } from './holds.mjs';
 import { overlapRows, overlapOn } from './overlap.mjs';
+import { readSync } from './claims.mjs';
 
 const H = 3600e3;
 export const WINDOW_H = 72;
@@ -210,8 +211,20 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   // cache, the digest only reads it) - the check-in decides: carry on, rebase onto it, or ask the owner
   const ov = overlapOn(project?.policy) ? overlapRows(stateDir, st.items) : [];
   if (ov.length) sections.overlap = ov;
+  // RM-46 S2b: the multi-home work claims - queued runs a claim holds ("held by <home>"), drift / fenced / taken-over events, stale
+  // claims of other homes (the owner may take them over); only while any is there
+  const cl = claimRows(stateDir, st.items);
+  if (cl.length) sections.claims = cl;
   const counts = Object.fromEntries(Object.entries(sections).map(([k, v]) => [k, v.length]));
   return { project: project?.name ?? null, at: new Date(now).toISOString(), window_h: WINDOW_H, sections, counts };
+}
+
+// RM-46 S2b: <state>/sync/claim-holds.json (runs.mjs claimDoor) for runs still queued + <state>/sync/claims-digest.json (tick.mjs claimsPass)
+function claimRows(stateDir, items) {
+  const holds = Object.entries(readSync(stateDir, 'holds')).filter(([id]) => items[id]?.state === 'queued')
+    .map(([id, h]) => ({ id, kind: 'held', lane: items[id].data.lane ?? null, home: h.home, why: h.home ? `held by ${h.home}: ${h.why}` : `held: ${h.why}` }));
+  const r = readSync(stateDir, 'rows');
+  return [...holds, ...(r.events || []).map(e => ({ id: e.id, kind: e.kind, at: e.at, why: e.why })), ...(r.stale || [])];
 }
 
 // git unreadable: every open deliverable record counts as done (listing too much beats dropping work)
