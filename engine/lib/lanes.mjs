@@ -3,7 +3,8 @@
 import { STALE_MS } from './runs.mjs';
 import { runName } from './names.mjs';
 import { loginCommand } from './authguard.mjs';
-import { laneRules, IDLE_H, ARCHIVE_DAYS, runNum } from './lifecycle.mjs';
+import { laneRules, IDLE_H, ARCHIVE_DAYS } from './lifecycle.mjs';
+import { idNum as runNum } from './records.mjs';
 
 
 function runText(r, { now, hbAge, staleMs, items = {} }) {

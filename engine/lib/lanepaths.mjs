@@ -2,13 +2,13 @@
 // stages a MERGE through checkins.mjs, and lifecycle.mjs (read by lanes.mjs) must not import checkins (a K10 cycle through standing / agents).
 // The rule and its words: lifecycle.mjs ("path to main": pathWords, lane-paths.json).
 import fs from 'node:fs';
-import { loadState, readEvents, recordsFile, fold } from './records.mjs';
+import { loadState, readEvents, recordsFile, fold, idNum as runNum } from './records.mjs';
 import { workOnMain } from './after.mjs';
 import { makeGit } from './dlvgit.mjs';
 import { readJsonS } from './fsnap.mjs';
 import { stageArgs, isMergeRun, checkinPolicy } from './checkins.mjs';
 import { isWork } from './gate.mjs';
-import { runNum, LIVE, endTs, lanePathsFile } from './lifecycle.mjs';
+import { LIVE, endTs, lanePathsFile } from './lifecycle.mjs';
 
 /**
  * The tick's step. o: { project (file, root, briefs_dir, policy, deliverables.main, merge.gate.fast), now (ms), git, cli (args) -> { code, out }

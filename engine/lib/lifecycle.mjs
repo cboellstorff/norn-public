@@ -16,14 +16,13 @@
 //   path     (item 9, MAIL-20) a lane whose last work run ended DONE with commits not on main reaches a PR by code: lanepaths.mjs tickPaths.
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadState, record, readEvents, recordsFile, fold } from './records.mjs';
+import { loadState, record, readEvents, recordsFile, fold, idNum as runNum } from './records.mjs';
 import { makeEval, workOnMain } from './after.mjs';
 import { makeGit } from './dlvgit.mjs';
 import { readJsonS } from './fsnap.mjs';
 
 export const IDLE_H = 6, ARCHIVE_DAYS = 7;
 const H = 3600e3, D = 24 * H;
-export const runNum = id => Number(String(id).slice(4));
 export const LIVE = ['queued', 'claimed', 'running'];
 export const endTs = r => r?.history.findLast(h => ['end', 'lost', 'kill', 'withdraw', 'fill'].includes(h.ev))?.ts ?? r?.updated ?? null;
 const inDays = ms => { const d = Math.ceil(ms / D); return d <= 0 ? 'at the next tick' : `in ${d} day${d === 1 ? '' : 's'}`; };
