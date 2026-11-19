@@ -69,16 +69,19 @@ test('Slop sits in Health beside Usage, Tests and Context; chips in place on Doc
 });
 
 // RM-27: on a phone the explanation opens under its row and nothing scrolls sideways (the waiver command wraps)
-test('the Slop row explains its finding on a phone: what / why / what to do / the waiver path, no sideways scroll', { skip: skipWhy, timeout: 180000 }, async () => {
+test('the Slop row explains its finding on a phone: what / why / what to do / the waiver path, no sideways scroll', { skip: skipWhy, timeout: 300000 }, async () => {
   const f = await fixture(), pg = await openPage([390, 844]);
   try {
     const S = f.pa.state;
     fs.mkdirSync(path.join(S, 'slop'), { recursive: true });
     fs.writeFileSync(path.join(S, 'slop', 'holds.json'), JSON.stringify({ 'feat/a-rather-long-branch-name-for-a-phone': { lane: 'seabed', run: 'RUN-1', base: 'a', head: 'b', at: new Date().toISOString(),
       blocks: [{ rule: 'K2', level: 'BLOCK', file: 'engine/lib/some/deep/folder/a-module-with-a-long-name.mjs', line: 4, msg: 'an empty catch', fp: '0123456789abcdef' }] } }));
+    let g = (await f.get('/api/guard?project=kestrel')).data;   // the instruction scan lands from its worker first, as in the test above
+    for (let i = 0; g.pending && i < 1200; i++) { await sleep(100); g = (await f.get('/api/guard?project=kestrel')).data; }
+    assert.ok(g.rows.find(r => r.id === 'S-0123456789abcdef')?.explain, 'the API row carries the explanation');
     await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
-    await pg.go(`${f.url}/?project=kestrel&tab=slop&sub=fix`);
-    assert.ok(await pg.until(`document.querySelector('#slop-S-0123456789abcdef .sexplain')`, 90000), 'the row and its explanation are painted');
+    await pg.go(`${f.url}/?project=kestrel&tab=slop&sub=fix`, 60000);
+    assert.ok(await pg.until(`!!document.querySelector('#slop-S-0123456789abcdef .sexplain')`, 60000), 'the row and its explanation are painted');
     await pg.ev(`document.querySelectorAll('#slop-sub details').forEach(d => { d.open = true; })`);
     const text = await pg.ev(`document.querySelector('#slop-S-0123456789abcdef .sexplain').innerText`);
     for (const s of [explainOf('K2').what, explainOf('K2').fix, 'norn rec add waiver --rule K2 --scope 0123456789abcdef']) assert.ok(text.includes(s), s);
