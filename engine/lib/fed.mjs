@@ -10,10 +10,10 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fold } from './records.mjs';
-import { ClaimsError, rgit as fgit, catBatch, fetchRefs, readClaims, casClaims, under } from './claimsref.mjs';
+// records.mjs -> fed.mjs -> claimsref.mjs -> records.mjs is a cycle: only functions cross it (nothing claimsref exports is used at load)
+import { rgit as fgit, catBatch, fetchRefs, readClaims, casClaims, under } from './claimsref.mjs';
 
-// a ClaimsError too: a git failure of the shared core and a fed refusal are one class of error to the CLI
-export class FedError extends ClaimsError {}
+export class FedError extends Error {}
 
 const LABEL = /^[a-z0-9][a-z0-9._-]{0,39}$/;
 export const osLabel = (platform = process.platform) => ({ win32: 'windows', darwin: 'macos' }[platform] || platform);
