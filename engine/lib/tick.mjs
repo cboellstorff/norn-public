@@ -17,7 +17,7 @@ import { readEvents, recordsFile, fold, loadState, record, RecordError, homeOf, 
 import { checkinGate, noteCheckin, noteSkip, notePaused, noteDebounce, readGate, rateBand, idleProbe, STALL_IDLE_MIN } from './gate.mjs';
 import { handleRoutineEnds, checkinPolicy, laneLevel, debounceOf } from './checkins.mjs';
 import { watchProbe } from './watch.mjs';
-import { MACHINE_DEFAULTS, HARNESS_EXECUTORS, capText } from './policy.mjs';
+import { MACHINE_DEFAULTS, HARNESS_EXECUTORS, capText, syncPolicy } from './policy.mjs';
 import { profileOf, memoryOf, memoryEnv, knownAgents } from './launchpolicy.mjs';
 import { knownExecutors, knownModels, knownEfforts } from './launchargs.mjs';
 import { BUILTIN } from './executors.mjs';
@@ -36,7 +36,6 @@ import { isApi, usdCap } from './billing.mjs';
 import { loadRoadmap, buildTree, itemsOf } from './roadmap.mjs';
 import { stuckSweep, stuckProbe, stuckWake } from './stuck.mjs';
 import { fedOf } from './fed.mjs';
-import { syncPolicy } from './policy.mjs';
 import { listClaims, localClaims, renewWork, releaseWork, observeClaims, isStale, readSync, writeSync, updateSync } from './claims.mjs';
 
 const ENGINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -226,7 +225,7 @@ export function claimsPass(state, { ledger, policy, now = Date.now(), kill = kil
   // merged into the file as it is now: a dispatch may have claimed meanwhile (its entry stays; a later confirmation wins)
   const left = [...out.released, ...out.taken];
   updateSync(state, 'own', cur => Object.fromEntries(Object.entries({ ...cur, ...own }).filter(([k]) => !left.includes(k))
-    .map(([k, c]) => [k, cur[k] && own[k] && cur[k].nonce === own[k].nonce && cur[k].confirmed_ms > own[k].confirmed_ms ? cur[k] : (own[k] ?? cur[k])])));
+    .map(([k]) => [k, cur[k] && own[k] && cur[k].nonce === own[k].nonce && cur[k].confirmed_ms > own[k].confirmed_ms ? cur[k] : (own[k] ?? cur[k])])));
   writeSync(state, 'seen', seen); writeSync(state, 'rows', { events, stale });
   return out;
 }
@@ -335,5 +334,5 @@ function tickPass(o, g = {}) {
     const msg = `check-in ${r.run} ${executor} ${model} ${effort} supervisor pid ${r.pid} (gate: ${gate.cls ? gate.cls + ' ' : ''}${gate.why})`;
     tickLog(state, `${tag}: ${msg}`);
     return { code: 0, msg: `${tag}: ${s.line}; ${msg}` };
-  } finally { try { fs.unlinkSync(lockF); } catch { /* gone */ } }
+  } finally { try { fs.unlinkSync(lockF); } catch { /* already removed: nothing left to unlock, the next tick takes it */ } }
 }
