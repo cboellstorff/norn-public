@@ -33,11 +33,15 @@ export function readPause(files = []) {
   for (const f of files) {
     let raw;
     try { raw = fs.readFileSync(f, 'utf8'); } catch (e) { if (e.code === 'ENOENT') continue; throw e; }
-    let r = null; try { r = JSON.parse(raw); } catch { /* a hand-made file */ }
-    const mode = MODE_NAMES.includes(r?.mode) ? r.mode : 'all';
-    return { mode, label: PAUSE_MODES[mode].label, by: r?.by ?? null, why: r?.why ?? null, at: r?.at ?? null, file: fwd(f) };
+    return parsePause(raw, f);
   }
   return null;
+}
+/** one PAUSED file's text -> its pause (pure: the dashboard reads the file through its snapshot) */
+export function parsePause(raw, f) {
+  let r = null; try { r = JSON.parse(raw); } catch { /* a hand-made file */ }
+  const mode = MODE_NAMES.includes(r?.mode) ? r.mode : 'all';
+  return { mode, label: PAUSE_MODES[mode].label, by: r?.by ?? null, why: r?.why ?? null, at: r?.at ?? null, file: fwd(f) };
 }
 export const holdsStarts = p => p?.mode === 'queue' || p?.mode === 'all';   // nothing new starts
 export const stopsCheckins = p => p?.mode === 'checkins' || p?.mode === 'all';

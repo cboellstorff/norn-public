@@ -364,7 +364,7 @@ export function overviewStrip(s, ctx = {}) {
   const q = ctx.project ? `?project=${encodeURIComponent(ctx.project)}&tab=` : '?tab=';
   const part = (tone, tab, name, facts) => `<a class="np tone-${tone}" id="strip-${tone}" href="${esc(q + tab)}" data-tab="${tab}"><b>${name}</b><span>${facts.join(' · ')}</span></a>`;
   const ll = s.last_landed, ck = s.checkin || {};
-  const next = ctx.paused ? 'check-ins paused' : ck.next ? `next check-in ${esc(fmtTime(ck.next, ctx.now))}` : fin(ck.every_min) ? `check-in every ${int(ck.every_min)} min` : 'next check-in -';
+  const next = ctx.checkinsPaused ? 'check-ins paused' : ck.next ? `next check-in ${esc(fmtTime(ck.next, ctx.now))}` : fin(ck.every_min) ? `check-in every ${int(ck.every_min)} min` : 'next check-in -';
   return `<nav class="ostrip" id="strip" aria-label="Was, is, shall be">${part('urd', 'history', 'Urd', [`${int(s.landed_today)} landed today`, ll ? `last ${esc(ll.lane ?? ll.run)} ${esc(fmtTime(ll.ts, ctx.now))}` : 'none landed yet'])}`
     + `${part('verd', 'work', 'Verdandi', [`${int(s.running)} running`, `${int(s.parked)} parked`])}`
     + `${part('skuld', 'inbox', 'Skuld', [`${plural(s.questions, 'open question')}`, `${int(s.queued)} queued`, next])}</nav>`;
@@ -398,7 +398,7 @@ function overview(d, ctx) {
     .map(r => `<tr><td class="id">${esc(r.id)}</td><td>${chip(r.state)}${r.kind === 'decision' ? decMark(r) : ''}</td><td>${r.kind === 'decision' ? `<b>${esc(r.data.lane ?? '')}</b> ${esc(r.data.question ?? '')}<div class="small mute">${esc(r.data.choice ?? '')}${r.data.why ? ' - ' + esc(r.data.why) : ''}</div>` : esc(r.data.text)}</td><td class="small mute">${esc(r.by)} ${fmtTime(r.updated, ctx.now)}</td></tr>`).join('') : '';
   const led = d.ledger ? ledgerRows(parseLedger(d.ledger.ledger).slice(-4), d.ledger, ctx, true) : '';
   const prof = o.setup?.profile_now ? `<p class="small" id="profile-now" style="margin:0 0 10px">Profile: <b>${esc(profileWords(o.setup.profile_now, ctx.now))}</b> <button class="ghost" data-tab="settings">Settings</button></p>` : '';
-  return `${overviewStrip(o.strip, { ...ctx, paused: o.paused })}${firstTask(o.first_run)}${setupGaps(o.setup)}${prof}<div class="glance">
+  return `${overviewStrip(o.strip, { ...ctx, checkinsPaused: !!o.pause?.checkins })}${firstTask(o.first_run)}${setupGaps(o.setup)}${prof}<div class="glance">
    <section class="card${o.needs_you ? ' needs' : ''}" id="needs"><h2>Needs you <b>${o.needs_you}</b></h2>${needs}</section>
    <section class="card" id="running"><h2>Running <b>${o.running.claude.n}/${o.running.claude.cap ?? '-'}</b> Claude · <b>${o.running.codex.n}/${o.running.codex.cap ?? '-'}</b> Codex</h2>
      <table><thead><tr><th>lane</th><th>executor</th><th>age vs time budget (mark = budget, end = 2x)</th><th>context</th><th>${apiB ? '<span title="spent so far: an estimate from its tokens at list price until the run ends">$ so far</span>' : 'burn'}</th></tr></thead><tbody>${rows}</tbody></table></section>

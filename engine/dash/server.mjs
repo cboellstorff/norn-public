@@ -85,6 +85,7 @@ import { crossingsAsync } from '../lib/advisory.mjs';
 import { slopHolds, openBlocks, slopFiles, waiverCmd } from '../lib/slop/host.mjs';
 import { explainOf } from '../lib/slop/check.mjs';
 import { refusals, withRefusals, REFUSAL_DAYS, refusalsFile } from '../lib/scope.mjs';
+import { PAUSE_MODES, parsePause, stopsCheckins, holdsStarts, pickHalf, nearEndMin } from '../lib/pause.mjs';
 
 const DASH = path.dirname(fileURLToPath(import.meta.url));
 const META_CLI = path.join(DASH, '..', 'bin', 'norn.mjs');
@@ -273,6 +274,17 @@ export function createDashboard(o) {
       stats: [...RECORD_FILES.map(f => path.join(p.state, f + '.jsonl')), ...pausedFiles(p), path.join(p.state, 'tick.lock'), p.state, (p.project_dir || p.file) && rulesFile(p), ...(p.docs || []).map(d => d.path)] })])
     .concat(o.budgetFile ? [readA(o.budgetFile, '{}')] : [], o.quietFile ? [readA(o.quietFile)] : [], o.liveUsage ? [readA(o.liveUsage)] : []));
   const pausedFiles = p => [path.join(path.dirname(path.resolve(p.state)), 'PAUSED'), path.join(p.state, 'PAUSED')];
+  // RM-37: the pause in force (pause.mjs, read through the snapshot) + what waits because of it: the queued runs it holds, the runs asked to
+  // pause, the paused hand-offs; the modes and their one-line effects (the header's pause menu)
+  const pauseOfP = p => { for (const f of pausedFiles(p)) { const raw = readText(f); if (raw !== null) return parsePause(raw, f); } return null; };
+  const pauseView = ps => {
+    const p = ps.find(x => pauseOfP(x)) ?? null, pz = p ? pauseOfP(p) : null, runs = ps.flatMap(x => runsOf(st(x)).map(r => ({ ...r, project: x.name })));
+    const row = r => ({ run: r.id, lane: r.data.lane ?? null, project: r.project, stage: r.data.stage ?? null });
+    return { pause: pz ? { ...pz, project: p.name, says: PAUSE_MODES[pz.mode].says, checkins: stopsCheckins(pz) } : null,
+      modes: Object.entries(PAUSE_MODES).map(([mode, m]) => ({ mode, ...m })),
+      waiting: { held: holdsStarts(pz) ? runs.filter(r => r.state === 'queued').length : 0, asked: runs.filter(r => r.state === 'running' && r.pause).map(row),
+        handoffs: runs.filter(r => r.state === 'exited' && r.end?.paused && !r.resume?.next).map(row) } };
+  };
 
   // ---------- budget (machine) + policy (project) ----------
   function budgetRaw() { return read(o.budgetFile, '{}'); }
@@ -643,7 +655,7 @@ export function createDashboard(o) {
     return { now: iso(), projects: ps.map(p => p.name), needs_you: needsYou(needs), needs,
       running: { claude: { n: claude, cap: m.max_claude_workers ?? null }, codex: { n: codex, cap: m.max_codex ?? null }, lanes: running },
       burn: { usage: usage(ps[0], m), top: burners, executors: providerUsage(ps) },
-      strip: stripOf(ps, running, m), paused: ps.some(p => pausedFiles(p).some(existsS)), checkin_locked: ps.some(p => lockFresh(p)),
+      strip: stripOf(ps, running, m), ...pauseView(ps), checkin_locked: ps.some(p => lockFresh(p)),
       // META-OOTB F-1: a project with no records yet gets the first-task box (+ the caps in force; null = unset = no limit)
       first_run: ps.length === 1 && !Object.keys(st(ps[0]).items).length ? { project: ps[0].name, lane: FIRST_LANE,
         caps: Object.fromEntries(['max_claude_workers', 'max_codex', 'weekly_stop_pct', 'usage_rate_cap_pct_per_h'].map(k => [k, m[k] ?? null])) } : null,
@@ -1088,7 +1100,7 @@ export function createDashboard(o) {
       .sort((a, b) => (a.state === 'running' ? 0 : 1) - (b.state === 'running' ? 0 : 1));
     const u = usage(p, m), items = Object.values(s.items);
     const side = { now, usage: { used: u.weeklyUsed ?? null, stop: u.weeklyStopPct ?? null }, interval_min: m.policy?.cadence?.checkin_interval_min ?? null,
-      paused: pausedFiles(p).some(existsS), limits: limitLines(p.state),   // META-LIMIT-GATE: executors out of quota
+      checkins_paused: stopsCheckins(pauseOfP(p)), limits: limitLines(p.state),   // RM-37: Pause check-ins / Pause everything   // META-LIMIT-GATE: executors out of quota
       waiting: needs.map(n => ({ id: n.id, type: n.type, title: n.title ?? (n.type === 'unreviewed' ? `${n.lane ?? 'run'} ${String(n.outcome ?? n.state).toUpperCase()}` : n.type === 'parked' ? `lane ${String(n.id).slice(2)} parked` : n.id), created: n.created ?? null })),
       ruled: items.filter(i => i.kind === 'decision' && new Date(i.created).toDateString() === today).sort(byNew).slice(0, 6)
         .map(d => ({ id: d.id, text: d.data.question ? `${d.data.question}: ${d.data.choice ?? ''}` : d.data.choice ?? d.data.text ?? '', created: d.created, state: d.state })),
@@ -1410,11 +1422,19 @@ data: ${JSON.stringify(l)}
       } catch (e) { if (e.code === 409) throw fail(409, e.message); throw e; }
     }
     if (route === '/api/pause') {
-      if (typeof data.paused !== 'boolean') throw fail(400, 'paused must be boolean');
-      const f = path.join(p.state, 'PAUSED');
-      if (data.paused) { await fs.promises.mkdir(p.state, { recursive: true }); await fs.promises.writeFile(f, iso() + '\n'); } else { try { await fs.promises.unlink(f); } catch (e) { if (e.code !== 'ENOENT') throw e; } }
-      return { paused: data.paused };
+      // RM-37: every pause is the CLI's (`norn pause` / `norn resume`, pause.mjs) run as a child: no sync write here. Exactly one of
+      // { mode, why? } | { runs: [RUN-n], why? } (a safe pause of each) | { resume: RUN-n | 'all' }
+      const runs = Array.isArray(data.runs) ? data.runs.map(String) : null, asks = ['mode', 'runs', 'resume'].filter(k => data[k] !== undefined);
+      if (asks.length !== 1) throw fail(400, 'give exactly one of mode | runs | resume');
+      if (runs && (!runs.length || !runs.every(r => /^RUN-\d+$/.test(r)))) throw fail(400, 'runs must be RUN-n ids');
+      if (data.resume !== undefined && !(data.resume === 'all' || /^RUN-\d+$/.test(String(data.resume)))) throw fail(400, 'resume must be RUN-n or all');
+      const args = data.mode !== undefined ? ['pause', '--mode', String(data.mode)] : runs ? ['pause', ...runs] : data.resume === 'all' ? ['resume', '--all'] : ['resume', String(data.resume)];
+      const r = await metaCli([...args, ...(data.why && data.resume === undefined ? ['--why', line(data.why)] : []), '--state', p.state, '--as', 'dashboard']);
+      if (r.code) throw cliFail(r);
+      return { ok: true, out: r.out.trim() };
     }
+    // RM-37: pause half's pick (reads only): its confirm line lists the runs; the confirm posts them to /api/pause { runs }
+    if (route === '/api/pause/half') return pickHalf(p.state, { nearEnd: nearEndMin(p.policy) });
     if (route === '/api/stop') {
       if (data.confirm !== true) throw fail(400, 'confirm must be true');
       const r = st(p).items[String(data.run)];
@@ -1723,7 +1743,7 @@ data: ${JSON.stringify(l)}
       }
       if (route === '/api/checkin') {
         const p = projectOf(data);
-        if (pausedFiles(p).some(existsS)) throw fail(409, 'Check-ins are paused. Resume them first.');
+        if (stopsCheckins(pauseOfP(p))) throw fail(409, 'Check-ins are paused. Resume them first.');
         if (lockFresh(p) || checkinStarting) throw fail(409, 'A check-in is already running or starting.');
         checkinStarting = true;
         try { return send(200, await platform.tick(p)); } finally { const t = setTimeout(() => { checkinStarting = false; }, 5000); t.unref(); }
