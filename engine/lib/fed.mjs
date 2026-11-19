@@ -9,9 +9,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { fold } from './records.mjs';
-// records.mjs -> fed.mjs -> claimsref.mjs -> records.mjs is a cycle: only functions cross it (nothing claimsref exports is used at load)
-import { rgit as fgit, catBatch, fetchRefs, readClaims, casClaims, under } from './claimsref.mjs';
+import { withLock, fold } from './records.mjs';
+import { rgit as fgit, catBatch, fetchRefs, readClaims, casClaims, claimsLock } from './claimsref.mjs';
 
 export class FedError extends Error {}
 
@@ -47,6 +46,7 @@ export const hostName = () => (os.hostname() || 'machine').toLowerCase().replace
 export const claimKey = (home, project, run) => `runs/${home}/${project}/${run}.json`;
 // the claims branch next to the machine branches, one fetch (refs/fed/machine/*: the import below)
 const fetchFed = f => fetchRefs(f, ['+refs/heads/machine/*:refs/fed/machine/*']);
+const under = (f, fn) => { const l = claimsLock(f); return withLock(l.file, fn, l.opts); };
 
 
 /**

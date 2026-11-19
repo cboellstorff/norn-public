@@ -5,7 +5,8 @@
 // branch refuse, scope queues. Own claims never block own dispatch. Every CAS round re-reads and re-checks overlap: a rejected push is
 // never retried blind (fed's rule F5), and a rejected-looking push that landed is found by nonce + n.
 import crypto from 'node:crypto';
-import { ClaimsError, fetchRefs, readClaims, casClaims, under } from './claimsref.mjs';
+import { ClaimsError, fetchRefs, readClaims, casClaims, claimsLock } from './claimsref.mjs';
+import { withLock } from './records.mjs';
 import { globsIntersect } from './ready.mjs';
 
 export const LEASE_S = 3600;
@@ -22,7 +23,7 @@ export const allowKey = (project, a, b) => `allow/${want(NAME, project, 'project
 // no Scope: line = the whole repo (SPEC 5, DECIDED: the safe reading)
 const scopeOf = c => [...(c.scope?.length ? c.scope : ['**']), ...(c.touched || [])];
 const wholeRepo = c => !c.scope?.length || (c.scope.length === 1 && c.scope[0] === '**');
-/** past TOUCHED_MAX paths, `touched` folds into <top dir>/** entries (a root file stays itself) */
+/** past TOUCHED_MAX paths, `touched` keeps one <top dir>/** entry per top folder (a root file stays itself) */
 const capTouched = t => (t.length <= TOUCHED_MAX ? t : [...new Set(t.map(p => (p.includes('/') ? p.split('/')[0] + '/**' : p)))]);
 /** the overlap of two work claims: null | { kind: item | branch | scope, what: [the other's items / branch / globs that meet mine] } */
 export function overlapOf(a, b) {
@@ -49,6 +50,7 @@ const verdict = h => ({ [h.kind === 'scope' ? 'queued' : 'refused']: true, hit: 
 const sameSet = (a = [], b = []) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
 const unchanged = (c, me) => c?.kind === 'work' && c.home === me.home && c.branch === me.branch && sameSet(c.items, me.items) && sameSet(c.scope, me.scope) && sameSet(c.touched, me.touched);
 const netErr = e => e instanceof ClaimsError && /^git (fetch|push)\b/.test(e.message);
+const under = (f, fn) => { const l = claimsLock(f); return withLock(l.file, fn, l.opts); };
 const UNREACHABLE = 'claim: ledger unreachable', BUSY = 'claims branch busy (3 rejected rounds); the next fill pass tries again';
 
 // up to ROUNDS CAS rounds under the caller's lock. step(claims) -> a result (done, no push) | { edits, msg, ok, landed(claims) }.

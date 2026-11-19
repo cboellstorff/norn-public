@@ -9,7 +9,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { withLock } from './records.mjs';
 
 export class ClaimsError extends Error {}
 
@@ -94,7 +93,9 @@ export function casClaims(f, tip, edits, msg, { beforePush } = {}) {
     if (r.status !== 0) return { rejected: (r.out.split('\n').find(l => l.startsWith('!')) || r.err || 'rejected').trim() };
     rgit(f, ['update-ref', SYNC_CLAIMS, sha]);
     return { ok: true, sha };
-  } finally { try { fs.unlinkSync(index); } catch { /* none */ } }
+  } finally { try { fs.unlinkSync(index); } catch { /* never written: nothing to remove */ } }
 }
-// one claims operation at a time per machine repo (two projects' fills share the ledger repo; refs/sync/claims would race)
-export const under = (f, fn) => { initRepo(f); return withLock(path.join(f.dir, 'fed.lock'), fn, { staleMs: 120000, timeoutMs: 60000 }); };
+// one claims operation at a time per machine repo (two projects' fills share the ledger repo; refs/sync/claims would race). The caller
+// takes it with records.mjs withLock: importing records here would close an import cycle (records -> fed -> claimsref)
+/** the claims lock of f's repo (created first): withLock(file, fn, opts) */
+export const claimsLock = f => { initRepo(f); return { file: path.join(f.dir, 'fed.lock'), opts: { staleMs: 120000, timeoutMs: 60000 } }; };

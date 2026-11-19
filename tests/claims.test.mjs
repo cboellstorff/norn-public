@@ -11,10 +11,10 @@ import { claimRun } from '../engine/lib/fed.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 import { fromTemplate } from './helpers/git-template.mjs';
 
-const gitIn = (dir, ...a) => { const r = spawnSync('git', a, { env: { ...process.env, GIT_DIR: dir }, encoding: 'utf8' }); return r.status ? null : r.stdout.trim(); };
+const gitIn = (dir, ...a) => { const r = spawnSync('git', a, { env: { ...process.env, GIT_DIR: dir }, encoding: 'utf8', windowsHide: true }); return r.status ? null : r.stdout.trim(); };
 function rig() {
   const t = mkTmp('meta-claims-');
-  const { remote } = fromTemplate('claims-remote', root => { const remote = path.join(root, 'remote.git'); spawnSync('git', ['init', '-q', '--bare', remote]); return { remote }; }, t);
+  const { remote } = fromTemplate('claims-remote', root => { const remote = path.join(root, 'remote.git'); spawnSync('git', ['init', '-q', '--bare', remote], { windowsHide: true }); return { remote }; }, t);
   const ep = home => ({ dir: path.join(t, home + '.git'), remote, host: 'host-' + home });   // each home's own ledger repo
   const files = () => (gitIn(remote, 'ls-tree', '-r', '--name-only', 'refs/heads/claims') || '').split('\n').filter(Boolean);
   const at = key => { const s = gitIn(remote, 'show', `refs/heads/claims:${key}`); return s ? JSON.parse(s) : null; };
@@ -92,7 +92,7 @@ test('ambiguous end: a push reported rejected that did land is read back by nonc
   claimWork(fa, me('a', 'seed'));
   const r = claimWork(fa, me('a', 'x'), { beforePush: sha => {
     // the push lands, then another home builds on it: a's own push of that sha now looks like a lost race
-    assert.equal(spawnSync('git', ['push', '-q', g.remote, `${sha}:refs/heads/claims`], { env: { ...process.env, GIT_DIR: fa.dir } }).status, 0);
+    assert.equal(spawnSync('git', ['push', '-q', g.remote, `${sha}:refs/heads/claims`], { env: { ...process.env, GIT_DIR: fa.dir }, windowsHide: true }).status, 0);
     assert.equal(claimWork(fc, me('c', 'q')).won, true);
   } });
   assert.equal(r.won, true);
