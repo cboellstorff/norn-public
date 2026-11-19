@@ -234,7 +234,7 @@ function launchSteps(f, r, todo, { epic, ctx, launch, runs, attempts, passed = {
   return out;
 }
 
-const idNum = id => Number(String(id).replace(/^\D+-/, ''));
+const idNum = id => Number(String(id).match(/-(\d+)$/)?.[1]);   // the trailing number: Q-12, Q-b2-12
 
 // a launch = a run the flow queued (not the fill / HANDOFF resume / limit re-queue of one: those carry the same data.flow)
 const isLaunch = r => !r.data.from_queue && !r.data.resume_of && !r.data.requeue_of;

@@ -194,7 +194,7 @@ export const RUN_ID_RE = new RegExp(`^${NID('RUN')}$`);
 export const MAIL_TO_RE = new RegExp(`^(${NID('RUN')}|lane:${LANE_REF}|role:(checkin|controller)(?:@[a-z][a-z0-9]{0,15})?)$`);
 export const MAIL_VIA = ['hook', 'mcp', 'cli', 'chat'];   // chat: META-CONTROLLER C4, the NEWS block of the controller chat
 export const PRIORITIES = ['P0', 'P1', 'P2', 'P3'];
-export const EPIC_MEMBER_RE = /^(RUN|DLV)-\d+$/;
+export const EPIC_MEMBER_RE = new RegExp(`^(?:${NID('RUN')}|${NID('DLV')})$`);
 const normRepo = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 const CREATE_EV = { run: 'start' };
 const createEv = kind => CREATE_EV[kind] || 'create';
@@ -231,7 +231,8 @@ export const laneIdIn = (name, h) => 'L:' + laneRef(name, h);
 export const laneId = (name, stateDir) => laneIdIn(name, homeOf(stateDir)?.id);
 export const laneAddrIn = (name, h) => 'lane:' + laneRef(name, h);
 /** a lane id -> the name as typed in this state dir (this home's lanes bare, another home's b/x) */
-export const laneName = (id, stateDir) => { const n = String(id).replace(/^L:/, ''), h = homeOf(stateDir)?.id; return h && n.startsWith(h + '/') ? n.slice(h.length + 1) : n; };
+export const laneNameIn = (id, h) => { const n = String(id).replace(/^L:/, ''); return h && n.startsWith(h + '/') ? n.slice(h.length + 1) : n; };
+export const laneName = (id, stateDir) => laneNameIn(id, homeOf(stateDir)?.id);
 // a role's mail address: role:checkin, or role:checkin@a in a home
 export const roleAddrIn = (role, h) => `role:${role}${h ? '@' + h : ''}`;
 export const roleAddr = (role, stateDir) => roleAddrIn(role, homeOf(stateDir)?.id);
@@ -463,7 +464,7 @@ function validateData(kind, ev, d, target, st, by, home = null) {
     if (ev === 'park') { str(d.why, 'why', { max: 600 }); str(d.q, 'q', { req: false }); }
     if (ev === 'supersede') {
       str(d.why, 'why', { max: 600 }); str(d.by, 'by');
-      if (/^DLV-\d+$/.test(d.by)) {
+      if (new RegExp(`^${NID('DLV')}$`).test(d.by)) {
         if (d.by === target.id) fail(`${target.id} cannot supersede itself`);
         if (!st.items[d.by]) fail(`supersede cites ${d.by}, which does not exist`);
       } else if (!/^[0-9a-f]{7,40}$/.test(d.by)) fail(`supersede --by must be a DLV-n or a commit sha (7-40 hex), got ${JSON.stringify(d.by)}`);
@@ -494,7 +495,7 @@ function validateData(kind, ev, d, target, st, by, home = null) {
   if (kind === 'item') validateItem(ev, d, target, st, by);
   if (kind === 'proposal') validateProposal(ev, d, target, st);
   if (kind === 'run') {
-    if (ev === 'start' || ev === 'queue') { oneOf(d.priority, 'priority', PRIORITIES, false); if (d.epic !== undefined && !/^EP-\d+$/.test(d.epic)) fail('epic must be an EP-n id'); }
+    if (ev === 'start' || ev === 'queue') { oneOf(d.priority, 'priority', PRIORITIES, false); if (d.epic !== undefined && !new RegExp(`^${NID('EP')}$`).test(d.epic)) fail('epic must be an EP-n id'); }
     if (ev === 'start' || ev === 'queue') oneOf(d.kind, 'kind', ['worker', 'codex', 'cli', 'checkin', 'talk', 'interactive', 'fake', 'provider', 'audit']);
     if ((ev === 'start' || ev === 'queue') && d.after !== undefined && !(Array.isArray(d.after) && d.after.every(c => c && ['kind', 'id', 'state'].every(k => typeof c[k] === 'string'))))
       fail('after must be a list of {kind, id, state}');
@@ -674,7 +675,7 @@ function archiveGuard(stateDir, lane) {
   for (const d of open) {
     const tip = refTip(d.data.repo, d.data.branch) || [...d.history].reverse().find(h => h.ev === 'done')?.data?.tip || d.data.tip;
     if (tip && isAncestor(d.data.repo, tip, d.data.main || 'main')) continue;
-    fail(`L:${lane} cannot be archived: ${d.id} (${d.data.branch}) is done but not merged - merge it, or park it with the owner's reason (norn deliverables park ${d.id} --why "...")`);
+    fail(`${laneId(lane, stateDir)} cannot be archived: ${d.id} (${d.data.branch}) is done but not merged - merge it, or park it with the owner's reason (norn deliverables park ${d.id} --why "...")`);
   }
 }
 // META-GTP-MAIL piece 1: the cross-file rules of mail (the runs + epics logs are read here, under the mail log's lock).
