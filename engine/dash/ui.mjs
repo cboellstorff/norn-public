@@ -412,6 +412,31 @@ function overview(d, ctx) {
    <div class="tablecard"><h3>Ledger <span class="mute small">last 4 entries, newest first</span></h3><table class="ledtab compact"><tbody>${led || '<tr><td class="mute">no ledger file</td></tr>'}</tbody></table></div></div>` : ''}`;
 }
 
+// RM-28 S1: a finished planner run's proposal - its 10-line summary, the plan file, and per stage Queue now / Later / Drop (each
+// tap = `norn proposal rule`: a decision by dashboard, then the act). A decided stage shows what it became; the card goes when none is open.
+const PICK_DONE = { queue: 'queued', later: 'later', drop: 'dropped', launched: 'launched' };
+export function proposalCard(i, ctx) {
+  const btn = (s, pick, words, cls = '') => `<button class="${cls}" data-act="proposal" data-project="${esc(i.project)}" data-run="${esc(i.id)}" data-stage="${esc(s.key)}" data-pick="${pick}"${pick === 'later' && !i.item ? ' disabled title="No roadmap item links this lane or run"' : ''}>${words}</button>`;
+  const stage = s => `<li class="pstage" id="prop-${esc(i.id)}-${esc(s.key)}"><div><b>${esc(s.key)}</b> ${esc(s.title || s.brief.split('/').pop())}</div>${s.state === 'open'
+    ? `<div class="pacts">${btn(s, 'queue', 'Queue now', 'primary')}${btn(s, 'later', 'Later')}${btn(s, 'drop', 'Drop', 'ghost')}</div>`
+    : `<div class="small">${chip(s.state === 'drop' ? 'withdrawn' : 'applied', PICK_DONE[s.state] ?? s.state)}${s.ref ? ` <span class="mono">${esc(s.ref)}</span>` : ''}${s.dec ? ` <span class="mute">(${esc(s.dec)})</span>` : ''}</div>`}</li>`;
+  return `<article class="q openq proposal" id="prop-${esc(i.id)}"><div class="phead">${chip('open', `${i.open} open`)}<b style="font-size:15px">${esc(i.title)}</b><span class="spacer"></span><span class="small mute">${projTag(ctx, i.project)}${esc(i.id)}${i.item ? ` · ${esc(i.item)}` : ''} · ${fmtMin(minsSince(i.created, ctx.now))} ago</span></div>
+    ${i.summary.length ? `<ol class="psum">${i.summary.map(l => `<li>${esc(l.replace(/^\d+[.)]\s*/, ''))}</li>`).join('')}</ol>` : '<p class="small mute">The NOTES file has no summary section.</p>'}
+    ${i.plans.length ? `<div class="small">Plan: ${i.plans.map(f => `<span class="mono ppath">${esc(f)}</span>`).join(', ')}</div>` : ''}
+    <ul class="pstages">${i.stages.map(stage).join('')}</ul>
+    <div class="small mute">Each pick writes a decision (by dashboard). Queue now queues the brief on lane ${esc(i.lane)}${i.item ? ` linked to ${esc(i.item)}` : ''}; Later adds it to the roadmap${i.item ? ` under ${esc(i.item)}` : ''}, horizon next; Drop records only.</div></article>`;
+}
+
+// RM-28 S2: Decisions - every open proposal in one section of the Inbox so the owner rules several in one sitting: a count, an index
+// (one link per proposal: lane, run, open stages) and the S1 cards themselves (same buttons, same /api/proposal path). Empty = nothing.
+export function decisionsSection(items, ctx) {
+  const ps = items.filter(i => i.type === 'proposal');
+  if (!ps.length) return '';
+  const stages = ps.reduce((n, i) => n + i.open, 0);
+  const idx = ps.length > 1 ? `<div class="pindex small">${ps.map(i => `<a href="#prop-${esc(i.id)}">${projTag(ctx, i.project)}<b>${esc(i.lane)}</b> ${esc(i.id)} · ${plural(i.open, 'open stage')}</a>`).join('')}</div>` : '';
+  return `<section id="inbox-decisions" class="decisions"><h2>Decisions <span class="mute small">${plural(ps.length, 'proposal')} · ${plural(stages, 'open stage')} · each stage is ruled on its own: Queue now, Later or Drop</span></h2>${idx}${ps.map(i => proposalCard(i, ctx)).join('')}</section>`;
+}
+
 function inbox(d, ctx) {
   const items = d.items || [];
   const qs = items.filter(i => i.type === 'question').map(q => {
@@ -426,6 +451,7 @@ function inbox(d, ctx) {
     <input type="search" id="ans-${esc(q.id)}" placeholder="or answer in your words ..." style="flex:1;min-width:220px"><button data-act="answer-text" data-project="${esc(q.project)}" data-id="${esc(q.id)}">Send</button></div>
     <div class="small mute" style="margin-top:6px">Writes <span class="mono">answer ${esc(q.id)}</span> (by dashboard). The next tick applies it${q.lane ? ` and unparks ${esc(q.lane)}` : ''}.</div></article>`;
   }).join('') || `<div class="card" style="margin-bottom:12px">${art(ctx, 'empty-no-questions', 'empty')}${chip('ok', 'all clear')} <span>No open question.</span></div>`;
+  const props = decisionsSection(items, ctx);
   const aud = items.filter(i => i.type === 'audit');
   const audCard = aud.length ? `<section class="tablecard" id="inbox-audit" style="margin-bottom:12px"><h3>Audit hunks <span class="mute small">${int(aud.length)} open · the vendor prompt audit proposed them; accept = the check-in applies it, decline = keep the text; Norn edits nothing</span></h3><ul>${aud.map(i => auditCard(i.card, i.project)).join('')}</ul></section>` : '';
   const fxCard = fxSection(items.filter(i => i.type === 'fixresult').map(i => [i.card, i.project]), 'inbox-fixer', 'tablecard');
@@ -443,7 +469,7 @@ function inbox(d, ctx) {
   const adv = items.filter(i => i.type === 'advice');
   const advCard = adv.length ? `<section class="card" id="inbox-advice" style="margin-bottom:12px"><h2>Model advice <span class="mute small">${plural(adv.length, 'card')} · vendor guidance over what each kind of work cost (Usage tab) · nothing changes until you tap</span></h2>${adv.map(i => adviceRow(i, ctx)).join('')}</section>` : '';
   const nNeeds = needsYou(items), nInfo = items.length - nNeeds;   // UX review 4: the one needs-you count (terms.mjs)
-  return `<h2 class="pagehead" id="inbox-needs">Needs you <b>${int(nNeeds)}</b>${nInfo ? ` <span class="mute small">+ ${int(nInfo)} for information (answered, waiting for the next check-in; model advice)</span>` : ''}</h2><div class="legend small mute">States: ${['open', 'answered', 'applied', 'superseded', 'withdrawn'].map(s => chip(s)).join(' ')} - set by explicit events only; this page never guesses.</div>${qs}${fxCard}${enfCard}${audCard}${dlvCard}${advCard}
+  return `<h2 class="pagehead" id="inbox-needs">Needs you <b>${int(nNeeds)}</b>${nInfo ? ` <span class="mute small">+ ${int(nInfo)} for information (answered, waiting for the next check-in; model advice)</span>` : ''}</h2><div class="legend small mute">States: ${['open', 'answered', 'applied', 'superseded', 'withdrawn'].map(s => chip(s)).join(' ')} - set by explicit events only; this page never guesses.</div>${qs}${props}${fxCard}${enfCard}${audCard}${dlvCard}${advCard}
    <div class="tablecard"><h3>Also needs a look <span class="mute small">parked lanes · unreviewed runs · answered, not yet applied</span></h3><table><thead><tr><th>id</th><th>state</th><th>what</th></tr></thead><tbody>${other || '<tr><td colspan="3" class="mute">nothing</td></tr>'}</tbody></table></div>`;
 }
 
