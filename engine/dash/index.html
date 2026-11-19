@@ -856,12 +856,13 @@ function paintAct() {
   $('#feed-raw-n').textContent = `${F.n} events`;
 }
 const actSoon = () => { if (!F.actT) F.actT = setTimeout(paintAct, 300); };
-function tickDur() { const d = $('#fa-dur'); if (d) d.textContent = fmtDur((Date.now() - Date.parse(d.dataset.since)) / 1000); }
+// the Now clock: one text node a second while the drawer is open - it reads nothing (no refetch; the feed itself is pushed)
+function tickDur() { const d = $('#fa-dur'); if (d) d.textContent = fmtDur((Date.now() - Date.parse(d.dataset.since)) / 1000); F.tick = setTimeout(tickDur, 1000); }
 function rawShow(on) { $('#feed-list').hidden = !on; $('#feed-raw-tog').setAttribute('aria-expanded', String(on)); $('#feed-raw-tog').textContent = on ? 'Hide all events' : 'All events'; }
 $('#feed-raw-tog').onclick = () => rawShow($('#feed-list').hidden);
 function markFeed() { document.querySelectorAll('[data-feed].sel').forEach(x => x.classList.remove('sel'));
   if (F.run) document.querySelectorAll(`[data-feed="${CSS.escape(F.run)}"]`).forEach(x => x.classList.add('sel')); }
-function closeFeed() { if (F.es) F.es.close(); F.es = null; F.run = null; F.tools.clear(); F.act = null; clearTimeout(F.actT); F.actT = null; clearInterval(F.tick); F.tick = null;
+function closeFeed() { if (F.es) F.es.close(); F.es = null; F.run = null; F.tools.clear(); F.act = null; clearTimeout(F.actT); F.actT = null; clearTimeout(F.tick); F.tick = null;
   $('#feed').hidden = true; markFeed(); NM?.map.select(null); }
 function addEv(e) {
   const list = $('#feed-list');
@@ -877,8 +878,8 @@ function addEv(e) {
   }
   while (list.childElementCount > 600) list.firstElementChild.remove();
   if (F.tools.size > 400) F.tools.delete(F.tools.keys().next().value);
-  // a whole-run replay sends thousands of events at once: one scroll per frame, not one layout per event
-  if ($('#feed-follow').checked && !F.scroll) { F.scroll = true; requestAnimationFrame(() => { F.scroll = false; list.scrollTop = list.scrollHeight; }); }
+  // a whole-run replay sends thousands of events at once: one scroll per 50 ms, not one layout per event
+  if ($('#feed-follow').checked && !F.scroll) { F.scroll = true; setTimeout(() => { F.scroll = false; list.scrollTop = list.scrollHeight; }, 50); }
 }
 // the live hand-off state (head.handoff, lanes.mjs handoffOf): while the next session is on its way, or once the chain went on in
 // another run, the "now" line is the hand-off, not this session's last words ("I stopped this run with a hand-off ..." read as stopped)
@@ -903,7 +904,7 @@ function feedEnded(project, run, tries = 0) {
 function openFeed(project, run) {
   closeFeed(); F.head = null; F.hoNow = ''; F.run = run; F.project = project; F.act = activityInit(); F.ended = false; F.n = 0; F.keep.clear(); markFeed();
   $('#feed').hidden = false; $('#feed-head').innerHTML = `<span class="id">${esc(run)}</span>`; $('#feed-list').innerHTML = ''; $('#feed-now').textContent = ''; $('#feed-act').innerHTML = '';
-  $('#feed-status').textContent = 'connecting ...'; rawShow(!narrow()); F.tick = setInterval(tickDur, 1000);   // a phone: the activity view is the first screen
+  $('#feed-status').textContent = 'connecting ...'; rawShow(!narrow()); F.tick = setTimeout(tickDur, 1000);   // a phone: the activity view is the first screen
   const es = F.es = new EventSource(`/api/feed?project=${encodeURIComponent(project)}&run=${encodeURIComponent(run)}&full=1`);
   es.onopen = () => { $('#feed-status').textContent = 'live · the server polls the run files every 2 s'; };
   es.addEventListener('head', m => feedHead(JSON.parse(m.data)));
