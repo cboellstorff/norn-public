@@ -29,7 +29,11 @@ import { hbPath, stopRunAsync, requeueRun, queueOf, STALE_MS } from '../lib/runs
 import { lanesView, sortLanes, handoffOf } from '../lib/lanes.mjs';
 import { laneDriver, laneBriefFiles, laneType, laneOutput } from '../lib/purpose.mjs';
 import { overlapFile, overlapOn } from '../lib/overlap.mjs';
-import { agentsTree, primeAgents, shownRunIds, runTalked } from '../lib/agents.mjs';
+import { agentsTree, primeAgents, shownRunIds, runTalked, tailA } from '../lib/agents.mjs';
+import { runProgress, workInit, onWork, mergeWork, sessionsOf, laneSteps } from '../lib/progress.mjs';
+import { loadMail } from '../lib/mail.mjs';
+import { findTranscriptA } from '../lib/harness/claude.mjs';
+import os from 'node:os';
 import { ctxView } from '../lib/ctxlimit.mjs';
 import { mapGraph } from '../lib/map.mjs';
 import { LOCK_STALE_MIN, quietFlag } from '../lib/tick.mjs';
@@ -413,6 +417,46 @@ export function createDashboard(o) {
     return rows.map(l => { const dv = dl.filter(r => r.lane === l.name), lane_type = laneType(l.name, { ...o, commits: dv.map(r => r.subject).filter(Boolean) });
       return { ...l, driver: laneDriver(l.name, o), lane_type, output: laneOutput(lane_type.type, { deliverables: dv, notes: notesOf(p, l.name, o.items), repo: p.root ? path.basename(p.root) : null }) }; });
   }
+  // RM-39: each run's progress against its brief, pace, why slow and alarms in words (progress.mjs). The files are read on
+  // fs.promises first (the brief, NOTES, every session's transcript - tailed into the shared cache under its own key), then the
+  // derivation runs on what was read. CPU = the os.cpus() deltas between two reads of the dash (no timer, no wait; null at first),
+  // sampled at most every 15 s: os.cpus() costs real time on a loaded Windows box (a browser test saw 2 s of it in 23 s, unthrottled)
+  let cpuPrev = null, cpuPct = null;
+  const cpuNow = () => {
+    if (cpuPrev && Date.now() - cpuPrev.at < 15000) return cpuPct;
+    const t = os.cpus().reduce((s, c) => { const x = c.times; s.idle += x.idle; s.all += x.user + x.nice + x.sys + x.idle + x.irq; return s; }, { idle: 0, all: 0, at: Date.now() });
+    if (cpuPrev && t.all > cpuPrev.all) cpuPct = 100 * (1 - (t.idle - cpuPrev.idle) / (t.all - cpuPrev.all));
+    cpuPrev = t;
+    return cpuPct;
+  };
+  const PKEY = '\u0000progress:', pview = f => ({ get: () => cache.get(PKEY + f), set: (_f, v) => cache.set(PKEY + f, v) });
+  const transcriptOf = r => r.end?.transcript || r.data?.transcript || (r.data?.session_id ? findTranscriptA(projectsDir, r.data.session_id) : null);
+  /** run id -> its progress, for the worker runs among ids (a run with a brief and a lane); ctxOf(id) = its context now | null */
+  async function progressOf(p, ids, ctxOf = () => null) {
+    const items = st(p).items, rs = [...new Set(ids)].map(id => items[id]).filter(r => r?.kind === 'run' && r.data?.brief && r.data.lane && r.data.role !== 'helper');
+    if (!rs.length) return new Map();
+    const sess = new Map(rs.map(r => [r.id, sessionsOf(r, items)])), files = new Map();
+    await Promise.all([prime({ files: rs.flatMap(r => [r.data.brief, r.data.notes].filter(Boolean)) }),
+      ...[...new Set([...sess.values()].flat())].map(async r => { const f = await transcriptOf(r); if (f) { files.set(r.id, f); await tailA(f, pview(f), workInit, onWork); } })]);
+    let mails = [];
+    try { mails = Object.values(loadMail(p.state)); } catch { mails = []; }
+    const gc = guardChips(p.state), cpu = cpuNow(), out = new Map();
+    for (const r of rs) {
+      const work = mergeWork(sess.get(r.id).map(x => files.has(x.id) ? cache.get(PKEY + files.get(x.id)) : null));
+      out.set(r.id, runProgress(r, { runs: items, brief: readText(r.data.brief), notes: r.data.notes ? readText(r.data.notes) : null, work, cpu, ctx: ctxOf(r.id),
+        mails: mails.filter(m => m.data?.to === `lane:${r.data.lane}`), guard: gc.get(r.id) || [] }));
+    }
+    return out;
+  }
+  // RM-39 item 5: the lane overview card's data (one shape on Lanes and on the Runs page's Lane cell): why it exists, its type and
+  // output (RM-34), the current stage and its run's progress, pace, why slow and alarms, the last finished stage and what comes next
+  const cardOf = (l, pg) => ({ lane: l.name, objective: l.driver?.objective ?? null, source: l.driver?.sources?.[0] ?? null, finding: l.driver?.finding ?? null,
+    type: l.lane_type?.type ?? null, output: l.output?.text ?? null, stage: pg ? [l.stage ?? null, pg.run].filter(Boolean).join(' · ') : null, progress: pg ?? null, ...l.steps });
+  async function withCards(p, rows) {
+    const items = st(p).items, pg = await progressOf(p, rows.map(l => l.run).filter(Boolean));
+    return rows.map(l => { const g = pg.get(l.run), steps = laneSteps(l.name, items);
+      return { ...l, ...(g ? { progress: g } : {}), card: cardOf({ ...l, stage: items[l.run]?.data?.stage, steps }, g) }; });
+  }
   function lanesWithSpend(ps) {
     const rows = sortLanes(ps.flatMap(p => withDriver(p, lanes(p, true))));   // RM-19 S1: every row, one order across projects; the page filters
     if (!apiOn(ps)) return rows;
@@ -427,8 +471,13 @@ export function createDashboard(o) {
     // META-CHECKIN-GUARDS R1: the moves a guard refused this run (its run `refuse` events) - a plain row each on the tab
     const refused = id => (byId.get(id)?.history || []).filter(h => h.ev === 'refuse').map(h => ({ ts: h.ts, guard: h.data.guard, words: GUARD_WORDS[h.data.guard] ?? h.data.guard, why: h.data.why, lane: h.data.lane ?? null, stage: h.data.stage ?? null, answers: h.data.answers ?? null }));
     await primeAgents(runs, { projectsDir, codexDir, cache });   // META-DASH-ASYNC R1: the tree's files on fs.promises first
-    return agentsTree(runs, { projectsDir, codexDir, cache, policy: m.policy, sessions: talk, wrote: wroteHandoff(p) })
-      .map(n => { const rf = refused(n.id); return { ...n, project: p.name, ...(gc.has(n.id) ? { guard: gc.get(n.id) } : {}), ...(rf.length ? { refused: rf } : {}) }; });
+    const tree = agentsTree(runs, { projectsDir, codexDir, cache, policy: m.policy, sessions: talk, wrote: wroteHandoff(p) });
+    // RM-39: a worker run's progress line + the lane overview card on its Lane cell (the lane's row data, this run's progress)
+    const pg = await progressOf(p, tree.map(n => n.id), id => tree.find(n => n.id === id)?.ctx ?? null), names = new Set(tree.map(n => n.lane).filter(Boolean));
+    const items = st(p).items, rows = new Map(names.size ? withDriver(p, lanes(p, true).filter(l => names.has(l.name))).map(l => [l.name, l]) : []);
+    return tree.map(n => { const rf = refused(n.id), g = pg.get(n.id), l = n.lane && n.kind !== 'checkin' ? rows.get(n.lane) : null;
+      return { ...n, project: p.name, ...(gc.has(n.id) ? { guard: gc.get(n.id) } : {}), ...(rf.length ? { refused: rf } : {}), ...(g ? { progress: g } : {}),
+        ...(l ? { lane_card: cardOf({ ...l, stage: n.stage, steps: laneSteps(l.name, items) }, g) } : {}) }; });
   }
   // the Ledger tab (LEDGER-UX R1): `count` lines (default 100, max 2000) ending `offset` lines before the end ("show older" pages);
   // runs = the run ids the Runs page lists, so the tab links only those
@@ -1521,7 +1570,9 @@ data: ${JSON.stringify(l)}
         if (route === '/api/adopt') return send(200, await adoptView(one(url)));
         if (route === '/api/overview') return send(200, await overview(pick(url, { all: true })));
         if (route === '/api/inbox') { const items = (await Promise.all(pick(url, { all: true }).map(inbox))).flat(); return send(200, { items, needs_you: needsYou(items) }); }
-        if (route === '/api/lanes') { const ps = pick(url, { all: true }); await primeBriefs(ps); return send(200, { lanes: lanesWithSpend(ps) }); }
+        if (route === '/api/lanes') { const ps = pick(url, { all: true }); await primeBriefs(ps); const rows = lanesWithSpend(ps);
+          const by = new Map((await Promise.all(ps.map(p => withCards(p, rows.filter(l => l.project === p.name))))).flat().map(l => [`${l.project}|${l.name}`, l]));
+          return send(200, { lanes: rows.map(l => by.get(`${l.project}|${l.name}`)) }); }
         if (route === '/api/agents') { const ps = pick(url, { all: true }); return send(200, { tree: (await Promise.all(ps.map(agents))).flat(), queue: ps.flatMap(p => queueOf(runsOf(st(p))).map(q => ({ ...q, project: p.name }))) }); }
         if (route === '/api/map') return send(200, await map(one(url), url));
         if (route === '/api/deliverables') {

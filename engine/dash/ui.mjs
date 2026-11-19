@@ -478,6 +478,29 @@ export const laneWhy = d => !d ? '' : !d.sources.length ? `<div class="lane-why"
 export const laneKind = l => { const t = l.lane_type, o = l.output; if (!t && !o) return '';
   const out = !o ? '' : o.href ? `<a class="lane-out" href="${esc(o.href)}" target="_blank" rel="noopener">${esc(o.text)}</a>` : `<span class="lane-out">${esc(o.text)}</span>`;
   return `<div class="lane-kind small"><span class="chip ${t?.type ? 'idle' : 'warn'}" title="${esc(`type from ${t?.signal ?? '-'}`)}">${esc(t?.type ?? 'no type')}</span>${t?.now ? ` ${chip('running', t.now)}` : ''} ${out}</div>`; };
+// RM-39: a run's progress against its brief (progress.mjs runProgress) - ONE short line on a row: the pace as a chip ("on track" /
+// "slow" / "stalled") and "2 of 5 items done, testing item 3"; its title = why slow
+const PACE_CLS = { 'on track': 'ok', slow: 'warn', stalled: 'bad' };
+export const progLine = g => !g ? '' : `<div class="prog small" title="${esc(g.slow?.line ?? g.pace?.words ?? '')}">${chip(PACE_CLS[g.pace?.state] ?? 'idle', g.pace?.state ?? '-')} ${esc(g.line)}</div>`;
+const ITEM_MARK = { done: '✓', doing: '…', todo: '·' };
+/** the detail: the checklist with its evidence, the pace, why slow, the alarms in words and the owner's moves */
+export const progDetail = g => !g ? '' : `<ol class="prog-items small">${g.items.map(it => `<li class="prog-${esc(it.state)}"><span aria-hidden="true">${ITEM_MARK[it.state]}</span> ${esc(it.title)}<span class="mute"> - ${esc(it.state)}${it.evidence ? `: ${esc(it.evidence)}` : ''}</span></li>`).join('')}</ol>
+  <div class="small"><b>Pace</b> ${esc(g.pace.words)}</div>${g.slow?.line ? `<div class="small"><b>Why</b> ${esc(g.slow.line)}</div>` : ''}
+  ${(g.alarms || []).map(a => `<div class="small prog-alarm">${chip(a.cls === 'runaway' ? 'bad' : 'warn', a.cls)} ${esc(a.words)}<div class="mute">${esc(a.numbers)}</div><div>${a.ruled ? `${esc(a.ruled)}. ` : ''}You can: ${esc(a.act.join(' / '))}</div></div>`).join('')}`;
+/**
+ * RM-39 item 5: the lane overview card - one component on the Lanes name and the Runs page's Lane cell. Hover (desktop) or focus / tap
+ * (keyboard, phone) opens it over the row under the name, never over the row's buttons; Esc closes it (index.html); on a phone it is
+ * a bottom sheet (CSS). `label` = what opens it (the lane name, or the Lane cell's link).
+ */
+export function laneCard(c, label) {
+  if (!c) return label;
+  const g = c.progress, src = c.source ? `<span class="mute"> (${esc(c.source.id)})</span>` : '';
+  return `<span class="lhov">${label}<div class="lcard" role="dialog" aria-label="${esc(`Lane ${c.lane}`)}">
+    <div><b>${esc(c.lane)}</b> ${c.type ? chip('idle', c.type) : ''}</div>
+    <div class="small">${c.objective ? `${esc(c.objective)}${src}` : chip('warn', c.finding ?? 'no recorded driver')}</div>${c.output ? `<div class="small mute">${esc(c.output)}</div>` : ''}
+    ${g ? `<div class="small"><b>${esc(c.stage ?? '')}</b>: ${esc(g.line)}</div>${progDetail(g)}` : ''}
+    <div class="small mute">${esc([c.last ? `last: ${c.last}` : 'no stage finished yet', c.next ? `next: ${c.next}` : null].filter(Boolean).join(' · '))}</div></div></span>`;
+}
 export const laneAge = (ms) => { const m = Math.max(0, Math.round(ms / 60000)); return m < 60 ? `${m} min` : m < 48 * 60 ? `${Math.round(m / 60)} h` : `${Math.round(m / 1440)} d`; };
 function lanes(d, ctx) {
   const show = new Set(ctx.laneShow ?? LANE_SHOW_DEFAULT), hide = ctx.archiving ?? new Set(), refused = ctx.laneRefused ?? {}, undo = ctx.laneUndo;
@@ -495,8 +518,8 @@ function lanes(d, ctx) {
     const act = cls === 'running' ? `${log} <button data-act="stop" data-project="${esc(l.project)}" data-run="${esc(l.run)}">Stop</button>`
       : l.state === 'parked' ? `<button data-tab="inbox">Open Q</button>` : l.state !== 'archived' ? `${log} <button class="ghost" data-act="archive" data-project="${esc(l.project)}" data-lane="${esc(l.name)}">Archive</button>` : log;
     const why = refused[laneKey(l.project, l.name)];   // a refused Archive keeps its reason here: S, not err(), so a live re-render keeps it
-    return `<tr id="lane-${esc(l.name)}"${l.old ? ' class="old"' : ''}><td><b>${projTag(ctx, l.project)}${esc(l.name)}</b><div class="id">${esc(l.id)}</div>${laneKind(l)}${laneWhy(l.driver)}${overlapChips(l.overlap)}${why ? `<div class="lane-refused small">${esc(why)}</div>` : ''}</td><td>${chip(l.state)}</td><td>${chip(cls, word)}${hoChip(l.handoff, l.run)}</td>
-      <td>${l.executor ? chip(exClass(l.executor), l.executor) : dash}</td><td>${esc(nowText(l))}</td><td><span class="id">${esc(l.run ?? '-')}</span>${l.run_name ? `<div>${aname(l.run_name)}</div>` : ''}</td>${usdCell(l)}<td><div class="rowacts">${act}</div></td></tr>`;
+    return `<tr id="lane-${esc(l.name)}"${l.old ? ' class="old"' : ''}><td>${laneCard(l.card, `<button class="lnk lname" aria-haspopup="dialog"><b>${projTag(ctx, l.project)}${esc(l.name)}</b></button>`)}<div class="id">${esc(l.id)}</div>${laneKind(l)}${laneWhy(l.driver)}${overlapChips(l.overlap)}${why ? `<div class="lane-refused small">${esc(why)}</div>` : ''}</td><td>${chip(l.state)}</td><td>${chip(cls, word)}${hoChip(l.handoff, l.run)}</td>
+      <td>${l.executor ? chip(exClass(l.executor), l.executor) : dash}</td><td>${esc(nowText(l))}${progLine(l.progress)}</td><td><span class="id">${esc(l.run ?? '-')}</span>${l.run_name ? `<div>${aname(l.run_name)}</div>` : ''}</td>${usdCell(l)}<td><div class="rowacts">${act}</div></td></tr>`;
   }).join('') || `<tr><td colspan="${usd ? 8 : 7}" class="mute">${all.length ? 'No lanes under these filters.' : 'No LANE records.'}</td></tr>`;
   const chips = LANE_SHOW.map(([k, t]) => `<button class="hf" data-act="lane-show" data-show="${k}" aria-pressed="${show.has(k)}">${esc(t)} <b>${n(k)}</b></button>`).join('');
   return `<div class="banner">Lanes come from LANE records only (no folder scan); state = the latest run on the lane, whatever executor owns the tree.</div>
@@ -554,7 +577,7 @@ function runs(d, ctx) {
     const b = top[n.id];
     const feed = /^RUN-(?:[a-z][a-z0-9]{0,15}-)?\d+$/.test(n.id) ? ` data-feed="${esc(n.id)}" data-project="${esc(n.project)}" title="Open the live feed"` : '';
     return `<div class="node lvl${lvl}" id="node-${esc(n.id)}"${lvl ? ` data-p="${esc(pid)}"` : ''}${feed}><div class="name">${kids ? `<span class="caret" data-t="${esc(pid)}">&#9662;</span>` : '<span class="caret"></span>'}${chip(n.kind === 'subagent' ? 'idle' : exClass(n.executor), n.kind ?? 'run')}<span class="t" title="${esc(more(n))}">${projTag(ctx, n.project)}${name(n)}</span>${n.dod_ready || n.dod ? dodChips(n.dod_ready, n.dod) : ""}${critiqueChip(n.critique)}${(n.guard || []).map(g => `<span class="guard-chip" title="${esc(`${g.id}: ${g.why}`)}">${chip(g.state === 'ruled' ? 'idle' : g.cls === 'runaway' ? 'bad' : 'warn', `${g.cls}${g.action ? ': ' + g.action : ''}`)}</span>`).join('')}${guardChip(guardOn(d.guard, r => r.run === n.id), { tab: 'slop' })}</div>
-     <div class="lanecol small">${lvl ? '' : runLane(n)}</div><div>${exChip(n.kind === 'subagent' ? null : n.executor, n.model, n.effort)}</div><div>${runChip(n.state)}</div><div class="small">${age(n)}</div><div class="mono small">${tok(n)}</div>
+     <div class="lanecol small">${lvl ? '' : laneCard(n.lane_card, runLane(n))}${progLine(n.progress)}</div><div>${exChip(n.kind === 'subagent' ? null : n.executor, n.model, n.effort)}</div><div>${runChip(n.state)}</div><div class="small">${age(n)}</div><div class="mono small">${tok(n)}</div>
      <div>${fin(n.ctx) ? ctxMeter(n) : dash}</div><div class="mono small">${fin(b?.pct_per_h) ? b.pct_per_h.toFixed(2) + ' %/h' : fin(n.burn30) && n.burn30 > 0 ? mTok(n.burn30) + ' /30 min' : '-'}</div>${n.handoff ? `<div class="horow">${hoChip(n.handoff, n.id)}</div>` : ''}</div>`;
   };
   // META-CHECKIN-GUARDS R1: a move a guard refused in code, as a plain row under the run that tried it

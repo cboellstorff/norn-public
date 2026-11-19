@@ -163,6 +163,12 @@ tr:last-child td{border-bottom:0}
 .filters{display:flex;gap:8px;margin-bottom:10px;align-items:center;flex-wrap:wrap}
 input[type=search]{background:var(--panel);width:260px}
 .lane-why{margin-top:3px;font-size:12.5px;max-width:46ch}.lane-why summary{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;list-style:none}.lane-why summary::-webkit-details-marker{display:none}.lane-why[open] summary{white-space:normal}.lane-why ul{margin:4px 0 0;padding-left:16px;font-weight:400}.lane-srcs{display:flex;flex-wrap:wrap;gap:2px 8px;max-width:46ch}.lane-src{font-size:12px}button.lnk.lane-src{background:none;border:0;padding:0;color:var(--accent);cursor:pointer}@media (max-width:700px){.lane-why,.lane-srcs{max-width:62vw}}
+/* RM-39: a run's progress line on its row; the lane card opens under the lane name on hover / focus (never over the row's buttons: it
+   is as wide as the name's column allows, left-aligned) and is a bottom sheet on a phone */
+.prog{margin-top:3px;max-width:46ch;overflow-wrap:anywhere}.lhov{position:relative;display:inline-block;max-width:100%}.lname{font:inherit;color:inherit;padding:0;text-align:left}
+.lcard{display:none;position:absolute;left:0;top:100%;z-index:20;width:min(440px,60vw);max-height:70vh;overflow:auto;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.18);padding:8px 10px;font-weight:normal;white-space:normal;text-align:left}
+.lhov:hover>.lcard,.lhov:focus-within>.lcard{display:block}.lhov.shut>.lcard{display:none}.lcard>div{margin-top:3px}.prog-items{margin:4px 0;padding-left:18px}.prog-items li{overflow-wrap:anywhere}.prog-done>span:first-child{color:var(--ok,#15803d)}.prog-alarm{margin-top:4px;border-left:3px solid var(--line);padding-left:6px}
+@media (max-width:700px){.lcard{position:fixed;left:0;right:0;top:auto;bottom:0;width:auto;max-height:60vh;border-radius:12px 12px 0 0}}
 .lane-kind{margin-top:3px;display:flex;flex-wrap:wrap;gap:2px 6px;align-items:center;max-width:46ch}.lane-out{color:var(--mute);overflow-wrap:anywhere}.lane-types{border-left:1px solid var(--line);padding-left:8px}
 tr.old{opacity:.55}.lane-refused{color:var(--bad);margin-top:3px;white-space:normal}.lane-show{display:flex;gap:6px;flex-wrap:wrap}
 .lane-overlap{margin-top:4px}details.lane-overlap>summary{display:inline-block;cursor:pointer;list-style:none}details.lane-overlap>summary::-webkit-details-marker{display:none}details.lane-overlap>summary::after{content:' \25B8'}details.lane-overlap[open]>summary::after{content:' \25BE'}.lane-overlap-list{display:flex;flex-direction:column;align-items:flex-start;gap:4px;margin-top:4px}
@@ -961,13 +967,18 @@ $('#dlv-close').onclick = () => { $('#dlv').hidden = true; };
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#dlv').hidden) $('#dlv').hidden = true;
   const dv = e.target.closest?.('g[data-dlv]'); if (dv && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openDlv(dv.dataset.project, dv.dataset.dlv); } });
 document.addEventListener('click', e => { const dv = e.target.closest?.('[data-dlv]'); if (dv) { e.stopPropagation(); e.preventDefault(); openDlv(dv.dataset.project, dv.dataset.dlv); } }, true);
+// RM-39: Esc closes an open lane card (it is open while its lane name holds the focus - CSS :focus-within) and hides it under the
+// pointer until the pointer leaves
+document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; const h = document.activeElement?.closest?.('.lhov') ?? document.querySelector('.lhov:hover');
+  if (h) { h.classList.add('shut'); document.activeElement?.blur?.(); h.addEventListener('mouseleave', () => h.classList.remove('shut'), { once: true }); } });
+document.addEventListener('focusin', e => e.target.closest?.('.lhov')?.classList.remove('shut'));
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#feed').hidden) closeFeed();
   const fd = e.target.closest?.('[data-feed]'); if (fd && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openFeed(fd.dataset.project, fd.dataset.feed); } });
 document.addEventListener('click', e => {
   const mm = e.target.closest('[data-act="map-more"]');
   if (mm) { const l = mm.dataset.lane; if (S.mapMore.has(l)) S.mapMore.delete(l); else S.mapMore.add(l); render(); return; }
   const fd = e.target.closest('[data-feed]');
-  if (fd && !e.target.closest('button,a,input,.caret')) { openFeed(fd.dataset.project, fd.dataset.feed); return; }
+  if (fd && !e.target.closest('button,a,input,.caret,.lcard')) { openFeed(fd.dataset.project, fd.dataset.feed); return; }
   const rid = e.target.closest('a[data-rid]');   // record-id chips in Docs: open the item where it lives
   if (rid) { e.preventDefault(); const id = rid.dataset.rid, k = id.split(/[-:]/)[0];
     if (k === 'RM') { S.tab = 'roadmap'; S.rm = { item: id, view: S.rm.view }; S.rmJump = true; history.replaceState(null, '', rmUrl()); render(); return; }   // META-ROADMAP S2

@@ -236,7 +236,7 @@ export function alarmWords(g, { test_share = null, ctx = null, moving = false } 
  */
 export function runProgress(run, { runs = {}, brief = null, notes = null, mails = [], work = workInit(), guard = [], cpu = null, ctx = null, now = Date.now(), stall_min = STALE_MIN } = {}) {
   const sess = sessionsOf(run, runs), first = sess[0] ?? run, live = run.state === 'running';
-  const plan = briefPlan(brief), added = mails.filter(m => Date.parse(m.created) > Date.parse(first.created)).sort((a, b) => num(a.id) - num(b.id));
+  const plan = briefPlan(brief), added = mails.filter(m => Date.parse(m.created) >= Date.parse(first.created)).sort((a, b) => num(a.id) - num(b.id));
   const end = live ? now : Date.parse(endOf(run) ?? '') || now;
   const items = checklist({ plan, mails: added, work, notes, now: end }), done = items.filter(x => x.state === 'done').length;
   const doing = live ? nowDoing(work, now) : null;
@@ -269,4 +269,20 @@ export function runProgress(run, { runs = {}, brief = null, notes = null, mails 
   const moving = !!moved && Date.parse(moved) >= now - stall_min * 60000;
   const alarms = guard.map(g => ({ id: g.id, state: g.state, ...alarmWords(g, { test_share: ts, ctx, moving }) }));
   return { run: run.id, line, items, done, total: items.length, now: doing ? { verb: doing.verb, item: which?.n ?? null } : null, pace, slow, alarms, done_when: plan.done };
+}
+
+/** the folds of a stage's sessions (oldest first) as one: a commit of session 1 still counts in session 2; the open calls are the last's */
+export const mergeWork = ws => ws.filter(Boolean).reduce((a, w) => ({ open: w.open, calls: [...a.calls, ...w.calls], commits: [...a.commits, ...w.commits.filter(c => !a.commits.some(x => x.sha === c.sha))],
+  seen: new Set([...a.seen, ...w.seen]), first: a.first ?? w.first, last: w.last ?? a.last }), workInit());
+
+/**
+ * laneSteps(name, items, now) -> { last: "S1 done 2 h ago (RUN-148)" | null, next: "MERGE queued" | null }: the newest finished stage of
+ * the lane and the run queued on it (a queued MERGE reads "merge queued"); the PR state is laneOutput's (purpose.mjs)
+ */
+export function laneSteps(name, items = {}, now = Date.now()) {
+  const runs = Object.values(items).filter(r => r.kind === 'run' && r.data?.lane === name && r.data.role !== 'helper').sort((a, b) => num(b.id) - num(a.id));
+  const fin = runs.find(r => r.state === 'exited' && r.end?.outcome === 'done'), q = runs.filter(r => r.state === 'queued').at(-1);
+  const ago = r => { const t = Date.parse(endOf(r) ?? ''); return Number.isFinite(t) ? ` ${fmtMin(mins(now - t))} ago` : ''; };
+  return { last: fin ? `${fin.data.stage ?? 'a run'} done${ago(fin)} (${fin.id})` : null,
+    next: q ? (isLanding(q.data) ? `merge queued (${q.id})` : `${q.data.stage ?? 'a run'} queued (${q.id})`) : null };
 }
