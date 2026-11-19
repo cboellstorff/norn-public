@@ -83,8 +83,8 @@ export function shell(cmd) {
   const c = stripCd(cmd), first = c.split(/\s*(?:&&|\|\||;|\|)\s*/)[0];
   if (TEST_RE.test(c)) return { kind: 'test' };
   if (/\bgit\s+(?:-C\s+\S+\s+)?commit\b/.test(c)) {
-    const m = c.match(/\bgit\s+(?:-C\s+\S+\s+)?commit\b[^\n]*?\s-[a-zA-Z]*m\s*(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|"\$\(cat <<'?(\w+)'?\n([^\n]*))/);
-    return { kind: 'commit', msg: m ? line1((m[1] ?? m[2] ?? m[4] ?? '').replace(/\\"/g, '"')) : null };
+    const m = c.match(/\bgit\s+(?:-C\s+\S+\s+)?commit\b[^\n]*?\s-[a-zA-Z]*m\s*(?:"((?:[^"\\]|\\.)*)"|'([^']*)')/);
+    return { kind: 'commit', msg: m ? line1((m[1] ?? m[2]).replace(/^\$\(cat <<-?'?\w+'?[ \t]*\n/, '').replace(/\\"/g, '"')) || null : null };   // -m "$(cat <<'EOF' ...": the line after
   }
   let m = first.match(/^sed\s+-n\s+['"]?(\d+)(?:,(\d+))?p['"]?\s+(\S+)$/);
   if (m && pathy(unq(m[3]))) return { kind: 'read', file: unq(m[3]), from: Number(m[1]), to: Number(m[2] ?? m[1]) };
