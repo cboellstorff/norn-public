@@ -85,6 +85,8 @@ import { crossingsAsync } from '../lib/advisory.mjs';
 import { slopHolds, openBlocks, slopFiles, waiverCmd } from '../lib/slop/host.mjs';
 import { explainOf } from '../lib/slop/check.mjs';
 import { refusals, withRefusals, REFUSAL_DAYS, refusalsFile } from '../lib/scope.mjs';
+import { pickHalf, nearEndMin, pauseState } from '../lib/pause.mjs';
+import { PAUSE_MODES, parsePause, stopsCheckins, holdsStarts } from '../lib/pausemode.mjs';
 
 const DASH = path.dirname(fileURLToPath(import.meta.url));
 const META_CLI = path.join(DASH, '..', 'bin', 'norn.mjs');
@@ -262,17 +264,28 @@ export function createDashboard(o) {
     return c.st;
   }
   /** a GET's snapshot: every project's records fold + its settings / status files, read concurrently on fs.promises */
-  // + the small records files (the fold's two come from stAsync), their stats, the running runs' heartbeats, the PAUSED / tick.lock flags
+  // + the small records files (the fold's two come from stAsync), their stats, the running runs' heartbeats, the PAUSED records (pausemode.mjs), the tick.lock flag
   const primeFor = ps => Promise.all(ps.flatMap(p => [
     stAsync(p).then(x => { const live = runsOf(x).filter(r => r.state === 'running');
       // handoffOf's reads (hoHooks): each running run's result.json, a running hand-off resume's transcript / rollout tail
       return Promise.all([prime({ files: [...auditFiles(p, x.items), ...live.map(r => resultPath(p.state, r.id))], stats: live.map(r => hbPath(p.state, r.id)) }),
         primeAgents(live.filter(r => r.data.resume_of), { projectsDir, codexDir, cache })]); }),
     readA(p.file), readA(path.join(p.state, 'STATUS.md')),
-    prime({ files: [authFile(p.state), vendorCacheFile(p.state), overlapFile(p.state), laneRulesFile(p.state), lanePathsFile(p.state), path.join(p.state, 'home.json'), ...(p.policy_targets || []), ...RECORD_FILES.filter(f => f !== 'records' && f !== 'runs').map(f => path.join(p.state, f + '.jsonl'))],
-      stats: [...RECORD_FILES.map(f => path.join(p.state, f + '.jsonl')), ...pausedFiles(p), path.join(p.state, 'tick.lock'), p.state, (p.project_dir || p.file) && rulesFile(p), ...(p.docs || []).map(d => d.path)] })])
+    prime({ files: [authFile(p.state), vendorCacheFile(p.state), overlapFile(p.state), laneRulesFile(p.state), lanePathsFile(p.state), ...pausedFiles(p), path.join(p.state, 'home.json'), ...(p.policy_targets || []), ...RECORD_FILES.filter(f => f !== 'records' && f !== 'runs').map(f => path.join(p.state, f + '.jsonl'))],
+      stats: [...RECORD_FILES.map(f => path.join(p.state, f + '.jsonl')), path.join(p.state, 'tick.lock'), p.state, (p.project_dir || p.file) && rulesFile(p), ...(p.docs || []).map(d => d.path)] })])
     .concat(o.budgetFile ? [readA(o.budgetFile, '{}')] : [], o.quietFile ? [readA(o.quietFile)] : [], o.liveUsage ? [readA(o.liveUsage)] : []));
   const pausedFiles = p => [path.join(path.dirname(path.resolve(p.state)), 'PAUSED'), path.join(p.state, 'PAUSED')];
+  // RM-37: the pause in force (pausemode.mjs, read through the snapshot) + what waits because of it: the queued runs it holds, the runs asked to
+  // pause, the paused hand-offs; the modes and their one-line effects (the header's pause menu)
+  const pauseOfP = p => { for (const f of pausedFiles(p)) { const raw = readText(f); if (raw !== null) return parsePause(raw, f); } return null; };
+  const pauseView = ps => {
+    const p = ps.find(x => pauseOfP(x)) ?? null, pz = p ? pauseOfP(p) : null, runs = ps.flatMap(x => runsOf(st(x)).map(r => ({ ...r, project: x.name })));
+    const row = r => ({ run: r.id, lane: r.data.lane ?? null, project: r.project, stage: r.data.stage ?? null });
+    return { pause: pz ? { ...pz, project: p.name, says: PAUSE_MODES[pz.mode].says, checkins: stopsCheckins(pz) } : null,
+      modes: Object.entries(PAUSE_MODES).map(([mode, m]) => ({ mode, ...m })),
+      waiting: { held: holdsStarts(pz) ? runs.filter(r => r.state === 'queued').length : 0, asked: runs.filter(r => pauseState(r) === 'asked').map(row),
+        handoffs: runs.filter(r => pauseState(r) === 'handoff').map(row) } };
+  };
 
   // ---------- budget (machine) + policy (project) ----------
   function budgetRaw() { return read(o.budgetFile, '{}'); }
@@ -423,7 +436,8 @@ export function createDashboard(o) {
   function lanes(p, all) {
     const ov = overlapOn(p.policy) ? readJsonS(overlapFile(p.state))?.lanes || {} : {};
     const pol = withDefaults(settingsState(p).view).policy;   // lifecycle.mjs: the row's rule (idle / stopped / archives in n days) from the tick's git answers
-    return lanesView(st(p), { all, hbAge: hbAge(p), ...hoHooks(p), oldDays: pol.done_lanes.old_days, ...lanePolicy(pol), ...laneHooks(p.state) }).map(l => ({ ...l, project: p.name, ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}) }));
+    const s = st(p), pz = l => pauseState(s.items[l.run]);   // RM-37: the lane's latest run: Pause / pausing / Resume
+    return lanesView(s, { all, hbAge: hbAge(p), ...hoHooks(p), oldDays: pol.done_lanes.old_days, ...lanePolicy(pol), ...laneHooks(p.state) }).map(l => ({ ...l, project: p.name, ...(l.run_state === 'running' && ov[l.name]?.overlaps?.length ? { overlap: ov[l.name].overlaps } : {}), ...(pz(l) ? { pause: pz(l) } : {}) }));
   }
   // gap #9: API billing only - one project's $ per lane: today / 7 days / to date (ended runs = the CLI's figure, running = a live estimate)
   const apiOn = ps => billingOf(withDefaults(settingsState(ps[0]).view))?.type === 'api';
@@ -503,8 +517,8 @@ export function createDashboard(o) {
     // RM-39: a worker run's progress line + the lane overview card on its Lane cell (the lane's row data, this run's progress)
     const pg = await progressOf(p, tree.map(n => n.id), id => tree.find(n => n.id === id)?.ctx ?? null), names = new Set(tree.map(n => n.lane).filter(Boolean));
     const items = st(p).items, rows = new Map(names.size ? withDriver(p, lanes(p, true).filter(l => names.has(l.name))).map(l => [l.name, l]) : []);
-    return tree.map(n => { const rf = refused(n.id), g = pg.get(n.id), l = n.lane && n.kind !== 'checkin' ? rows.get(n.lane) : null;
-      return { ...n, project: p.name, ...(gc.has(n.id) ? { guard: gc.get(n.id) } : {}), ...(rf.length ? { refused: rf } : {}), ...(g ? { progress: g } : {}),
+    return tree.map(n => { const rf = refused(n.id), g = pg.get(n.id), pz = pauseState(byId.get(n.id)), l = n.lane && n.kind !== 'checkin' ? rows.get(n.lane) : null;
+      return { ...n, project: p.name, ...(gc.has(n.id) ? { guard: gc.get(n.id) } : {}), ...(rf.length ? { refused: rf } : {}), ...(g ? { progress: g } : {}), ...(pz ? { pause: pz } : {}),
         ...(l ? { lane_card: cardOf({ ...l, stage: n.stage, steps: laneSteps(l.name, items) }, g) } : {}) }; });
   }
   // the Ledger tab (LEDGER-UX R1): `count` lines (default 100, max 2000) ending `offset` lines before the end ("show older" pages);
@@ -643,7 +657,7 @@ export function createDashboard(o) {
     return { now: iso(), projects: ps.map(p => p.name), needs_you: needsYou(needs), needs,
       running: { claude: { n: claude, cap: m.max_claude_workers ?? null }, codex: { n: codex, cap: m.max_codex ?? null }, lanes: running },
       burn: { usage: usage(ps[0], m), top: burners, executors: providerUsage(ps) },
-      strip: stripOf(ps, running, m), paused: ps.some(p => pausedFiles(p).some(existsS)), checkin_locked: ps.some(p => lockFresh(p)),
+      strip: stripOf(ps, running, m), ...pauseView(ps), checkin_locked: ps.some(p => lockFresh(p)),
       // META-OOTB F-1: a project with no records yet gets the first-task box (+ the caps in force; null = unset = no limit)
       first_run: ps.length === 1 && !Object.keys(st(ps[0]).items).length ? { project: ps[0].name, lane: FIRST_LANE,
         caps: Object.fromEntries(['max_claude_workers', 'max_codex', 'weekly_stop_pct', 'usage_rate_cap_pct_per_h'].map(k => [k, m[k] ?? null])) } : null,
@@ -1088,7 +1102,7 @@ export function createDashboard(o) {
       .sort((a, b) => (a.state === 'running' ? 0 : 1) - (b.state === 'running' ? 0 : 1));
     const u = usage(p, m), items = Object.values(s.items);
     const side = { now, usage: { used: u.weeklyUsed ?? null, stop: u.weeklyStopPct ?? null }, interval_min: m.policy?.cadence?.checkin_interval_min ?? null,
-      paused: pausedFiles(p).some(existsS), limits: limitLines(p.state),   // META-LIMIT-GATE: executors out of quota
+      checkins_paused: stopsCheckins(pauseOfP(p)), limits: limitLines(p.state),   // RM-37: Pause check-ins / Pause everything   // META-LIMIT-GATE: executors out of quota
       waiting: needs.map(n => ({ id: n.id, type: n.type, title: n.title ?? (n.type === 'unreviewed' ? `${n.lane ?? 'run'} ${String(n.outcome ?? n.state).toUpperCase()}` : n.type === 'parked' ? `lane ${String(n.id).slice(2)} parked` : n.id), created: n.created ?? null })),
       ruled: items.filter(i => i.kind === 'decision' && new Date(i.created).toDateString() === today).sort(byNew).slice(0, 6)
         .map(d => ({ id: d.id, text: d.data.question ? `${d.data.question}: ${d.data.choice ?? ''}` : d.data.choice ?? d.data.text ?? '', created: d.created, state: d.state })),
@@ -1410,11 +1424,19 @@ data: ${JSON.stringify(l)}
       } catch (e) { if (e.code === 409) throw fail(409, e.message); throw e; }
     }
     if (route === '/api/pause') {
-      if (typeof data.paused !== 'boolean') throw fail(400, 'paused must be boolean');
-      const f = path.join(p.state, 'PAUSED');
-      if (data.paused) { await fs.promises.mkdir(p.state, { recursive: true }); await fs.promises.writeFile(f, iso() + '\n'); } else { try { await fs.promises.unlink(f); } catch (e) { if (e.code !== 'ENOENT') throw e; } }
-      return { paused: data.paused };
+      // RM-37: every pause is the CLI's (`norn pause` / `norn resume`, pause.mjs) run as a child: no sync write here. Exactly one of
+      // { mode, why? } | { runs: [RUN-n], why? } (a safe pause of each) | { resume: RUN-n | 'all' }
+      const runs = Array.isArray(data.runs) ? data.runs.map(String) : null, asks = ['mode', 'runs', 'resume'].filter(k => data[k] !== undefined);
+      if (asks.length !== 1) throw fail(400, 'give exactly one of mode | runs | resume');
+      if (runs && (!runs.length || !runs.every(r => /^RUN-\d+$/.test(r)))) throw fail(400, 'runs must be RUN-n ids');
+      if (data.resume !== undefined && !(data.resume === 'all' || /^RUN-\d+$/.test(String(data.resume)))) throw fail(400, 'resume must be RUN-n or all');
+      const args = data.mode !== undefined ? ['pause', '--mode', String(data.mode)] : runs ? ['pause', ...runs] : data.resume === 'all' ? ['resume', '--all'] : ['resume', String(data.resume)];
+      const r = await metaCli([...args, ...(data.why && data.resume === undefined ? ['--why', line(data.why)] : []), '--state', p.state, '--as', 'dashboard']);
+      if (r.code) throw cliFail(r);
+      return { ok: true, out: r.out.trim() };
     }
+    // RM-37: pause half's pick (reads only): its confirm line lists the runs; the confirm posts them to /api/pause { runs }
+    if (route === '/api/pause/half') return pickHalf(p.state, { nearEnd: nearEndMin(p.policy) });
     if (route === '/api/stop') {
       if (data.confirm !== true) throw fail(400, 'confirm must be true');
       const r = st(p).items[String(data.run)];
@@ -1723,7 +1745,7 @@ data: ${JSON.stringify(l)}
       }
       if (route === '/api/checkin') {
         const p = projectOf(data);
-        if (pausedFiles(p).some(existsS)) throw fail(409, 'Check-ins are paused. Resume them first.');
+        if (stopsCheckins(pauseOfP(p))) throw fail(409, 'Check-ins are paused. Resume them first.');
         if (lockFresh(p) || checkinStarting) throw fail(409, 'A check-in is already running or starting.');
         checkinStarting = true;
         try { return send(200, await platform.tick(p)); } finally { const t = setTimeout(() => { checkinStarting = false; }, 5000); t.unref(); }

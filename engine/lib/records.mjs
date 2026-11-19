@@ -88,6 +88,8 @@ export const KINDS = {
     hold: { from: ['queued'], to: null, roles: ['launcher'] },
     // META-AUTONOMY R1: a ruling 'its work counts as merged on main' (git cannot see it): { why, sha? } - after.mjs honours it
     landed: { from: ['exited', 'filled', 'lost', 'killed', 'withdrawn'], to: null, roles: [...OWNER, ...CK] },
+    // RM-37: the owner's safe pause of a running work run ({ mail: MAIL-n, why? }): the urgent order went out; its HANDOFF end is paused (pause.mjs)
+    pause: { from: ['running'], to: null, roles: [...OWNER, 'controller'] },
     // META-CHECKIN-GUARDS R1: a guard refused a move of this (running) run ({ guard: busy | owner-only, why, lane, stage?, answers? })
     refuse: { from: ['running'], to: null, roles: ['launcher'] },
   } },
@@ -118,7 +120,7 @@ export const KINDS = {
   // one wins, the other is refused - the state machine, never a reader-side dedupe. nudge = the supervisor's one claim of an
   // urgent unacked mail (it resumes the run with the mail as its prompt). Owner asks stay Q records.
   mail: { prefix: 'MAIL-', file: 'mail', events: {
-    create: { from: null, to: 'queued', roles: MAILERS },
+    create: { from: null, to: 'queued', roles: [...MAILERS, ...OWNER] },   // RM-37: the owner's pause order (pause.mjs)
     deliver: { from: ['queued'], to: 'delivered', roles: ['launcher', ...MAILERS] },
     nudge: { from: ['queued', 'delivered'], to: 'delivered', roles: ['launcher'] },
     ack: { from: ['queued', 'delivered'], to: 'acked', roles: MAILERS },
