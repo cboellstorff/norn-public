@@ -99,6 +99,11 @@ test('long text clamps behind "more" only when asked; sanitize runs last; shortP
   assert.match(long, /<button type="button" class="ghost pmore" data-act="prose-more" aria-expanded="false">more<\/button>$/);
   assert.doesNotMatch(renderProse('short', { ...CTX, clamp: true, key: 'k' }), /pclamp|pmore/);
   assert.equal(renderProse('x', { sanitize: () => 'CLEAN' }), 'CLEAN');
+  // inline: text inside a line (a <p>, an <li>) is one <span> - no <div> or <p> a browser would hoist out of the line; never clamped
+  const inl = renderProse(Q4, { ...CTX, inline: true, clamp: true, key: 'k' });
+  assert.match(inl, /^<span class="prose pinline">[\s\S]*<\/span>$/); assert.doesNotMatch(inl, /<(div|p)\b|pmore/);
+  assert.match(inl, /data-rid="RUN-146"/);
+  assert.equal(renderProse('no **context** line', { inline: true }), '<span class="prose pinline">no <strong>context</strong> line</span>');
   assert.equal(shortPath('engine/dash/ui.mjs'), '…/dash/ui.mjs');
   assert.equal(shortPath('dash/ui.mjs'), 'dash/ui.mjs');
   const doc = renderProse('read `engine/prompts/CHECKIN.md`', { ...CTX, docs: { 'engine/prompts/CHECKIN.md': 'ins-7' } });

@@ -4,7 +4,7 @@
 // in the browser (/prose.mjs) and in node --test.
 //
 // API (small on purpose: RM-30 S2, RM-27 and RM-28 render through it):
-//   renderProse(text, ctx?) -> safe HTML, one <div class="prose">. text = plain text or markdown; \r\n is normalised and a single line
+//   renderProse(text, ctx?) -> safe HTML, one <div class="prose"> (one <span> with ctx.inline). text = plain text or markdown; \r\n is normalised and a single line
 //     break is kept. ctx (every key optional):
 //       project   the project the text belongs to (chips carry it: data-project)
 //       lanes     [lane name]: bare known lane names become lane chips (a plain-word name only right after "lane")
@@ -12,6 +12,8 @@
 //       docs      { <path as written>: <Docs file key> } (the server resolves pathsIn): such a path opens in the Docs reader
 //       sanitize  html -> html (the browser's DOMPurify), run last
 //       clamp     true: long text shows a 3-line preview + "more" on the phone; key = a stable id so "more" survives a re-render
+//       inline    true: one <span class="prose pinline"> for text inside a line (a reason after a chip, in a <p> or <li>): inline
+//                 markdown only (no lists or paragraphs; a line break is a <br>), never clamped
 //   pathsIn(text) -> [path as written]: the file paths renderProse shows as path chips (what the server resolves into ctx.docs)
 // What it marks, never inside code, links or paths: RUN- Q- DEC- DIR- DLV- RM- WVR- MAIL- ids and L:lane as chips (data-rid /
 // data-dlv: the page opens each where it lives); PR #n; a commit sha next to a git word or alone in backticks; file paths (absolute
@@ -165,7 +167,7 @@ const unesc = s => s.replace(/&(amp|lt|gt|quot|#39|#x27);/g, (_, e) => ({ amp: '
 export function renderProse(text, ctx = {}) {
   const src = clean(text);
   if (!src.trim()) return '';
-  if (src.length > MAX_PROSE) return `<div class="prose"><pre class="code">${esc(src)}</pre></div>`;
+  if (src.length > MAX_PROSE) return ctx.inline ? `<span class="prose pinline">${esc(src)}</span>` : `<div class="prose"><pre class="code">${esc(src)}</pre></div>`;
   const store = [];
   const put = (raw, html) => { if (store.length > PMAX) return null; store.push({ raw, html }); return P0 + String.fromCharCode(PBASE + store.length - 1) + P1; };
   const MATH = /(?<![\w$\\])\$(?=[^\s$\d])([^$\n]{1,120}?[^\s$\\])\$(?![\w$])/g;
@@ -179,11 +181,12 @@ export function renderProse(text, ctx = {}) {
   const back = (s, html) => s.replace(PH_RE, (_, c) => { const x = store[c.charCodeAt(0) - PBASE]; return x ? (html ? x.html : esc(x.raw)) : ''; });
   const re = inlineRe(ctx);
   let skip = 0;
-  let html = md.parse(cut).split(/(<[^>]+>)/).map(part => {
+  let html = (ctx.inline ? md.parseInline(cut) : md.parse(cut)).split(/(<[^>]+>)/).map(part => {
     if (part.startsWith('<')) { const m = part.match(/^<(\/?)(a|code|pre)\b/i); if (m) skip += m[1] ? -1 : 1; return back(part, false); }
     if (!part) return part;
     return skip > 0 ? back(part, false) : back(inline(unesc(part), ctx, re), true);
   }).join('');
+  if (ctx.inline) { html = `<span class="prose pinline">${html}</span>`; return ctx.sanitize ? ctx.sanitize(html) : html; }
   const long = ctx.clamp && (src.length > CLAMP_CHARS || src.split('\n').filter(l => l.trim()).length > CLAMP_LINES);
   html = `<div class="prose${long ? ' pclamp' : ''}"${long && ctx.key ? ` data-key="${esc(ctx.key)}"` : ''}>${html}</div>${long ? '<button type="button" class="ghost pmore" data-act="prose-more" aria-expanded="false">more</button>' : ''}`;
   return ctx.sanitize ? ctx.sanitize(html) : html;
