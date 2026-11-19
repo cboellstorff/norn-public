@@ -35,7 +35,8 @@ import { floorOf, floorText } from './floor.mjs';
 import { isApi, usdCap } from './billing.mjs';
 import { loadRoadmap, buildTree, itemsOf } from './roadmap.mjs';
 import { stuckSweep, stuckProbe, stuckWake } from './stuck.mjs';
-import { tickLanes, lanesProbe, tickPaths } from './lifecycle.mjs';
+import { tickLanes, lanesProbe } from './lifecycle.mjs';
+import { tickPaths } from './lanepaths.mjs';
 
 const ENGINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const CHECKIN_PROMPT = path.join(ENGINE, 'prompts', 'CHECKIN.md');
@@ -208,7 +209,7 @@ function tickPass(o, g = {}) {
     if (o.overlap !== false && !o.dry) projectOverlap(p);
     // a merge / batch / park question whose deliverable landed meanwhile is stale: withdrawn before the digest (never fails the tick)
     if (!o.dry) try { for (const c of closeLandedQuestions(state, { project: p })) tickLog(state, `${tag}: question ${c.q} withdrawn - ${c.why}`); } catch (e) { tickLog(state, `${tag}: stale questions: ${e.message}`); }
-    // item 9 (MAIL-20, lifecycle.mjs tickPaths): finished work reaches a PR by code - unpushed commits pushed, the MERGE stage queued (P1)
+    // item 9 (MAIL-20, lanepaths.mjs tickPaths): finished work reaches a PR by code - unpushed commits pushed, the MERGE stage queued (P1)
     if (!o.dry || o.lanes) try { for (const x of tickPaths(state, { project: p, dry: !!o.dry, cli: o.cli || metaCli(META_CMD), ...(o.now ? { now: o.now().getTime() } : {}) })) tickLog(state, `${tag}: path to main ${x.id}: ${x.act} - ${x.note}`); } catch (e) { tickLog(state, `${tag}: path to main: ${e.message}`); }
     // lane norn-lifecycle item 5 (lifecycle.mjs): no lane sits - the orphan / stopped-and-landed / done-merged-and-old lanes archived by code
     // before the digest (which then lists the idle and stopped ones for the check-in); never fails the tick

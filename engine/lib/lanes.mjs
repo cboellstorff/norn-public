@@ -3,9 +3,8 @@
 import { STALE_MS } from './runs.mjs';
 import { runName } from './names.mjs';
 import { loginCommand } from './authguard.mjs';
-import { laneRules, IDLE_H, ARCHIVE_DAYS } from './lifecycle.mjs';
+import { laneRules, IDLE_H, ARCHIVE_DAYS, runNum } from './lifecycle.mjs';
 
-const runNum = id => Number(String(id).slice(4));
 
 function runText(r, { now, hbAge, staleMs, items = {} }) {
   const d = r.data || {}, end = r.end || {};

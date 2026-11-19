@@ -677,7 +677,7 @@ const isoSec = d => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
 // DELIVERABLES-SPEC 5: a lane is not archived while one of its deliverables is DONE but not merged, unless it is parked with a
 // reason. Git is asked only here (a lane with an open deliverable), on the branch's current tip (else the tip recorded at DONE).
 function archiveGuard(stateDir, lane, ev = {}) {
-  // item 9 (MAIL-20): finished work not on main (lifecycle.mjs tickPaths: lane-paths.json) - only the owner's explicit override drops it
+  // item 9 (MAIL-20): finished work not on main (lanepaths.mjs tickPaths: lane-paths.json) - only the owner's explicit override drops it
   const pth = (() => { try { return JSON.parse(readText(path.join(stateDir, 'lane-paths.json'))); } catch { return null; } })()?.paths?.[lane];
   if (pth && pth.state !== 'merged' && !(['owner', 'dashboard'].includes(ev.by) && String(ev.data?.override ?? '').trim())) {
     const dir = fold(readEvents(recordsFile(stateDir, 'run'))).items[pth.run]?.data?.worktree;

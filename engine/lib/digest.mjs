@@ -224,7 +224,7 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   return { project: project?.name ?? null, at: new Date(now).toISOString(), window_h: WINDOW_H, sections, counts };
 }
 
-// item 9 (lifecycle.mjs tickPaths): a lane whose finished work is red on its path to main - at risk, or off main past OFF_MAIN_H with no
+// item 9 (lanepaths.mjs tickPaths): a lane whose finished work is red on its path to main - at risk, or off main past OFF_MAIN_H with no
 // merge step - is a row (rule off-main) until it reaches a PR
 const offMain = (stateDir, items, now) => { const h = laneHooks(stateDir);
   return items.filter(l => l.kind === 'lane' && ['active', 'done'].includes(l.state)).flatMap(l => { const x = h.path(l.id.slice(2), now);
