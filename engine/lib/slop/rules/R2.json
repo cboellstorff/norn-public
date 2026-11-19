@@ -37,7 +37,7 @@
       "head": {
         "engine/bin/norn.mjs": "const VERBS = ['run', 'done', 'slop'];\nconst U = 'usage: norn slop check | loc | sweep';\n",
         "docs/guide.md": "# Guide\n\nUse `norn <verb>`, never `git stash`; the state is `${state}/x/y.json`; run `norn slop check`; the CLI is `engine/bin/norn.mjs` ([the bin](../engine/bin/norn.mjs)).\n",
-        "engine/lib/hint.mjs": "export const hint = 'end with norn done when finished';\n"
+        "engine/lib/hint.mjs": "export const hint = 'end with norn done when finished';\nexport const why = v => `${v} is not a norn command`;\n"
       }
     }
   }

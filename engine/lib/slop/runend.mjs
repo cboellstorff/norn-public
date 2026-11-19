@@ -2,7 +2,7 @@
 // against main (the merge base; RM-44 D1: stopped, Done-red and hand-off too); a DONE's open BLOCK findings go back to the SAME lane
 // as one resume with the list (the supervisor). The merge doors (door.mjs) check the head they merge.
 import { gitRun, slopCheck, effectiveRules } from './check.mjs';
-import { loadState } from '../records.mjs';
+import { loadState, readEvents, recordsFile } from '../records.mjs';
 import { makeTool } from './tools.mjs';
 import { findingLine } from './host.mjs';
 
@@ -29,7 +29,14 @@ export function branchBase(repo, o = {}) {
  * from here, so the rule-set hash a stored check carries is the one the door looks for.
  */
 export function projectSlop({ state = null, projectDir = null } = {}) {
-  return { rules: effectiveRules({ projectDir }), resolve: state ? (items => id => items[id]?.state ?? null)(loadState(state).items) : null };
+  return { rules: effectiveRules({ projectDir }), resolve: state ? recordResolver(state) : null };
+}
+// K22 cites DEC / DIR / Q (the records) and RM (the roadmap's item events: open until dropped, reopen opens it again). Read here from the
+// item events, not through roadmap.mjs: that module reaches the merge queue, which reaches this one (a K10 cycle).
+function recordResolver(state) {
+  const items = loadState(state).items, rm = {};
+  for (const e of readEvents(recordsFile(state, 'item'))) if (e.kind === 'item') rm[e.id] = e.ev === 'drop' ? 'dropped' : e.ev === 'create' || e.ev === 'reopen' ? 'open' : rm[e.id];
+  return id => (id.startsWith('RM-') ? rm[id] : items[id]?.state) ?? null;
 }
 
 /** check a checkout's committed branch: { branch, base, result } | null (no lane branch to check). state + projectDir: projectSlop */

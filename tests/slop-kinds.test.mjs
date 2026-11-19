@@ -10,6 +10,7 @@ import { checkBranch } from '../engine/lib/slop/runend.mjs';
 import { classify, masked, CODE, COMMENT, STRING, QUOTE, helpers, exportsOf, usesOf, commentsIn, isReason } from '../engine/lib/slop/scan.mjs';
 import { depsOf } from '../engine/lib/slop/kinds.mjs';
 import { eslintConfig } from '../engine/lib/slop/tools.mjs';
+import { record } from '../engine/lib/records.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
 const SYNTH = path.join(import.meta.dirname, 'fixtures', 'slop-project');
@@ -117,4 +118,13 @@ test('checkBranch: the rules of the project folder join the check; K22 passes a 
   const r = slopCheck({ repo, base: 'main', rules: effectiveRules().filter(x => x.id === 'K22'), resolve: id => states[id] ?? null });
   assert.deepEqual(r.blocks.map(b => b.line), [2], 'line 1 cites an open item');
   assert.match(r.blocks[0].msg, /RM-2 is dropped$/);
+  // the project's own state resolves RM ids from the roadmap's item events (they are not in the records fold): open passes, dropped holds
+  const state = mkTmp('slop-state-'), item = (ev, id, data) => record(state, { kind: 'item', ev, id, by: 'controller', data }, { views: false });
+  const theme = item('create', undefined, { title: 'T', kind: 'theme' }).id;
+  const one = item('create', undefined, { title: 'one', kind: 'item', parent: theme }).id, two = item('create', undefined, { title: 'two', kind: 'item', parent: theme }).id;
+  item('drop', two, { why: 'w', ref: 'DEC-1' });
+  fs.writeFileSync(path.join(repo, 'a.mjs'), `// for now the retry is off (${one})\n// a stop-gap until ${two} lands\nexport const a = 1;\n`);
+  git('add', '-A'); git('commit', '-qm', 'cite the state ids');
+  const s = checkBranch({ repo, state, rules: effectiveRules().filter(x => x.id === 'K22'), tool: () => null });
+  assert.deepEqual(s.result.blocks.map(b => [b.line, b.msg.split(': ').pop()]), [[2, `${two} is dropped`]], `${one} resolves open from the state`);
 });

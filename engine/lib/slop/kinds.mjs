@@ -113,9 +113,9 @@ export function refs(rule, ctx) {
     const { verbs, subs } = cliAt(rule, ctx, side), tree = new Set(ctx.tree(side)), tops = new Set([...tree].map(f => f.split('/')[0]));
     return mine.flatMap(({ e, file, text }) => {
       const out = [], md = !isJs(file), hit = (i, msg, snippet) => out.push({ file: e.path, line: lineAt(text, i), msg, snippet });
-      // commands: a doc's `code spans`; a JS file's strings (UI text, prompts)
+      // commands: a doc's `code spans`; a JS file's strings (UI text, prompts). After an article it is prose ("not a norn command"), not a call
       const spans = md ? [...text.matchAll(/`([^`\n]+)`/g)].map(m => [m.index + 1, m[1]]) : [[0, masked(text, ['string'], file)]];
-      for (const [at, s] of spans) for (const m of s.matchAll(/(?<![\w/-])norn ([a-z][a-z-]*)(?: ([a-z][a-z-]*)(?![\w-]))?/g)) {
+      for (const [at, s] of spans) for (const m of s.matchAll(/(?<![\w/-])(?<!\b(?:a|an|the|no|every|one) )norn ([a-z][a-z-]*)(?: ([a-z][a-z-]*)(?![\w-]))?/g)) {
         if (!verbs.has(m[1])) hit(at + m.index, `\`norn ${m[1]}\` is not a norn command`, `norn ${m[1]}`);
         else if (m[2] && subs.has(m[1]) && !subs.get(m[1]).has(m[2])) hit(at + m.index, `\`norn ${m[1]} ${m[2]}\` is not a norn command (usage: norn ${m[1]} ${[...subs.get(m[1])].slice(0, 8).join(' | ')} ...)`, `norn ${m[1]} ${m[2]}`);
       }
