@@ -106,9 +106,11 @@ test('ci-suite: the calling run identity (META_RUN_ID, META_ROLE, META_STATE, ..
 
 // 11-13 MAIL-33: `node --test` run straight from a worker (no ci-suite) inherited META_RUN_ID / META_RUN_STATE / META_JOB: 4 tests in
 // cli / digest / delegate went red and mail.test hung. tests/helpers/tmp.mjs (every spawning test file imports it) drops CALLER_ENV.
-test('tests/helpers/tmp.mjs: importing it drops the calling run identity (CALLER_ENV, META_JOB, META_PARENT_RUN) from process.env', () => {
+// wt-reds: META_RESULT_DIR too - with it and no META_RUN_ID the fake executor's writeResult threw, so probe.test (fake) went red in a worker.
+test('tests/helpers/tmp.mjs: importing it drops the calling run identity (CALLER_ENV, META_JOB, META_PARENT_RUN, META_RESULT*) from process.env', () => {
   const ids = { META_RUN_ID: 'RUN-1', META_RUN_STATE: '/x/state', META_ROLE: 'checkin', META_STATE: '/x/state', META_PROJECT: 'p',
-    META_SESSION_ID: 's', META_RESUMES: '1', META_NOTES: '/x/NOTES.md', META_JOB: 'j', META_PARENT_RUN: 'RUN-2', CLAUDECODE: '1' };
+    META_SESSION_ID: 's', META_RESUMES: '1', META_NOTES: '/x/NOTES.md', META_JOB: 'j', META_PARENT_RUN: 'RUN-2', CLAUDECODE: '1',
+    META_RESULT: '/x/state/results/RUN-1/result.json', META_RESULT_DIR: '/x/state/results/RUN-1' };
   const r = spawnSync(process.execPath, ['--input-type=module', '-e',
     "await import('./tests/helpers/tmp.mjs'); console.log(JSON.stringify(Object.keys(process.env).filter(k => /^(META_|CLAUDECODE$)/i.test(k))))"],
     { cwd: REPO, encoding: 'utf8', env: { ...process.env, ...ids, META_WALL_STEP_MS: '5' } });
