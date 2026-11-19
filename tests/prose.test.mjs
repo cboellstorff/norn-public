@@ -10,7 +10,7 @@ import { fixture } from './helpers/dash-fixture.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
 
 // the real solve-shack Q-4 body (one paragraph, \r\n, four brief names, measurements, a run id, a lane, a long absolute path)
-const Q4 = 'RUN-146 (perf-audit) is done and measured the slow paths. It queued nothing; four ranked briefs sit in C:/Users/cboellstorff/Documents/Github/norn-public/state/solve-shack/notes/perf-audit/: brief-worker-gil.md (one-line GIL switch interval, UI stalls 2.4 s -> ~0.5 s for every worker), brief-inspect-fast.md (Inspect on New job 10.1 s -> ~5.5 s, instant on repeat), brief-long-run-ui.md (5 160-iteration runs stall 0.6-1.9 s per open; rests on synthetic sizes), brief-residual-rust.md (residual file parse 2.7-4.3 s; needs the mesh Rust lane on main; synthetic sizes). Which to queue, and in what order? Check-ins queue none of them without your pick.\r\n';
+const Q4 = 'RUN-146 (perf-audit) is done and measured the slow paths. It queued nothing; four ranked briefs sit in D:/work/norn-public/state/solve-shack/notes/perf-audit/: brief-worker-gil.md (one-line GIL switch interval, UI stalls 2.4 s -> ~0.5 s for every worker), brief-inspect-fast.md (Inspect on New job 10.1 s -> ~5.5 s, instant on repeat), brief-long-run-ui.md (5 160-iteration runs stall 0.6-1.9 s per open; rests on synthetic sizes), brief-residual-rust.md (residual file parse 2.7-4.3 s; needs the mesh Rust lane on main; synthetic sizes). Which to queue, and in what order? Check-ins queue none of them without your pick.\r\n';
 const CTX = { project: 'solve-shack', lanes: ['perf-audit', 'mesh', 'main'], repo: 'acme/solve', docs: {} };
 const text = h => h.replace(/<[^>]+>/g, '');
 
@@ -18,8 +18,8 @@ test('the Q-4 body: run + lane chips, the long path shortened (full path in the 
   const h = renderProse(Q4, CTX);
   assert.match(h, /<a class="rid r-run" href="#" data-rid="RUN-146" data-project="solve-shack">RUN-146<\/a>/);
   assert.match(h, /data-rid="L:perf-audit"[^>]*>perf-audit<\/a>/, 'a known lane named bare is a lane chip');
-  assert.match(h, /<code class="pp" title="C:\/Users\/cboellstorff\/Documents\/Github\/norn-public\/state\/solve-shack\/notes\/perf-audit\/">…\/notes\/perf-audit<\/code>/);
-  assert.match(h, /data-act="copy-path" data-copy="C:\/Users\/cboellstorff\/[^"]*perf-audit\/"/);
+  assert.match(h, /<code class="pp" title="D:\/work\/norn-public\/state\/solve-shack\/notes\/perf-audit\/">…\/notes\/perf-audit<\/code>/);
+  assert.match(h, /data-act="copy-path" data-copy="D:\/work\/[^"]*perf-audit\/"/);
   for (const f of ['brief-worker-gil.md', 'brief-inspect-fast.md', 'brief-long-run-ui.md', 'brief-residual-rust.md']) assert.match(h, new RegExp(`class="pp" title="${f}">${f}<`), f);
   assert.match(h, /<span class="pba" title="before → after"><span class="pv">2.4\u00a0s<\/span><span class="parr">→<\/span><span class="pv">≈0.5\u00a0s<\/span><\/span>/);
   assert.match(h, /<span class="pv">10.1\u00a0s<\/span><span class="parr">→<\/span><span class="pv">≈5.5\u00a0s<\/span>/);
@@ -28,7 +28,7 @@ test('the Q-4 body: run + lane chips, the long path shortened (full path in the 
   assert.doesNotMatch(h, /data-rid="L:mesh"|data-rid="L:main"/, 'a plain-word lane (mesh, main) is a chip only right after "lane"');
   assert.match(text(h), /5 160-iteration runs/, 'a count beside a word is left alone');
   assert.doesNotMatch(h, /\r/);
-  assert.deepEqual(pathsIn(Q4), ['C:/Users/cboellstorff/Documents/Github/norn-public/state/solve-shack/notes/perf-audit/', 'brief-worker-gil.md', 'brief-inspect-fast.md', 'brief-long-run-ui.md', 'brief-residual-rust.md']);
+  assert.deepEqual(pathsIn(Q4), ['D:/work/norn-public/state/solve-shack/notes/perf-audit/', 'brief-worker-gil.md', 'brief-inspect-fast.md', 'brief-long-run-ui.md', 'brief-residual-rust.md']);
 });
 
 test('markdown and line breaks: \\r\\n kept as a break, lists, emphasis, code, tables', () => {
@@ -84,8 +84,8 @@ test('adversarial: HTML injection, a path containing ->, a lane that is an ordin
   assert.match(code, /<code>norn rec show Q-4 --full<\/code>/, 'an id inside a code span is code');
   assert.match(code, /<pre class="code"><code class="hljs">RUN-146 -&gt; 2.4 s C:\\x\\y.md<\/code><\/pre>/, 'nothing inside a fenced block is touched');
   assert.equal((code.match(/data-rid="Q-4"/g) || []).length, 1);
-  const win = renderProse('see C:\\Users\\x\\.claude\\settings.json.', CTX);
-  assert.match(win, /title="C:\\Users\\x\\.claude\\settings.json">…\/.claude\/settings.json<\/code>/, 'markdown never eats a backslash in a path; the full stop stays outside');
+  const win = renderProse('see D:\\cfg\\x\\.claude\\settings.json.', CTX);
+  assert.match(win, /title="D:\\cfg\\x\\.claude\\settings.json">…\/.claude\/settings.json<\/code>/, 'markdown never eats a backslash in a path; the full stop stays outside');
   assert.match(win, /<\/span>\.<\/p>/);
   const ph = renderProse('a \uE000\uE100\uE001 b', CTX);
   assert.doesNotMatch(ph, /[\uE000-\uF8FF]/, 'a placeholder smuggled into the text is dropped');
@@ -111,7 +111,7 @@ test('the Inbox: a Q-4-like body shows chips, a shortened path, a before→after
     const S = f.pa.state, deep = `${f.pa.root.replace(/\\/g, '/')}/notes/perf-audit/a-very-long-folder-name-that-would-push-a-phone-sideways-if-it-did-not-wrap/`;
     record(S, { kind: 'lane', ev: 'create', by: 'controller', data: { name: 'perf-audit' } });
     record(S, { kind: 'question', ev: 'create', by: 'controller', data: { title: 'Which perf-audit briefs to queue?', lane: 'perf-audit',
-      body: Q4.replace('C:/Users/cboellstorff/Documents/Github/norn-public/state/solve-shack/notes/perf-audit/', deep),
+      body: Q4.replace('D:/work/norn-public/state/solve-shack/notes/perf-audit/', deep),
       options: [{ key: 'A', text: 'Queue worker-gil and inspect-fast now; hold the other two', cost: 'two Claude runs' }, { key: 'B', text: 'Queue all four in listed order', cost: 'four runs, last two on synthetic evidence' }, { key: 'C', text: 'Queue none yet', cost: 'none' }],
       recommend: { key: 'A', why: 'the first two are measured on the real PF2 files (RUN-146); the last two rest on synthetic sizes' } } });
     const ib = (await f.get('/api/inbox?project=kestrel')).data;
