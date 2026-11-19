@@ -122,12 +122,12 @@ test('only new: a finding the base already had never blocks, even in a renamed f
   assert.equal(r2.blocks[0].line, 17);
 });
 
-test('waiver WVR-n: owner or controller (never a check-in), why required, scope = a fingerprint or a glob; it clears an open block until it ends', () => {
+test('waiver WVR-n: owner or controller (a check-in only applying an answered Q, tests/ruled.test.mjs), why required, scope = a fingerprint or a glob; it clears an open block until it ends', () => {
   const state = mkTmp('meta-slop-w-');
   const block = { rule: 'K2', level: 'BLOCK', file: 'engine/lib/a.mjs', line: 3, fp: 'a1b2c3d4e5f60718', new: true, msg: 'empty catch' };
   hostWrite(state, { type: 'check', branch: 'feat/x', lane: 'x', run: 'RUN-1', base: 'b', head: 'h', hash: 'r1', blocks: [block], findings: [block] });
   assert.equal(openBlocks(state, 'feat/x').length, 1);
-  assert.throws(() => record(state, { kind: 'waiver', ev: 'create', by: 'checkin', data: { rule: 'K2', scope: block.fp, why: 'x y' } }), /role/);
+  assert.throws(() => record(state, { kind: 'waiver', ev: 'create', by: 'checkin', data: { rule: 'K2', scope: block.fp, why: 'x y' } }), /owner answer: pass --q Q-n/);
   assert.throws(() => record(state, { kind: 'waiver', ev: 'create', by: 'owner', data: { rule: 'K2', scope: block.fp } }), /why/);
   const cli = spawnSync(process.execPath, [NORN, 'rec', 'add', 'waiver', '--state', state, '--as', 'controller', '--rule', 'K2', '--scope', 'engine/lib/*.mjs',
     '--why', 'the owner asked for this fallback (DIR-9)', '--until', '2999-01-01T00:00:00Z'], { encoding: 'utf8' });
