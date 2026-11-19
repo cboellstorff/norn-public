@@ -30,7 +30,7 @@ import { workClass, isFable } from './workclass.mjs';
 import { resolveAtFill } from './launchpolicy.mjs';
 import { floorOf, raiseToFloor, floorBinds } from './floor.mjs';
 import { pathKey, metaRoot } from './config.mjs';
-import { readPause, holdsStarts, pauseTerm, heldPriority } from './pause.mjs';
+import { readPause, holdsStarts, pauseTerm, heldPriority } from './pausemode.mjs';
 
 const fwd = p => String(p).replace(/\\/g, '/');
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -268,7 +268,7 @@ export function sweepLost(state, { staleMs = STALE_MS, by = 'status', now = () =
   return lost;
 }
 /** the HANDOFF auto-resume policy (cadence auto_resume_handoff / auto_resume_max, the weekly guard) for a run's spec -> { refused | null, count, max }.
- * RM-37: a pause never refuses it - startRun queues the resume while a pause holds starts (pause.mjs), and the fill starts it on release */
+ * RM-37: a pause never refuses it - startRun queues the resume while a pause holds starts (pausemode.mjs), and the fill starts it on release */
 export function autoResumeRefusal(spec, state) {
   const pol = spec.policy || {}, count = spec.resumes || 0, max = Number.isInteger(pol.auto_resume_max) ? pol.auto_resume_max : 2;
   const refused = pol.auto_resume_handoff === false ? 'auto-resume off' : count >= max ? `cap ${count}/${max}`
@@ -496,7 +496,7 @@ export function startRun(o) {
     return { ...queueRun(rest), queued: true, why: `labels ${o.labels.join(',')}: started by a machine that serves them` };
   }
   // RM-37: while a pause holds starts (Hold the queue / Pause everything) new work and hand-off resumes wait queued, never refused;
-  // a resume (a continuation) goes ahead of new work, merges first (pause.mjs heldPriority). A check-in and a helper are not held here.
+  // a resume (a continuation) goes ahead of new work, merges first (pausemode.mjs heldPriority). A check-in and a helper are not held here.
   if (!o.fromQueue && o.kind !== 'checkin' && o.role !== 'helper') {
     const ph = readPause(o.paused);
     if (holdsStarts(ph)) { const { queue: _q, ...rest } = o; return { ...queueRun(o.resumeOf ? { ...rest, priority: heldPriority(rest) } : rest), queued: true, why: `held: ${ph.label} (${ph.file})` }; }

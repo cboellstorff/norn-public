@@ -85,7 +85,8 @@ import { crossingsAsync } from '../lib/advisory.mjs';
 import { slopHolds, openBlocks, slopFiles, waiverCmd } from '../lib/slop/host.mjs';
 import { explainOf } from '../lib/slop/check.mjs';
 import { refusals, withRefusals, REFUSAL_DAYS, refusalsFile } from '../lib/scope.mjs';
-import { PAUSE_MODES, parsePause, stopsCheckins, holdsStarts, pickHalf, nearEndMin, pauseState } from '../lib/pause.mjs';
+import { pickHalf, nearEndMin, pauseState } from '../lib/pause.mjs';
+import { PAUSE_MODES, parsePause, stopsCheckins, holdsStarts } from '../lib/pausemode.mjs';
 
 const DASH = path.dirname(fileURLToPath(import.meta.url));
 const META_CLI = path.join(DASH, '..', 'bin', 'norn.mjs');
@@ -263,7 +264,7 @@ export function createDashboard(o) {
     return c.st;
   }
   /** a GET's snapshot: every project's records fold + its settings / status files, read concurrently on fs.promises */
-  // + the small records files (the fold's two come from stAsync), their stats, the running runs' heartbeats, the PAUSED records (pause.mjs), the tick.lock flag
+  // + the small records files (the fold's two come from stAsync), their stats, the running runs' heartbeats, the PAUSED records (pausemode.mjs), the tick.lock flag
   const primeFor = ps => Promise.all(ps.flatMap(p => [
     stAsync(p).then(x => { const live = runsOf(x).filter(r => r.state === 'running');
       // handoffOf's reads (hoHooks): each running run's result.json, a running hand-off resume's transcript / rollout tail
@@ -274,7 +275,7 @@ export function createDashboard(o) {
       stats: [...RECORD_FILES.map(f => path.join(p.state, f + '.jsonl')), path.join(p.state, 'tick.lock'), p.state, (p.project_dir || p.file) && rulesFile(p), ...(p.docs || []).map(d => d.path)] })])
     .concat(o.budgetFile ? [readA(o.budgetFile, '{}')] : [], o.quietFile ? [readA(o.quietFile)] : [], o.liveUsage ? [readA(o.liveUsage)] : []));
   const pausedFiles = p => [path.join(path.dirname(path.resolve(p.state)), 'PAUSED'), path.join(p.state, 'PAUSED')];
-  // RM-37: the pause in force (pause.mjs, read through the snapshot) + what waits because of it: the queued runs it holds, the runs asked to
+  // RM-37: the pause in force (pausemode.mjs, read through the snapshot) + what waits because of it: the queued runs it holds, the runs asked to
   // pause, the paused hand-offs; the modes and their one-line effects (the header's pause menu)
   const pauseOfP = p => { for (const f of pausedFiles(p)) { const raw = readText(f); if (raw !== null) return parsePause(raw, f); } return null; };
   const pauseView = ps => {

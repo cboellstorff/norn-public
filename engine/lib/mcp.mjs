@@ -21,7 +21,8 @@ import { tierOf, promptTier, cliPlan, ownerSaid, emit, requestApproval, showRoot
 import { readThread } from './chat.mjs';
 import { splitRepo, projectHome } from './monorepo.mjs';
 import { dupOf, dupMessage } from './dupdirs.mjs';
-import { PAUSE_MODES, MODE_NAMES, PauseError, pauseFiles, readPause, setPause, pauseRuns, pickHalf, nearEndMin, resumeRun, resumeAll } from './pause.mjs';
+import { PauseError, setPause, pauseRuns, pickHalf, nearEndMin, resumeRun, resumeAll } from './pause.mjs';
+import { PAUSE_MODES, MODE_NAMES, pauseFiles, readPause } from './pausemode.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const META_CLI = path.join(HERE, '..', 'bin', 'norn.mjs');

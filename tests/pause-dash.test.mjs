@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { fixture } from './helpers/dash-fixture.mjs';
 import { record } from '../engine/lib/records.mjs';
 import { pauseMenu, pauseAct, renderTab } from '../engine/dash/ui.mjs';
-import { PAUSE_MODES } from '../engine/lib/pause.mjs';
+import { PAUSE_MODES } from '../engine/lib/pausemode.mjs';
 import { openPage, skipWhy } from './helpers/cdp.mjs';
 
 test('pause routes: a named mode, a safe pause of one run, the pick of pause half, resume all; the overview and the rows say each', async () => {

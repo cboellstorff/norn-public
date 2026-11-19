@@ -1,4 +1,4 @@
-// `norn tick` (META-GENERAL-DESIGN 9 checkin.ps1 row, 10.2, 12-S5): the pause (RM-37 pause.mjs: Pause everything exits here) -> tick lock -> one check-in at a time ->
+// `norn tick` (META-GENERAL-DESIGN 9 checkin.ps1 row, 10.2, 12-S5): the pause (RM-37 pausemode.mjs: Pause everything exits here) -> tick lock -> one check-in at a time ->
 // norn status -> CHECKIN rendering -> the check-in launched as RUN kind checkin through the S4 supervisor (`norn run` path).
 // Port of meta/checkin.ps1; the old synchronous claude -p becomes a supervised detached run (heartbeat, usage, transcript).
 import fs from 'node:fs';
@@ -37,7 +37,8 @@ import { loadRoadmap, buildTree, itemsOf } from './roadmap.mjs';
 import { stuckSweep, stuckProbe, stuckWake } from './stuck.mjs';
 import { tickLanes, lanesProbe } from './lifecycle.mjs';
 import { tickPaths } from './lanepaths.mjs';
-import { pauseFiles, readPause, stopsTick, stopsCheckins, lateNotice, cleanMin } from './pause.mjs';
+import { lateNotice, cleanMin } from './pause.mjs';
+import { pauseFiles, readPause, stopsTick, stopsCheckins } from './pausemode.mjs';
 
 const ENGINE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const CHECKIN_PROMPT = path.join(ENGINE, 'prompts', 'CHECKIN.md');

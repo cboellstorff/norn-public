@@ -10,7 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { startRun, queueRun, fillQueue, readiness, stopRun } from '../engine/lib/runs.mjs';
 import { record, loadState } from '../engine/lib/records.mjs';
 import { loadMail } from '../engine/lib/mail.mjs';
-import { PAUSE_MODES, pauseFiles, readPause, setPause, clearPause, pauseRun, resumeRun, pickHalf, resumeAll, lateNotice, PauseError, PAUSE_SUBJECT } from '../engine/lib/pause.mjs';
+import { setPause, clearPause, pauseRun, resumeRun, pickHalf, resumeAll, lateNotice, PauseError, PAUSE_SUBJECT } from '../engine/lib/pause.mjs';
+import { PAUSE_MODES, pauseFiles, readPause } from '../engine/lib/pausemode.mjs';
 import { settled } from './helpers/settled.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
 
