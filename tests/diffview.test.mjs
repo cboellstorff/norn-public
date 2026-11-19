@@ -91,19 +91,17 @@ test('the diff viewer: the notice\'s View diff opens it over the page; side by s
       await pg.ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
       assert.ok(await pg.ev(`document.querySelector('#dvpip').hidden`), 'Esc closes it');
       assert.equal(await pg.ev(`document.querySelector('#main').dataset.mark`), 'kept', 'the page underneath is the same page');
+      // the phone on the same browser: a second browser's launch + teardown (a process listing per round, Edge's rundown) does not fit the cap on a busy machine
+      await pg.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
+      await pg.go(`${f.url}/?project=kestrel&tab=inbox`);
+      assert.ok(await pg.until(`document.querySelector('[data-act=diff-open][data-dv-url]')`, 60000));
+      assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'the notice: no sideways scroll');
+      await pg.ev(`document.querySelector('[data-act=diff-open][data-dv-url]').click()`);
+      assert.ok(await pg.until(`!document.querySelector('#dvpip').hidden && document.querySelector('#dvpip-body .dv-unified')`, 30000), 'unified on a phone');
+      assert.deepEqual(await pg.ev(`(r => [r.left, r.top, r.width])(document.querySelector('#dvpip').getBoundingClientRect())`), [0, 0, 390], 'a full-screen sheet');
+      assert.equal(await pg.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll with the viewer open');
+      assert.ok(await pg.ev(`(b => b.scrollWidth <= b.clientWidth)(document.querySelector('#dvpip-body'))`), 'the diff wraps inside the sheet');
+      assert.ok(await pg.ev(`(r => r.right <= 390 && r.width > 0)(document.querySelector('#dvpip-close').getBoundingClientRect())`), 'Close is reachable');
     } finally { await pg.close(); }
-    const ph = await openPage([390, 844]);
-    try {
-      await ph.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
-      await ph.go(`${f.url}/?project=kestrel&tab=inbox`);
-      assert.ok(await ph.until(`document.querySelector('[data-act=diff-open][data-dv-url]')`, 60000));
-      assert.equal(await ph.ev('document.documentElement.scrollWidth'), 390, 'the notice: no sideways scroll');
-      await ph.ev(`document.querySelector('[data-act=diff-open][data-dv-url]').click()`);
-      assert.ok(await ph.until(`!document.querySelector('#dvpip').hidden && document.querySelector('#dvpip-body .dv-unified')`, 30000), 'unified on a phone');
-      assert.deepEqual(await ph.ev(`(r => [r.left, r.top, r.width])(document.querySelector('#dvpip').getBoundingClientRect())`), [0, 0, 390], 'a full-screen sheet');
-      assert.equal(await ph.ev('document.documentElement.scrollWidth'), 390, 'no sideways scroll with the viewer open');
-      assert.ok(await ph.ev(`(b => b.scrollWidth <= b.clientWidth)(document.querySelector('#dvpip-body'))`), 'the diff wraps inside the sheet');
-      assert.ok(await ph.ev(`(r => r.right <= 390 && r.width > 0)(document.querySelector('#dvpip-close').getBoundingClientRect())`), 'Close is reachable');
-    } finally { await ph.close(); }
   } finally { await f.done(); }
 });
