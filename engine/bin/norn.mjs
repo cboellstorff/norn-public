@@ -69,6 +69,7 @@ import { ctxOrder } from '../lib/ctxlimit.mjs';
 import { isMain } from '../lib/paths.mjs';
 import { shot, parseShotArgs, ShotError, SHOT_USAGE } from '../lib/shot.mjs';
 import { parseLabels, servedLabels, FedError, fedOf, fetchForeign, hostName } from '../lib/fed.mjs';
+import { ClaimsError } from '../lib/claimsref.mjs';
 import { nodeRun } from '../lib/fednode.mjs';
 import { guardScan, guardWatch, openGuards, formatGuard, contextSources, GUARD_ACTIONS, SOURCES_METHOD, M as mTok } from '../lib/guard.mjs';
 import { runTranscript, transcriptTrace } from '../lib/standing.mjs';
@@ -2615,7 +2616,7 @@ function nodeCmd(argv, env, out, err) {
   const root = metaRoot(env), mf = f.machine || path.join(root, 'local', 'machine.json');
   try { labels = parseLabels(f.labels); machine = loadMachine(mf, { meta: root }); } catch (e) { return usage(e.message); }
   return nodeRun({ machine, machineFile: mf, metaRoot: root, home: f.home, labels, out })
-    .then(r => (r.error ? 1 : 0), e => { err('error: ' + e.message); return e instanceof FedError ? 2 : 1; });
+    .then(r => (r.error ? 1 : 0), e => { err('error: ' + e.message); return e instanceof ClaimsError ? 2 : 1; });
 }
 
 // ---------- GTP-LEDGER: norn ledger status | log [-n N] | restore --at <sha> --to <scratch dir> (read-only on live state) ----------
