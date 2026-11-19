@@ -263,15 +263,15 @@ export function createDashboard(o) {
     return c.st;
   }
   /** a GET's snapshot: every project's records fold + its settings / status files, read concurrently on fs.promises */
-  // + the small records files (the fold's two come from stAsync), their stats, the running runs' heartbeats, the PAUSED / tick.lock flags
+  // + the small records files (the fold's two come from stAsync), their stats, the running runs' heartbeats, the PAUSED records (pause.mjs), the tick.lock flag
   const primeFor = ps => Promise.all(ps.flatMap(p => [
     stAsync(p).then(x => { const live = runsOf(x).filter(r => r.state === 'running');
       // handoffOf's reads (hoHooks): each running run's result.json, a running hand-off resume's transcript / rollout tail
       return Promise.all([prime({ files: [...auditFiles(p, x.items), ...live.map(r => resultPath(p.state, r.id))], stats: live.map(r => hbPath(p.state, r.id)) }),
         primeAgents(live.filter(r => r.data.resume_of), { projectsDir, codexDir, cache })]); }),
     readA(p.file), readA(path.join(p.state, 'STATUS.md')),
-    prime({ files: [authFile(p.state), vendorCacheFile(p.state), overlapFile(p.state), laneRulesFile(p.state), lanePathsFile(p.state), path.join(p.state, 'home.json'), ...(p.policy_targets || []), ...RECORD_FILES.filter(f => f !== 'records' && f !== 'runs').map(f => path.join(p.state, f + '.jsonl'))],
-      stats: [...RECORD_FILES.map(f => path.join(p.state, f + '.jsonl')), ...pausedFiles(p), path.join(p.state, 'tick.lock'), p.state, (p.project_dir || p.file) && rulesFile(p), ...(p.docs || []).map(d => d.path)] })])
+    prime({ files: [authFile(p.state), vendorCacheFile(p.state), overlapFile(p.state), laneRulesFile(p.state), lanePathsFile(p.state), ...pausedFiles(p), path.join(p.state, 'home.json'), ...(p.policy_targets || []), ...RECORD_FILES.filter(f => f !== 'records' && f !== 'runs').map(f => path.join(p.state, f + '.jsonl'))],
+      stats: [...RECORD_FILES.map(f => path.join(p.state, f + '.jsonl')), path.join(p.state, 'tick.lock'), p.state, (p.project_dir || p.file) && rulesFile(p), ...(p.docs || []).map(d => d.path)] })])
     .concat(o.budgetFile ? [readA(o.budgetFile, '{}')] : [], o.quietFile ? [readA(o.quietFile)] : [], o.liveUsage ? [readA(o.liveUsage)] : []));
   const pausedFiles = p => [path.join(path.dirname(path.resolve(p.state)), 'PAUSED'), path.join(p.state, 'PAUSED')];
   // RM-37: the pause in force (pause.mjs, read through the snapshot) + what waits because of it: the queued runs it holds, the runs asked to
