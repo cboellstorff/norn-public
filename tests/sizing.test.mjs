@@ -111,3 +111,15 @@ test('fake run: the start record keeps the marks it launched under after the pol
   assert.match(txt.stdout, /^verdict: limit fits: peak 95k of 200k$/m);
   assert.equal(spawnSync(process.execPath, [META, 'size', '--state', state], { encoding: 'utf8', timeout: 60000 }).status, 2, 'a run or a lane is required');
 });
+
+test('a launch with no project.json (a check-in, RUN-188) starts and records the default marks of its role', async () => {
+  const t = mkTmp('norn-size-'), state = path.join(t, 'state', 'demo'), locks = path.join(t, 'state', 'locks'), wt = path.join(t, 'wt');
+  for (const d of [state, locks, wt]) fs.mkdirSync(d, { recursive: true });
+  const brief = path.join(t, 'brief.md');
+  fs.writeFileSync(brief, 'mode: done\nms: 300\n');
+  const r = startRun({ state, locksDir: locks, executor: 'fake', lane: 'demo', kind: 'checkin', worktree: wt, hbMs: 100, staleMs: 3000, ctx_from: path.join(t, 'project.json'),
+    policy: { trigger_on_exit: false }, budget: {}, brief });
+  assert.deepEqual(loadState(state).items[r.run].data.ctx_marks, { role: 'checkin', ...POLICY_DEFAULTS.context.checkin, src: 'role' });
+  const end = await waitFor(() => { const it = loadState(state).items[r.run]; return settled(it) && it.history.find(h => h.ev === 'end'); });
+  assert.equal(end.data.outcome, 'done');
+});
