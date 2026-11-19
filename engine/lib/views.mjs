@@ -165,7 +165,7 @@ const SYNC = {
     fs.mkdirSync(path.dirname(f), { recursive: true });
     const tmp = `${f}.${process.pid}.tmp`, t0 = Date.now();
     fs.writeFileSync(tmp, text);
-    for (;;) { try { return fs.renameSync(tmp, f); } catch (e) { if (!TRANSIENT.includes(e.code) || Date.now() - t0 > RETRY_MS) { try { fs.unlinkSync(tmp); } catch { /* gone */ } throw e; } sleepSync(15); } }
+    for (;;) { try { return fs.renameSync(tmp, f); } catch (e) { if (!TRANSIENT.includes(e.code) || Date.now() - t0 > RETRY_MS) { try { fs.unlinkSync(tmp); } catch { /* the tmp could not be removed: the rename's error, thrown next, is the one that matters */ } throw e; } sleepSync(15); } }
   },
   lock: hf => {
     const lf = hf + '.lock', token = crypto.randomBytes(6).toString('hex'), t0 = Date.now();
@@ -186,7 +186,7 @@ const ASYNC = {
     await fp.mkdir(path.dirname(f), { recursive: true });
     const tmp = `${f}.${process.pid}.${crypto.randomBytes(3).toString('hex')}.tmp`, t0 = Date.now();   // + random: two requests of one dash process
     await fp.writeFile(tmp, text);
-    for (;;) { try { return await fp.rename(tmp, f); } catch (e) { if (!TRANSIENT.includes(e.code) || Date.now() - t0 > RETRY_MS) { await fp.unlink(tmp).catch(() => {}); throw e; } await sleep(15); } }
+    for (;;) { try { return await fp.rename(tmp, f); } catch (e) { if (!TRANSIENT.includes(e.code) || Date.now() - t0 > RETRY_MS) { await fp.unlink(tmp).catch(() => { /* the tmp could not be removed: the rename's error, thrown next, is the one that matters */ }); throw e; } await sleep(15); } }
   },
   lock: async hf => {
     const lf = hf + '.lock', token = crypto.randomBytes(6).toString('hex'), t0 = Date.now();

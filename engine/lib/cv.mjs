@@ -3,7 +3,6 @@
 // check-in routes on; persona names add nothing (a name is per run, never a routing choice). Derived only: the run records,
 // the deliverables (merged via git) and cost.mjs (usageOfRun + costRollup's calibration); no new records, no second accounting
 // path - the window's runs and plan % must equal costRollup's for the same window (`check`).
-import fs from 'node:fs';
 import path from 'node:path';
 import { usageOfRun, costRollup } from './cost.mjs';
 import { loadState } from './records.mjs';
