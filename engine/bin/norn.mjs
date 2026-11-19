@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { record, loadState, kindOfId, KINDS, RecordError, launchedHere, holdOf, holdWho, hhmm, laneId, roleAddr, homeOf } from '../lib/records.mjs';
+import { record, loadState, kindOfId, kindNamed, KINDS, RecordError, launchedHere, holdOf, holdWho, hhmm, laneId, roleAddr, homeOf } from '../lib/records.mjs';
 import { writeViews, writeQueueView } from '../lib/views.mjs';
 import { readSources, runMigration, migrateMachine, MigrationError } from '../lib/migrate.mjs';
 import { setup, doctor, projectAdd, projectNew, projectList, projectRemove, gen, SetupError, readLineSync } from '../lib/setup.mjs';
@@ -118,7 +118,6 @@ const FLAGS = {
   overrule: ['text', 'rework-lane'], done: ['refs'], revoke: [], park: ['why', 'q'], unpark: [], archive: [], unarchive: [],
   list: ['open!', 'kind', 'lane', 'json!'], show: ['json!', 'full!'], views: [],
 };
-const KIND_ALIAS = { Q: 'question', DEC: 'decision', DIR: 'directive', L: 'lane', RUN: 'run' };
 const ALL_USAGE = 'usage: norn rec <add question|add decision|add directive|add lane|add waiver|answer|apply|not-an-answer|supersede|withdraw|reopen|overrule|done|revoke|park|unpark|archive|unarchive|list|show|views> ...';
 
 class Usage extends Error { constructor(msg, cmd) { super(msg); this.cmd = cmd; } }
@@ -1477,7 +1476,7 @@ export function main(argv, env = process.env, out = s => process.stdout.write(s 
 
     if (cmd === 'list') {
       if (pos.length) throw new Usage(`unexpected ${pos[0]}`, cmd);
-      const kind = flags.kind && (KIND_ALIAS[flags.kind] || flags.kind);
+      const kind = flags.kind && kindNamed(flags.kind);
       if (kind && !KINDS[kind]) throw new Usage(`--kind must be Q|DEC|DIR|L|RUN`, cmd);
       const items = Object.values(st().items).filter(i => (!kind || i.kind === kind) && (!flags.lane || i.data.lane === flags.lane || i.id === laneId(flags.lane, state)) && (!flags.open || isOpen(i))).sort(order);
       if (flags.json) out(JSON.stringify(items.map(({ history, ...i }) => i), null, 1));
