@@ -129,6 +129,10 @@ Controller hand-off: start no new step past ~90k; hand off at ~110k; never past 
   landed elsewhere, is obsolete or a duplicate - cite why in the ledger line. Never archive a stopped lane whose work did not land
   without the owner's word.
 - A `work at risk` row: an archived lane's worktree kept (uncommitted changes or commits not on main) - name it in the ledger line.
+- Finished work reaches a PR by code: when a lane's last work run ended DONE with commits not on main, the tick pushes them and queues
+  its MERGE stage (P1) itself - do not stage it again. An `off-main` row is where that chain broke (a dirty worktree with unpushed
+  commits, a refused push or merge-brief, a merge step that ended without landing it): act on it THIS pass - fix the cause and stage
+  the merge, or ask the owner. A lane whose work is not on main cannot be archived without the owner's override.
 
 ## 3. Dispatch (only within caps; caps come from the BUDGET file + STATUS)
 - {{policy}} <!-- policy:checkin -->
