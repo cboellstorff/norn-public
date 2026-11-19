@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import { spawn, spawnSync, execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { runSteps, runStepsAsync } from './steps.mjs';
-import { record, recordAsync, readEvents, fold, recordsFile, RecordError, holdOf, holdMessage, HELD_EXIT, noteRefusal, laneId } from './records.mjs';
+import { record, recordAsync, readEvents, fold, recordsFile, RecordError, holdOf, holdMessage, HELD_EXIT, noteRefusal, laneId, homeOf } from './records.mjs';
 import { busyRefusal, BUSY_EXIT } from './checkinguards.mjs';
 import { BUILTIN, isApi, capDefault, capsOfRun, executorInfo, providerEnv } from './executors.mjs';
 import { adapterFor, harnessOf } from './harness/index.mjs';
@@ -30,6 +30,11 @@ import { workClass, isFable } from './workclass.mjs';
 import { resolveAtFill } from './launchpolicy.mjs';
 import { floorOf, raiseToFloor, floorBinds } from './floor.mjs';
 import { pathKey, metaRoot } from './config.mjs';
+import { claimWork, renewWork, workKey, readSync, updateSync } from './claims.mjs';
+import { ClaimsError } from './claimsref.mjs';
+import { loadRoadmap } from './roadmap.mjs';
+import { parseReady } from './ready.mjs';
+import { syncPolicy } from './policy.mjs';
 
 const fwd = p => String(p).replace(/\\/g, '/');
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -479,6 +484,57 @@ export function busyDoor(o) {
 }
 // the caller's role is checked once, at the door: it never rides into a queue / run spec (a supervisor resume or re-queue is the launcher's)
 const noCaller = ({ caller: _c, ...o }) => o;
+
+// ---------- RM-46 S2b (multi-home SPEC 4.4): the work claim at dispatch ----------
+// Every dispatch path (norn run, the fill, check-in stage runs, relaunchLost, resumes) passes startRun, so claimDoor is the one hook:
+// after the cheap local refusals, before the worktree lock. Only a synced project (home.json) with a ledger remote claims, and only a
+// lane run that writes. Exempt: check-ins, helpers (the parent's claim covers them), audits, talks, plan reviews, read-only runs, and
+// MERGE stages (the merge leader's, S6a). Item / branch overlap refuses (exit 3, the holder named); scope overlap, a busy claims branch
+// and an unreachable ledger hold the run queued (ClaimHeld) - the fill tries again on its next pass.
+export class ClaimHeld extends RunRefused { constructor(msg, home) { super(msg, 3); this.home = home; } }
+const claimExempt = o => !o.lane || ['checkin', 'audit', 'talk', 'interactive'].includes(o.kind) || o.role === 'helper' || !!o.critique || o.stage === 'MERGE' || !writeTrees(o).length;
+const gitOut = (cwd, args) => { const r = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true }); return r.status === 0 ? r.stdout.trim() : null; };
+/** the files a worktree changes against its merge-base with origin/main (SPEC 3.6 touched; [] without a worktree or origin/main) */
+export function touchedOf(worktree) {
+  const wt = worktree && fs.existsSync(worktree) ? worktree : null, base = wt && gitOut(wt, ['merge-base', 'HEAD', 'origin/main']);
+  return base ? (gitOut(wt, ['diff', '--name-only', base]) || '').split('\n').filter(Boolean) : [];
+}
+/** the work claim of a launch: branch + touched from its worktree (merge-base with origin/main), scope from its brief's Scope: line
+ *  (none = the whole repo), items = the open roadmap items linking its lane (this home's roadmap until S1d merges the others) */
+export function workOf(o, home, project) {
+  const wt = o.worktree && fs.existsSync(o.worktree) ? o.worktree : null, br = wt && gitOut(wt, ['rev-parse', '--abbrev-ref', 'HEAD']), touched = touchedOf(wt);
+  let scope = [], items = [];
+  try { scope = parseReady(fs.readFileSync(o.brief, 'utf8')).scope; } catch { /* no brief file: the whole repo */ }
+  const links = [`lane:${home}/${o.lane}`, `lane:${o.lane}`];
+  try { items = Object.values(loadRoadmap(o.state).items).filter(i => i.state === 'open' && i.links.some(l => links.includes(l))).map(i => i.id); } catch { /* no roadmap */ }
+  return { project, home, lane: o.lane, branch: br && br !== 'HEAD' ? br : null, items, scope, touched, run: o.resumeOf ?? null };
+}
+/** a queued run a claim holds: <state>/sync/claim-holds.json (the digest's "held by <home>"); why null = it no longer waits on a claim */
+export const noteClaimHold = (state, run, e) => updateSync(state, 'holds', h => { const { [run]: _x, ...rest } = h; return e ? { ...rest, [run]: { why: e.message, home: e.home ?? null } } : rest; });
+/** the claim of launch o: null (exempt / not synced) | { key, n } (won) - throws RunRefused 3 (item / branch) or ClaimHeld (wait queued) */
+export function claimDoor(o) {
+  if (claimExempt(o)) return null;
+  const home = homeOf(o.state)?.id, f = home ? fedOf(o.git_ledger) : null;
+  if (!f) return null;
+  const now = o.now ?? Date.now(), project = path.basename(path.resolve(o.state)), pol = syncPolicy(specPolicy({ ctx_from: policySource(o) }));
+  const me = workOf(o, home, project), key = workKey(project, home, me.lane), opts = { lease_s: pol.lease_s, now };
+  let r;
+  try {
+    r = claimWork(f, me, opts);
+    // an unchanged own claim starts without network only while it is not fenced (a renew landed within fence_s on this clock); else
+    // one renew confirms it - or finds it taken over, and this dispatch claims afresh
+    const mine = readSync(o.state, 'own')[key];
+    if (r.won && r.again && !(mine?.nonce === r.claim.nonce && now - mine.confirmed_ms <= pol.fence_s * 1000)) {
+      const rn = renewWork(f, { [key]: { nonce: r.claim.nonce } }, { now });
+      r = !rn.ok ? { queued: true, why: rn.why } : rn.renewed[key] ? { won: true, key, n: rn.renewed[key], claim: { ...r.claim, n: rn.renewed[key] } } : claimWork(f, me, { ...opts, precheck: false });
+    }
+  } catch (e) { if (e instanceof ClaimsError) throw new RunRefused(`claim: ${e.message}`, 3); throw e; }
+  if (r.refused) throw new RunRefused(`claim: ${r.why}`, 3);
+  if (!r.won) throw new ClaimHeld(`claim: ${r.why}`, r.hit?.home ?? null);
+  updateSync(o.state, 'own', m => ({ ...m, [key]: { project, home, lane: me.lane, nonce: r.claim.nonce, n: r.n, confirmed_ms: r.again ? m[key]?.confirmed_ms ?? now : now } }));
+  if (o.fromQueue) noteClaimHold(o.state, o.fromQueue, null);
+  return { key, n: r.n };
+}
 export function startRun(o) {
   if (!o.fromQueue) heldRefusal(o.state, o.lane, o.caller);
   const caller = o.caller;
@@ -518,6 +574,13 @@ export function startRun(o) {
   sweepLost(o.state, { staleMs, by: 'launcher' });
   const mr = mergeStageRefusal(o, staleMs);
   if (mr) throw new RunRefused(mr, 3);
+  let claim;   // RM-46 S2b: the work claim, last before the worktree lock; a direct dispatch it holds waits queued, a fill's stays queued
+  try { claim = claimDoor(o); } catch (e) {
+    if (!(e instanceof ClaimHeld) || o.fromQueue) throw e;
+    const q = queueRun(o);
+    noteClaimHold(o.state, q.run, e);
+    return { ...q, queued: true, why: e.message };
+  }
   if (o.lock === false && o.kind !== 'checkin') helperLockCheck(o);
   let lock = o.lock === false ? { file: null, files: [], refresh() {}, release() {} } : acquireTrees(o.locksDir, writeTrees(o), { run: 'pending', staleMs });
   try {
@@ -530,7 +593,7 @@ export function startRun(o) {
     const session_id = o.resumeSid || (info.harness === 'claude' || info.harness === 'fake' ? crypto.randomUUID() : null);
     const resumes = o.resumes || 0;
     const warnings = [...notesWarnings(o), ...floorNotice(o), ...fableNotice(o), ...(o.dod?.mode === 'warn' && !o.dod.ok && !o.resumeOf ? [o.dod.why] : [])];   // META-DOD 1: policy.dod.ready warn
-    const ev = record(o.state, { kind: 'run', ev: 'start', by: 'launcher', data: drop({ ...startFields(o, info), log, final, session_id, ...runTail(o), warnings: warnings.length ? warnings : undefined }) });
+    const ev = record(o.state, { kind: 'run', ev: 'start', by: 'launcher', data: drop({ ...startFields(o, info), log, final, session_id, ...runTail(o), warnings: warnings.length ? warnings : undefined, claim: claim ?? undefined }) });
     const run = ev.id;
     if (o.epic && isNew(o)) joinEpic(o.state, o.epic, run);
     lock.refresh({ run });
@@ -728,7 +791,10 @@ function fillPass(state, now, resources, authProbe) {
   walkQueue(state, { now, resources, authProbe, act: {
     withdraw,
     hold,
-    start: (q, spec) => { homeClaim(state, q, spec); return startRun({ ...atFill(spec), fromQueue: q.id }).run; },
+    start: (q, spec) => {
+      homeClaim(state, q, spec);
+      try { return startRun({ ...atFill(spec), fromQueue: q.id }).run; } catch (e) { if (e instanceof ClaimHeld) noteClaimHold(state, q.id, e); throw e; }   // RM-46 S2b: stays queued, the digest names the holder
+    },
     started(q, next) {
       record(state, { kind: 'run', ev: 'fill', id: q.id, by: 'launcher', data: { next } });
       started.push({ queued: q.id, next });
