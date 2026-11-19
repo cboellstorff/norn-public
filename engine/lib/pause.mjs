@@ -1,0 +1,155 @@
+// RM-37 safe pause: the one home of every pause. (1) The pause MODES - one PAUSED file per level (<state root>/PAUSED, <state>/PAUSED),
+// its JSON record { mode, by, why, at } says which: checkins (no check-in; the fill, the sweep, merges and hand-off resumes go on),
+// queue (nothing new starts: a dispatch and a hand-off resume wait QUEUED, never refused, and start in fill order on release), all
+// (both). A PAUSED file that is not a pause record (an empty file made by hand) is `all`, the safe reading. (2) The safe pause of ONE
+// running run: an urgent mail order (the PostToolUse hook injects it) to finish the step, commit, write the hand-off and end HANDOFF;
+// that hand-off is marked paused and never auto-resumed - `norn resume RUN-n` queues its resume at the front. A run that reaches no
+// clean point within policy.pause.clean_min is reported, never killed. (3) Pause half: N running runs, newest first, never a MERGE,
+// never one near its end estimate. (4) Resume all: the hold released, the paused hand-offs queued, merges first.
+import fs from 'node:fs';
+import path from 'node:path';
+import { record, readEvents, recordsFile, fold, RecordError } from './records.mjs';
+import { queueRun, fillQueue, renameRetry } from './runs.mjs';
+import { sendMail } from './mail.mjs';
+import { isMergeStage } from './usageguard.mjs';
+
+export class PauseError extends Error { constructor(msg, code = 2) { super(msg); this.code = code; } }
+const fwd = p => String(p).replace(/\\/g, '/');
+const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
+const runsOf = state => fold(readEvents(recordsFile(state, 'run'))).items;
+
+// ---------- (1) the modes ----------
+// label = the one name of a mode (the menu, the status line, the hold row); says = its one-line effect (the menu)
+export const PAUSE_MODES = {
+  checkins: { label: 'Pause check-ins', says: 'Check-ins do not run. The queue fill, the status sweep, merges and hand-off resumes go on.' },
+  queue: { label: 'Hold the queue', says: 'Nothing new starts: new work and hand-off resumes wait queued and start in order on release. Running work and check-ins go on.' },
+  all: { label: 'Pause everything', says: 'No check-in, no status sweep, nothing new starts (hand-off resumes wait queued). Running work goes on.' },
+};
+export const MODE_NAMES = Object.keys(PAUSE_MODES);
+/** the PAUSED files of a state dir: the machine level (beside every project's state dir) first, then the project's own */
+export const pauseFiles = state => [path.join(path.dirname(path.resolve(state)), 'PAUSED'), path.join(state, 'PAUSED')];
+/** the pause of the first PAUSED file that exists -> { mode, by, why, at, file, label } | null (not a pause record = all) */
+export function readPause(files = []) {
+  for (const f of files) {
+    let raw;
+    try { raw = fs.readFileSync(f, 'utf8'); } catch (e) { if (e.code === 'ENOENT') continue; throw e; }
+    let r = null; try { r = JSON.parse(raw); } catch { /* a hand-made file */ }
+    const mode = MODE_NAMES.includes(r?.mode) ? r.mode : 'all';
+    return { mode, label: PAUSE_MODES[mode].label, by: r?.by ?? null, why: r?.why ?? null, at: r?.at ?? null, file: fwd(f) };
+  }
+  return null;
+}
+export const holdsStarts = p => p?.mode === 'queue' || p?.mode === 'all';   // nothing new starts
+export const stopsCheckins = p => p?.mode === 'checkins' || p?.mode === 'all';
+export const stopsTick = p => p?.mode === 'all';   // the tick exits before the sweep and the status
+/** the fill walk's term of a pause that holds starts (holds.mjs reads it back): `PAUSED <mode> (<file>)` */
+export const pauseTerm = p => `PAUSED ${p.mode} (${p.file})`;
+/** set this project's pause (state/PAUSED) -> the pause read back */
+export function setPause(state, { mode, by, why, now = new Date() }) {
+  if (!MODE_NAMES.includes(mode)) throw new PauseError(`mode must be one of ${MODE_NAMES.join(' | ')} (got ${JSON.stringify(mode)})`);
+  pauser(by, 'pause');
+  fs.mkdirSync(state, { recursive: true });
+  const f = path.join(state, 'PAUSED'), t = `${f}.${process.pid}.tmp`;
+  fs.writeFileSync(t, JSON.stringify({ mode, by, ...(why ? { why: String(why).slice(0, 300) } : {}), at: now.toISOString() }) + '\n');
+  renameRetry(t, f);
+  return readPause([f]);
+}
+/** clear this project's own pause -> the pause still in force (the machine-level file), or null */
+export function clearPause(state) {
+  try { fs.unlinkSync(path.join(state, 'PAUSED')); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  return readPause(pauseFiles(state));
+}
+// a hand-off resume held by a pause starts before new work on release, merges first (the run's own priority if it is higher)
+export const heldPriority = o => (isMergeStage(o.stage) || o.priority === 'P0' ? 'P0' : 'P1');
+
+// ---------- (2) the safe pause of one running run ----------
+export const CLEAN_MIN = 20;      // policy.pause.clean_min: a run that has not ended this long after its pause order is reported
+export const NEAR_END_MIN = 10;   // policy.pause.near_end_min: pause half leaves a run this close to its end estimate alone
+const pol = (p, k, d) => { const n = Number(p?.pause?.[k]); return Number.isFinite(n) && n >= 0 ? n : d; };
+export const cleanMin = p => pol(p, 'clean_min', CLEAN_MIN);
+export const nearEndMin = p => pol(p, 'near_end_min', NEAR_END_MIN);
+const isWork = r => r.kind === 'run' && !['checkin', 'interactive', 'audit'].includes(r.data.kind) && r.data.role !== 'helper';
+export const PAUSERS = ['owner', 'dashboard', 'controller'];   // who pauses and resumes (never a check-in or a worker)
+const pauser = (by, verb) => { if (!PAUSERS.includes(by)) throw new PauseError(`a ${by || 'caller with no role'} does not ${verb}: the owner or the controller does`); };
+export const PAUSE_SUBJECT = 'PAUSE: stop at a clean point and hand off';
+export const pauseOrder = (run, why) => `The owner pauses ${run}${why ? ` (${why})` : ''}. Ack this mail, then: finish the step in progress (do not start a new one), `
+  + 'commit your work on your branch, write the hand-off (state, commits, the exact next step, open questions) and end with '
+  + '`norn done --outcome handoff --handoff-file <file>`. Norn marks the hand-off paused: it is not auto-resumed; the owner resumes it.';
+/** the pause order of a run, or of the run its nudge resumed (the order went to that session) -> the pause event data | null */
+export function pauseOf(state, run, spec = {}) {
+  const items = runsOf(state);
+  return items[run]?.pause ?? (spec.nudge && spec.resumeOf ? items[spec.resumeOf]?.pause ?? null : null);
+}
+/** mail RUN-n the pause order (urgent) and record it -> { run, mail } */
+export function pauseRun(state, { run, by, why }) {
+  pauser(by, 'pause a run');
+  const it = runsOf(state)[run];
+  if (!it || it.kind !== 'run') throw new PauseError(`${run}: no such run`);
+  if (it.state !== 'running') throw new PauseError(`${run} is ${it.state}, not running`);
+  if (!isWork(it)) throw new PauseError(`${run} is a ${it.data.role === 'helper' ? 'helper' : it.data.kind} run: only a work run is paused (a helper ends with its parent)`);
+  if (it.pause) throw new PauseError(`${run} was asked to pause at ${it.history.findLast(h => h.ev === 'pause').ts} (${it.pause.mail})`);
+  const m = sendMail(state, { by, to: run, subject: PAUSE_SUBJECT, body: pauseOrder(run, why), urgent: true });
+  record(state, { kind: 'run', ev: 'pause', id: run, by, data: { mail: m.id, ...(why ? { why: String(why).slice(0, 300) } : {}) } });
+  return { run, mail: m.id };
+}
+/** the paused hand-offs not yet resumed, merges first, then oldest first */
+export function pausedHandoffs(state) {
+  return Object.values(runsOf(state)).filter(r => r.kind === 'run' && r.state === 'exited' && r.end?.paused && !r.resume?.next)
+    .sort((a, b) => (isMergeStage(b.data.stage) - isMergeStage(a.data.stage)) || Number(a.id.slice(4)) - Number(b.id.slice(4)));
+}
+/** queue the resume of paused hand-off RUN-n at the front (P0, or the owner's priority) -> { run, next } */
+export function resumeRun(state, { run, by, priority = 'P0' }) {
+  pauser(by, 'resume a run');
+  const it = runsOf(state)[run];
+  if (!it || it.kind !== 'run') throw new PauseError(`${run}: no such run`);
+  if (!(it.state === 'exited' && it.end?.paused)) throw new PauseError(`${run} is not a paused hand-off (${it.state}${it.end ? ' ' + it.end.outcome : ''})`);
+  if (it.resume?.next) throw new PauseError(`${run} is resumed already: ${it.resume.next}`);
+  const spec = readJson(path.join(state, 'runs', run + '.spec.json'));
+  if (!spec) throw new PauseError(`${run}: its spec file is gone - start the lane again`);
+  // a fresh agent on the same brief + the hand-off (as the auto-resume), never the nudged session or its mail prompt; a pause costs no resume
+  const { run: _r, log: _l, final: _f, session_id: _s, lockFile: _k, lockFiles: _ks, resumeSid: _rs, nudge: _n, fromQueue: _q, ...rest } = spec;
+  if (spec.nudge) delete rest.promptText;
+  const count = spec.resumes || 0, q = queueRun({ ...rest, resumes: count, resumeOf: run, handoffFile: it.end.handoff, priority });
+  try { record(state, { kind: 'run', ev: 'resume', id: run, by: 'launcher', data: { next: q.run, count, asked_by: by, why: `paused hand-off resumed by ${by} (${priority})` } }); }
+  catch (e) { if (!(e instanceof RecordError)) throw e; }
+  return { run, next: q.run };
+}
+
+/** the runs whose pause order is older than min minutes and that still run, each once (pause-late.json) -> { title, body } | null */
+export function lateNotice(state, { min = CLEAN_MIN, now = Date.now(), project = '' } = {}) {
+  const f = path.join(state, 'pause-late.json'), items = runsOf(state), told = new Set((readJson(f)?.runs ?? []).filter(id => items[id]?.state === 'running'));
+  const late = Object.values(items).filter(r => r.kind === 'run' && r.state === 'running' && r.pause && !told.has(r.id)
+    && now - Date.parse(r.history.findLast(h => h.ev === 'pause').ts) >= min * 60000);
+  if (!late.length) return null;
+  fs.writeFileSync(f, JSON.stringify({ runs: [...told, ...late.map(r => r.id)] }));
+  const list = late.map(r => `${r.id} (${r.data.lane})`).join(', ');
+  return { title: `${project ? project + ': ' : ''}${late.length} run${late.length === 1 ? '' : 's'} not at a clean point`,
+    body: `${list}: asked to pause over ${min} min ago and still running. Norn does not kill it: wait, mail it, or stop it (norn stop RUN-n).` };
+}
+
+// ---------- (3) pause half ----------
+/** pick n running work runs to pause safely: newest first; never a MERGE, never one within nearEnd min of its end estimate -> { pick, skip, line } */
+export function pickHalf(state, { n, nearEnd = NEAR_END_MIN, now = Date.now() } = {}) {
+  const live = Object.values(runsOf(state)).filter(r => r.state === 'running' && isWork(r)).sort((a, b) => Number(b.id.slice(4)) - Number(a.id.slice(4)));
+  const want = Number.isInteger(n) && n >= 0 ? n : Math.ceil(live.length / 2), pick = [], skip = [];
+  for (const r of live) {
+    const end = r.data.budget_min ? Date.parse(r.created) + r.data.budget_min * 60000 : null;
+    const why = isMergeStage(r.data.stage) ? 'a merge' : r.pause ? 'asked to pause already' : end !== null && end - now <= nearEnd * 60000 ? `within ${nearEnd} min of its end estimate` : null;
+    if (why) skip.push({ id: r.id, lane: r.data.lane, why });
+    else if (pick.length < want) pick.push({ id: r.id, lane: r.data.lane, stage: r.data.stage ?? null });
+  }
+  const line = pick.length ? `Pause ${pick.length} of ${live.length} running: ${pick.map(r => `${r.id} (${r.lane})`).join(', ')}${skip.length ? `; left running: ${skip.map(r => `${r.id} (${r.why})`).join(', ')}` : ''}`
+    : `Nothing to pause: ${live.length ? skip.map(r => `${r.id} (${r.why})`).join(', ') : 'no work run is running'}`;
+  return { pick, skip, line };
+}
+/** pause the given runs (the confirmed pick) -> [{ run, mail } | { run, error }] */
+export const pauseRuns = (state, runs, { by, why = 'pause half' }) => runs.map(run => { try { return pauseRun(state, { run, by, why }); } catch (e) { if (e instanceof PauseError || e instanceof RecordError) return { run, error: e.message }; throw e; } });
+
+// ---------- (4) resume all ----------
+/** release this project's pause and queue every paused hand-off (merges first), then fill -> { cleared, still, resumed, started } */
+export function resumeAll(state, { by }) {
+  pauser(by, 'resume');
+  const was = readPause([path.join(state, 'PAUSED')]), still = clearPause(state);
+  const resumed = pausedHandoffs(state).map(r => { try { return resumeRun(state, { run: r.id, by, priority: isMergeStage(r.data.stage) ? 'P0' : 'P1' }); } catch (e) { if (e instanceof PauseError) return { run: r.id, error: e.message }; throw e; } });
+  return { cleared: was, still, resumed, started: fillQueue(state) };
+}

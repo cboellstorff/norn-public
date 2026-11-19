@@ -9,6 +9,7 @@ import path from 'node:path';
 import { billingOf } from './billing.mjs';
 import { isMergeStage } from './usageguard.mjs';
 import { queueSpecPath, liveBudget } from './runs.mjs';
+import { PAUSE_MODES } from './pause.mjs';
 
 export const NOTICE_MIN = 60;
 /** the minutes a whole hold lasts before it is surfaced: project policy.holds.notice_min (a Settings row), else NOTICE_MIN */
@@ -74,8 +75,8 @@ export function holdWords(term, { billing = null, status = '' } = {}) {
     clears: reset ? `by itself at the weekly reset (${hhmm(reset)})` : 'by itself at the weekly reset', fix: 'wait for the reset, or raise the weekly stop (Settings)' };
   if ((m = t.match(/^usage: api spend \$([\d.]+) in 24 h >= cap \$([\d.]+)$/))) return { reason: `API spend ($${m[1]} in the last 24 h) reached the $${m[2]} daily cap`, setting: 'api_usd_per_day',
     clears: 'by itself as the last 24 h of spend falls under the cap', fix: 'wait, or raise or clear the API daily cap (Settings)' };
-  if ((m = t.match(/^PAUSED \((.+)\)$/))) return { reason: `Norn is paused: the file ${m[1]} exists`, clears: null, file: m[1], resume: true,
-    fix: `delete ${m[1]} (the header's Resume button deletes the project's own PAUSED file)` };
+  if ((m = t.match(/^PAUSED (\w+) \((.+)\)$/))) return { reason: `Norn is paused (${PAUSE_MODES[m[1]]?.label ?? m[1]}): the file ${m[2]} holds every start`, clears: null, file: m[2], resume: true,
+    fix: `resume all (the header's pause menu, or norn resume --all) - it deletes the project's own PAUSED file; a machine-level ${m[2]} is deleted by hand` };
   return { reason: t, clears: null, fix: 'see the Plan tab' };
 }
 
