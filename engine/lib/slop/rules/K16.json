@@ -6,7 +6,7 @@
   "exclude": ["tests/**", "test/**", "**/*.test.*", "**/*.spec.*", "**/vendor/**", "**/node_modules/**", "**/*.min.js"],
   "fix": "change every caller to the new form and delete the old one",
   "patterns": [
-    { "re": "\\b(?:const|let|var)\\s+(?:[A-Za-z]\\w*_)?(?:OLD|LEGACY|DEPRECATED)(?:_\\w+)?\\s*=", "msg": "an old-name / legacy map" },
+    { "re": "\\b(?:const|let|var)\\s+(?:[A-Za-z]\\w*_)?(?:(?:OLD|DEPRECATED)(?:_\\w+)?|LEGACY(?:_(?:NAMES?|IDS?|TABS?|PAGES?|FLAGS?|KEYS?|VARS?|COMMANDS?|PATHS?|URLS?|ROUTES?|MAP|ALIAS(?:ES)?|REDIRECTS?))?)\\s*=", "msg": "an old-name / legacy map" },
     { "re": "\\b(?:const|let|var)\\s+\\w+_(?:ALIAS|ALIASES|REDIRECT|REDIRECTS|RENAMES|RENAMED)\\s*=\\s*(?:\\{|new\\s+Map\\b|Object\\.)", "msg": "an alias / redirect map" },
     { "re": "\\b(?:const|let|var)\\s+(?:old|legacy|deprecated)(?:To[A-Z]\\w*|Names?|Ids?|Tabs?|Flags?|Keys?|Aliases|Redirects?)\\s*=", "msg": "an old-name / redirect map" },
     { "re": "\\bbackwards?[- ]?compat(?:ible|ibility)?\\b|\\bback-compat\\b", "flags": "i", "msg": "a backward-compatibility path" },

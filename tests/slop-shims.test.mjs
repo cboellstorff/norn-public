@@ -55,6 +55,7 @@ test('K16 must not fire: fallback in its ordinary sense, old as an adjective, le
     '// the old path of a renamed file (git rename detection)',
     "import { running } from '../lib/legacy.mjs';",
     "const legacyWordsSeen = 1;",
+    "export const LEGACY_WORDS = { REQUESTED: 'idea', BUILT: 'built' };   // the status words of the old roadmap format the importer reads",
     "const files = list.filter(f => f.endsWith('.json'));",
     "const renamed = new Map(entries.map(e => [e.old, e.path]));",
     "export const CLAUDE_ALIASES = ['haiku', 'sonnet', 'opus'];",
