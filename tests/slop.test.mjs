@@ -45,14 +45,20 @@ function fixtureRepo({ base, head }) {
 }
 const recordedTool = rec => (rule, side) => (rec?.[side] === undefined ? null : typeof rec[side] === 'string' ? rec[side] : JSON.stringify(rec[side]));
 
-for (const rule of loadRules().filter(r => r.level === 'BLOCK')) {
-  test(`${rule.id} (${rule.title}): the fixture's hit blocks, its near-miss does not`, () => {
+// every built-in rule and the synthetic project rules (tests/fixtures/slop-project): the hit has new findings at the rule's level, the near-miss none
+const PROJECT_RULES = path.join(import.meta.dirname, 'fixtures', 'slop-project', 'rules', 'slop');
+const projectRules = fs.readdirSync(PROJECT_RULES).filter(f => /^P-.*\.json$/.test(f)).map(f => JSON.parse(fs.readFileSync(path.join(PROJECT_RULES, f), 'utf8')));
+for (const rule of [...loadRules(), ...projectRules]) {
+  test(`${rule.id} (${rule.title}): the fixture's hit fires at ${rule.level}, its near-miss does not`, () => {
     for (const [which, want] of [['hit', true], ['miss', false]]) {
       const fx = rule.fixture[which];
       const repo = fixtureRepo(fx);
-      const r = slopCheck({ repo, base: 'main', head: 'HEAD', only: [rule.id], tool: recordedTool(fx.recorded) });
-      assert.equal(r.blocks.length > 0, want, `${rule.id} ${which}: ${JSON.stringify(r.findings, null, 1)}`);
-      for (const b of r.blocks) { assert.equal(b.rule, rule.id); assert.match(b.fp, /^[0-9a-f]{16}$/); assert.ok(b.file); }
+      const r = slopCheck({ repo, base: 'main', head: 'HEAD', rules: [rule], tool: recordedTool(fx.recorded) });
+      const at = r.findings.filter(f => f.new && f.level === rule.level);
+      assert.deepEqual(r.skipped, [], `${rule.id} ${which} ran`);
+      assert.equal(at.length > 0, want, `${rule.id} ${which}: ${JSON.stringify(r.findings, null, 1)}`);
+      assert.equal(r.blocks.length > 0, want && rule.level === 'BLOCK', `${rule.id} ${which}: blocks only at BLOCK`);
+      for (const b of at) { assert.equal(b.rule, rule.id); assert.match(b.fp, /^[0-9a-f]{16}$/); assert.ok(b.file); }
     }
   });
 }

@@ -372,7 +372,7 @@ function autoResume(handoff) {
 function slopEnd() {
   if (spec.kind === 'checkin' || spec.role === 'helper' || spec.readonly || !spec.worktree || !slopOn(spec.policy) || killedByMeta()) return [];
   let c;
-  try { c = checkBranch({ repo: spec.worktree }); } catch (e) { logLine(`slop: check failed: ${e.message.split('\n')[0]}`); return []; }
+  try { c = checkBranch({ repo: spec.worktree, state, projectDir: spec.policy?.slop?.project_dir }); } catch (e) { logLine(`slop: check failed: ${e.message.split('\n')[0]}`); return []; }
   if (!c || c.base === c.result.head) return [];   // no lane branch (on main, detached, no main to diff against), or no commits past main
   const open = hostWrite(state, { type: 'check', branch: c.branch, lane: spec.lane, run, base: c.base, head: c.result.head, hash: c.result.hash, blocks: c.result.blocks, findings: c.result.findings, skipped: c.result.skipped }).open;
   logLine(`slop: ${open.length} open BLOCK finding(s) on ${c.branch} (${c.result.ran.join(' ')}${c.result.skipped.length ? '; skipped ' + c.result.skipped.map(s => s.rule).join(' ') : ''})`);

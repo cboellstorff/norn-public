@@ -1,7 +1,8 @@
 // META-SLOP-A (REVIEW-FABLE 3.1-3.2): the run-end backstop. Every lane run end that leaves commits is checked on its branch's diff
 // against main (the merge base; RM-44 D1: stopped, Done-red and hand-off too); a DONE's open BLOCK findings go back to the SAME lane
 // as one resume with the list (the supervisor). The merge doors (door.mjs) check the head they merge.
-import { gitRun, slopCheck } from './check.mjs';
+import { gitRun, slopCheck, effectiveRules } from './check.mjs';
+import { loadState, readEvents, recordsFile } from '../records.mjs';
 import { makeTool } from './tools.mjs';
 import { findingLine } from './host.mjs';
 
@@ -22,11 +23,28 @@ export function branchBase(repo, o = {}) {
   return base ? { branch, base } : null;
 }
 
-/** check a checkout's committed branch: { branch, base, result } | null (no lane branch to check) */
-export function checkBranch({ repo, base = null, head = 'HEAD', rules, tool = makeTool() } = {}) {
+/**
+ * The project's side of every check (RM-45 + RM-44): its effective rule set (built-ins + <project folder>/rules/slop/ P-*.json +
+ * overrides.json) and K22's record resolver (state: the cited ids resolve there). The run end, the doors and the queue all take it
+ * from here, so the rule-set hash a stored check carries is the one the door looks for.
+ */
+export function projectSlop({ state = null, projectDir = null } = {}) {
+  return { rules: effectiveRules({ projectDir }), resolve: state ? recordResolver(state) : null };
+}
+// K22 cites DEC / DIR / Q (the records) and RM (the roadmap's item events: open until dropped, reopen opens it again). Read here from the
+// item events, not through roadmap.mjs: that module reaches the merge queue, which reaches this one (a K10 cycle).
+function recordResolver(state) {
+  const items = loadState(state).items, rm = {};
+  for (const e of readEvents(recordsFile(state, 'item'))) if (e.kind === 'item') rm[e.id] = e.ev === 'drop' ? 'dropped' : e.ev === 'create' || e.ev === 'reopen' ? 'open' : rm[e.id];
+  return id => (id.startsWith('RM-') ? rm[id] : items[id]?.state) ?? null;
+}
+
+/** check a checkout's committed branch: { branch, base, result } | null (no lane branch to check). state + projectDir: projectSlop */
+export function checkBranch({ repo, state = null, base = null, head = 'HEAD', rules, tool = makeTool(), projectDir = null } = {}) {
   const bb = base ? { branch: branchBase(repo)?.branch ?? null, base } : branchBase(repo);
   if (!bb) return null;
-  return { branch: bb.branch, base: bb.base, result: slopCheck({ repo, base: bb.base, head, tool, ...(rules ? { rules } : {}) }) };
+  const ps = projectSlop({ state, projectDir });
+  return { branch: bb.branch, base: bb.base, result: slopCheck({ repo, base: bb.base, head, tool, resolve: ps.resolve, rules: rules || ps.rules }) };
 }
 
 /** the resume prompt: the list and what to do with it */
