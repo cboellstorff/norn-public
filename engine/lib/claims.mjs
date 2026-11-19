@@ -5,8 +5,8 @@
 // branch refuse, scope queues. Own claims never block own dispatch. Every CAS round re-reads and re-checks overlap: a rejected push is
 // never retried blind (fed's rule F5), and a rejected-looking push that landed is found by nonce + n.
 import crypto from 'node:crypto';
-import { ClaimsError, fetchRefs, readClaims, casClaims, claimsLock } from './claimsref.mjs';
-import { withLock } from './records.mjs';
+import { ClaimsError, fetchRefs, readClaims, casClaims } from './claimsref.mjs';
+import { under } from './fed.mjs';
 import { globsIntersect } from './ready.mjs';
 
 export const LEASE_S = 3600;
@@ -50,7 +50,6 @@ const verdict = h => ({ [h.kind === 'scope' ? 'queued' : 'refused']: true, hit: 
 const sameSet = (a = [], b = []) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
 const unchanged = (c, me) => c?.kind === 'work' && c.home === me.home && c.branch === me.branch && sameSet(c.items, me.items) && sameSet(c.scope, me.scope) && sameSet(c.touched, me.touched);
 const netErr = e => e instanceof ClaimsError && /^git (fetch|push)\b/.test(e.message);
-const under = (f, fn) => { const l = claimsLock(f); return withLock(l.file, fn, l.opts); };
 const UNREACHABLE = 'claim: ledger unreachable', BUSY = 'claims branch busy (3 rejected rounds); the next fill pass tries again';
 
 // up to ROUNDS CAS rounds under the caller's lock. step(claims) -> a result (done, no push) | { edits, msg, ok, landed(claims) }.

@@ -46,7 +46,8 @@ export const hostName = () => (os.hostname() || 'machine').toLowerCase().replace
 export const claimKey = (home, project, run) => `runs/${home}/${project}/${run}.json`;
 // the claims branch next to the machine branches, one fetch (refs/fed/machine/*: the import below)
 const fetchFed = f => fetchRefs(f, ['+refs/heads/machine/*:refs/fed/machine/*']);
-const under = (f, fn) => { const l = claimsLock(f); return withLock(l.file, fn, l.opts); };
+/** fn under the claims lock of f's repo (claims.mjs takes it too: one lock for fed's and the work claims) */
+export const under = (f, fn) => { const l = claimsLock(f); return withLock(l.file, fn, l.opts); };
 
 
 /**
