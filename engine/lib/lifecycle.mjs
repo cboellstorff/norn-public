@@ -13,12 +13,15 @@
 //            live run: the tick archives it policy.done_lanes.archive_days after its end (0 = never). Its worktree goes only when it is
 //            clean and fully on main; otherwise it stays and the archive records it as work at risk.
 // An archive by the tick is the owner's Archive event by role `tick` with its why; the Lanes page Unarchive undoes it.
+//   path     (item 9, MAIL-20) a lane whose last work run ended DONE with commits not on main reaches a PR by code: tickPaths below.
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadState, record, readEvents, recordsFile, fold } from './records.mjs';
 import { makeEval, workOnMain } from './after.mjs';
 import { makeGit } from './dlvgit.mjs';
 import { readJsonS } from './fsnap.mjs';
+import { stageArgs, isMergeRun, checkinPolicy } from './checkins.mjs';
+import { isWork } from './gate.mjs';
 
 export const IDLE_H = 6, ARCHIVE_DAYS = 7;
 const H = 3600e3, D = 24 * H;
@@ -75,11 +78,12 @@ export function laneRules(st, { now = Date.now(), idleH = IDLE_H, archiveDays = 
 
 // the tick's git answers for the Lanes page (the dash never runs git per lane): { at, landed: [lane], merged: [lane] }
 export const laneRulesFile = state => path.join(state, 'lane-rules.json');
-/** lanesView's landed / merged hooks from the tick's cache: a ruling, or the lane named there (a snapshot read in a dash GET: it primes the file) */
+/** lanesView's hooks from the tick's caches: landed / merged (a ruling, or the lane named there) and path (lane -> its path to main
+ * with its words, or null). A snapshot read in a dash GET: it primes both files. */
 export function laneHooks(state) {
-  const c = readJsonS(laneRulesFile(state));
+  const c = readJsonS(laneRulesFile(state)), ps = readJsonS(lanePathsFile(state))?.paths || {};
   const has = k => (l, r) => !!r.landed || !!c?.[k]?.includes(l);
-  return { landed: has('landed'), merged: has('merged') };
+  return { landed: has('landed'), merged: has('merged'), path: (l, now = Date.now()) => ps[l] ? { ...ps[l], ...pathWords(ps[l], now) } : null };
 }
 
 /** the gate probe: a lane finding the check-in must act on (idle / stopped, from the facts the gate folded at that time) = `lanes:<rule>:L:x`, a MAJOR wake once */
@@ -141,4 +145,86 @@ export function ciFixPlan(st, red, { landed = r => !!r.landed } = {}) {
     live ? `queue it after ${live} (--after run:${live}:ended)` : null, reset ? `the brief's first step: reset the lane branch from main (its last work ${last.id} landed)` : null].filter(Boolean);
   return { lane: CI_FIX_LANE, stage, round, create: !l, unarchive: l?.state === 'archived', live, reset,
     line: `fix it on lane ${CI_FIX_LANE} stage ${stage} round ${round}${steps.length ? ' - ' + steps.join('; ') : ''}` };
+}
+
+// ---------- path to main (item 9, MAIL-20; owner 2026-11-18: "can't lose completed work or not merge it") ----------
+// Finished work reaches a PR by code, never by check-in judgement: dash-latency (RUN-84), rm9, rm26, rm28 and ci-fix3 ended DONE with
+// pushed commits not on main and no merge run, ever - the merge was left to a check-in and none staged it. Each tick, for every
+// active / done lane whose last work run ended DONE (a hand-off chain: its last run) and has no live work run, its branch is read:
+//   no commits off main (a planner / design run) -> no path;  on main (workOnMain: ancestry, clean merges, git cherry, squash) -> merged
+//   a MERGE run of the lane after that run is live -> merge step queued;  an open deliverable of the branch -> PR open / in the merge queue
+//   commits not pushed -> pushed (a plain push, never a force); a refused push, or unpushed commits beside uncommitted files -> work at
+//   risk, named, never staged;  a dirty worktree with its commits pushed -> staged, and named at risk
+//   else -> its MERGE stage queued: merge-brief --sha <head> + norn run --queue --stage MERGE --priority P1 (checkins.mjs stageArgs).
+//   A MERGE run after it that ended without landing the work is not re-queued (a loop): a finding.
+// Work not on main for OFF_MAIN_H with no merge step is red (Lanes page + digest). The paths go to lane-paths.json for the dash, the
+// digest and records.mjs (a lane whose work is not on main is archived only with the owner's override).
+export const OFF_MAIN_H = 2;
+export const lanePathsFile = state => path.join(state, 'lane-paths.json');
+const ago = (since, now) => since ? Math.floor((now - Date.parse(since)) / H) : 0;
+/** a path's words for the Lanes page / digest: { text, red } */
+export function pathWords(x, now = Date.now()) {
+  const risk = x.risk ? `; at risk: ${x.risk}` : '';
+  if (x.state === 'merged') return { text: `merged (${x.sha})`, red: false };
+  if (x.state === 'staged') return { text: `done: merge step queued (${x.merge})${risk}`, red: !!x.risk };
+  if (x.state === 'pr') return { text: `${x.pr ? `PR #${x.pr} open` : `${x.dlv} open: in the merge queue`}${risk}`, red: !!x.risk };
+  if (x.state === 'at_risk') return { text: `work at risk: ${x.why}`, red: true };
+  const h = ago(x.since, now);
+  return h >= OFF_MAIN_H ? { text: `work not on main for ${h} h: no merge step - ${x.why}${risk}`, red: true } : { text: `done, not on main yet: ${x.why}${risk}`, red: !!x.risk };
+}
+
+/**
+ * The tick's step. o: { project (file, root, briefs_dir, policy, deliverables.main, merge.gate.fast), now (ms), git, cli (args) -> { code, out }
+ * (the meta CLI; none = nothing can be queued), dry }. Writes lane-paths.json; -> [{ id, act: pushed | staged | at_risk | stuck, note }]
+ * (at_risk / stuck only when new: a lane that stays so with the same why says nothing again).
+ */
+export function tickPaths(state, { project: p = {}, now = Date.now(), git = makeGit(), cli = null, dry = false } = {}) {
+  const st = loadState(state), main = p.deliverables?.main || 'main', cp = checkinPolicy(p.policy);
+  const before = readJsonS(lanePathsFile(state))?.paths || {};
+  const dlvs = Object.values(fold(readEvents(recordsFile(state, 'deliverable'))).items).filter(d => d.kind === 'deliverable');
+  const byLane = {};
+  for (const r of Object.values(st.items)) if (r.kind === 'run' && r.data?.lane && isWork(r.data)) (byLane[r.data.lane] ??= []).push(r);
+  const paths = {}, out = [];
+  for (const l of Object.values(st.items)) {
+    if (l.kind !== 'lane' || !['active', 'done'].includes(l.state)) continue;
+    const name = l.id.slice(2), runs = (byLane[name] || []).sort((a, b) => runNum(a.id) - runNum(b.id));
+    const work = runs.filter(x => !isMergeRun(x.data)), r = work.at(-1);
+    if (!r || work.some(x => LIVE.includes(x.state)) || r.state !== 'exited' || r.end?.outcome !== 'done') continue;
+    const branch = r.end?.branch || r.data.branch, wt = r.data.worktree && fs.existsSync(r.data.worktree) ? r.data.worktree : null, dir = wt || p.root;
+    if (!branch || branch === main || !dir) continue;
+    const tip = git(dir, ['rev-parse', '--verify', '-q', `refs/heads/${branch}`], { allowFail: true })?.trim() || r.end?.head;
+    if (!tip) continue;
+    if (before[name]?.state === 'merged' && before[name].tip === tip) { paths[name] = before[name]; continue; }   // merged stays merged: no git per tick
+    const merges = runs.filter(x => isMergeRun(x.data) && runNum(x.id) > runNum(r.id));
+    const set = v => (paths[name] = { lane: name, run: r.id, branch, tip, since: endTs(r), ...v });
+    const found = a => { const was = before[name], now_ = paths[name]; if (was?.state !== now_.state || was?.why !== now_.why) out.push({ id: l.id, act: a, note: now_.why }); };
+    const ahead = Number(git(dir, ['rev-list', '--count', `${main}..${tip}`], { allowFail: true })?.trim() || 0);
+    if (!ahead || workOnMain(dir, tip, main, { git })) { if (ahead || merges.some(m => m.end?.outcome === 'done')) set({ state: 'merged', sha: tip.slice(0, 7) }); continue; }
+    const live = merges.find(m => LIVE.includes(m.state));
+    if (live) { set({ state: 'staged', merge: live.id }); continue; }
+    const open = dlvs.find(d => d.state === 'open' && d.data.lane === name && (!d.data.branch || d.data.branch === branch));
+    if (open) { set({ state: 'pr', dlv: open.id, pr: open.data.pr ?? null }); continue; }
+    const dirty = wt ? String(git(wt, ['status', '--porcelain'], { allowFail: true }) ?? '').split('\n').filter(s => s.trim()).length : 0;
+    const risk = dirty ? `${dirty} uncommitted file(s) in ${wt}` : null;
+    if (git(dir, ['merge-base', '--is-ancestor', tip, `refs/remotes/origin/${branch}`], { allowFail: true }) === null) {
+      // unpushed commits beside uncommitted files: the worker's end left work behind - the owner's call, never a push or a merge
+      const ok = !dry && !dirty && git(dir, ['push', 'origin', `${tip}:refs/heads/${branch}`], { allowFail: true }) !== null;
+      if (!ok) { set({ state: 'at_risk', why: `${ahead} commit(s) on ${branch} not pushed${dirty || dry ? '' : ' (the push was refused)'}${risk ? ': ' + risk : ''}` }); found('at_risk'); continue; }
+      git(dir, ['fetch', '-q', 'origin', branch], { allowFail: true });
+      out.push({ id: l.id, act: 'pushed', note: `pushed ${branch} ${tip.slice(0, 7)} (${ahead} commit(s) of ${r.id})` });
+    }
+    const tried = merges.at(-1);
+    const stuck = why => { set({ state: 'stuck', why, risk }); found('stuck'); };
+    if (tried) { stuck(`merge step ${tried.id} ended ${tried.end?.outcome ?? tried.state} without landing it`); continue; }
+    if (p.merge?.gate?.fast) { stuck('the fast merge-queue gate stages it from its deliverable - none is open'); continue; }
+    if (dry || !cli || !p.file || !wt) { stuck(!wt ? `its worktree ${r.data.worktree ?? '(none)'} is gone` : 'nothing could queue one here (no meta CLI / project file)'); continue; }
+    const a = stageArgs(p, r, { branch, sha: tip }, cp), b = cli(a.brief);
+    if (b.code !== 0) { stuck(`merge-brief exit ${b.code}: ${b.out.split('\n')[0].slice(0, 160)}`); continue; }
+    const q = cli([...a.run, '--priority', 'P1']), m = q.out.match(/RUN-\d+/);
+    if (q.code !== 0 || !m) { stuck(`norn run --queue exit ${q.code}: ${q.out.split('\n')[0].slice(0, 160)}`); continue; }
+    set({ state: 'staged', merge: m[0], risk });
+    out.push({ id: l.id, act: 'staged', note: `${ahead} commit(s) of ${r.id} on ${branch} not on main -> MERGE ${m[0]} (P1)` });
+  }
+  if (!dry) try { fs.writeFileSync(lanePathsFile(state), JSON.stringify({ at: new Date(now).toISOString(), paths }) + '\n'); } catch { /* the next tick writes it */ }
+  return out;
 }

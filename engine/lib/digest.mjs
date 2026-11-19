@@ -24,7 +24,7 @@ import { critiqueRows } from './critique.mjs';
 import { dupPairs } from './dupdirs.mjs';
 import { wholeHold, readHold, holdItem, noticeMin } from './holds.mjs';
 import { overlapRows, overlapOn } from './overlap.mjs';
-import { laneRules, lanePolicy, ciFixPlan } from './lifecycle.mjs';
+import { laneRules, lanePolicy, ciFixPlan, laneHooks } from './lifecycle.mjs';
 
 const H = 3600e3;
 export const WINDOW_H = 72;
@@ -218,12 +218,17 @@ export function digest(stateDir, project = {}, { now = Date.now(), git = makeGit
   // lane norn-lifecycle item 5: no lane sits - each idle / stopped lane is the check-in's to act on this pass (CHECKIN.md 2j); a worktree a
   // tick archive kept (dirty or not on main) stays a row while it exists. Only while any.
   const ln = [...laneRules(st, { now, ...lanePolicy(project?.policy) }).filter(x => x.act === 'checkin').map(x => ({ id: x.id, lane: x.lane, rule: x.rule, run: x.run, why: x.why })),
-    ...atRisk(items)];
+    ...atRisk(items), ...offMain(stateDir, items, now)];
   if (ln.length) sections.lanes = ln;
   const counts = Object.fromEntries(Object.entries(sections).map(([k, v]) => [k, v.length]));
   return { project: project?.name ?? null, at: new Date(now).toISOString(), window_h: WINDOW_H, sections, counts };
 }
 
+// item 9 (lifecycle.mjs tickPaths): a lane whose finished work is red on its path to main - at risk, or off main past OFF_MAIN_H with no
+// merge step - is a row (rule off-main) until it reaches a PR
+const offMain = (stateDir, items, now) => { const h = laneHooks(stateDir);
+  return items.filter(l => l.kind === 'lane' && ['active', 'done'].includes(l.state)).flatMap(l => { const x = h.path(l.id.slice(2), now);
+    return x?.red ? [{ id: l.id, lane: x.lane, rule: 'off-main', run: x.run, why: `${x.text} - stage its merge (or say why not)` }] : []; }); };
 // an archived lane whose archive kept its worktree (lifecycle.mjs dropWorktree: uncommitted changes / commits not on main), while it exists
 const atRisk = items => items.filter(l => l.kind === 'lane' && l.state === 'archived').flatMap(l => {
   const a = l.history.findLast(h => h.ev === 'archive')?.data?.at_risk, wt = a ? a.slice(0, a.lastIndexOf(': ')) : null;

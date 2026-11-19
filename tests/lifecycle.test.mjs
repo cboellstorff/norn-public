@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { record, loadState } from '../engine/lib/records.mjs';
-import { laneRules, tickLanes, lanesProbe, lanePolicy } from '../engine/lib/lifecycle.mjs';
+import { laneRules, tickLanes, lanesProbe, lanePolicy, tickPaths, laneHooks } from '../engine/lib/lifecycle.mjs';
 import { lanesView } from '../engine/lib/lanes.mjs';
 import { digest } from '../engine/lib/digest.mjs';
 import { mkTmp } from './helpers/tmp.mjs';
@@ -143,4 +143,79 @@ test('CI reds on main: two successive reds -> one lane (ci-fix), two runs; the s
   assert.equal(ciFixPlan(st, { run: 102 }).round, 2, 'the same red again = the next round of its stage');
   rec(state, { kind: 'lane', ev: 'archive', id: 'L:ci-fix', by: 'tick', data: { why: 'done, merged, old' } });
   assert.match(ciFixPlan(loadState(state), { run: 103 }).line, /META rec unarchive L:ci-fix/, 'archived by the rules: unarchived, never a new lane');
+});
+
+// ---------- item 9 (MAIL-20): finished work always reaches a PR, by code ----------
+// a bare origin, its clone, and one lane worktree per name on branch lane/<name> with `n` commits off main (pushed or not)
+function originFixture(t) {
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_NOSYSTEM: '1' };
+  const g = (cwd, ...a) => execFileSync('git', ['-C', cwd, ...a], { encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const origin = path.join(t, 'origin.git'), repo = path.join(t, 'repo');
+  fs.mkdirSync(origin, { recursive: true }); g(origin, 'init', '-q', '--bare', '-b', 'main');
+  fs.mkdirSync(repo); g(repo, 'init', '-q', '-b', 'main'); g(repo, 'config', 'commit.gpgsign', 'false'); g(repo, 'remote', 'add', 'origin', origin);
+  fs.writeFileSync(path.join(repo, 'a'), 'a'); g(repo, 'add', 'a'); g(repo, 'commit', '-q', '-m', 'init'); g(repo, 'push', '-q', 'origin', 'main'); g(repo, 'fetch', '-q', 'origin');
+  const wt = (name, n, { push = true } = {}) => {
+    const w = path.join(t, `wt-${name}`); g(repo, 'worktree', 'add', '-q', '-b', `lane/${name}`, w);
+    for (let i = 0; i < n; i++) { fs.writeFileSync(path.join(w, `${name}-${i}.txt`), String(i)); g(w, 'add', '.'); g(w, 'commit', '-q', '-m', `${name} ${i}`); }
+    if (push) { g(w, 'push', '-q', 'origin', `lane/${name}`); g(w, 'fetch', '-q', 'origin'); }
+    return w;
+  };
+  return { g, origin, repo, wt };
+}
+// a lane whose one worker run ended DONE on its worktree's branch (the supervisor's end: branch + head)
+function doneLane(state, f, name, w, ms) {
+  lane(state, name, ms); const id = start(state, name, ms, { worktree: w });
+  rec(state, { kind: 'run', ev: 'end', id, by: 'launcher', data: { exit: 0, outcome: 'done', branch: `lane/${name}`, head: f.g(w, 'rev-parse', 'HEAD') } }, { now: at(ms + H) });
+  return id;
+}
+// the meta CLI as the tick calls it: merge-brief writes nothing, run --queue records a queued MERGE run on the lane
+const fakeCli = (state, calls) => args => {
+  calls.push(args);
+  if (args[0] === 'merge-brief') return { code: 0, out: 'merge-brief -> x' };
+  const ln = args[args.indexOf('--lane') + 1];
+  return { code: 0, out: `queued ${rec(state, { kind: 'run', ev: 'start', by: 'launcher', data: { kind: 'worker', executor: 'claude', lane: ln, stage: 'MERGE', queued: true } }).id}` };
+};
+const flag = (a, k) => a[a.indexOf(k) + 1];
+
+test('dash-latency: a lane DONE with pushed commits not on main and no merge run gets its MERGE stage queued (P1) by the tick, once; the Lanes page says so', () => {
+  const t = mkTmp('lc-path-'), state = path.join(t, 'state', 'p'), f = originFixture(t); fs.mkdirSync(state, { recursive: true });
+  const w = f.wt('dash-latency', 4); doneLane(state, f, 'dash-latency', w, T0);
+  doneLane(state, f, 'design', f.wt('design', 0), T0);   // a planner run with no commits: no path to main, no merge
+  const calls = [], project = { name: 'p', file: path.join(t, 'project.json'), root: f.repo, briefs_dir: path.join(t, 'briefs') };
+  const out = tickPaths(state, { project, now: T0 + 2 * H, cli: fakeCli(state, calls) });
+  assert.deepEqual(out.map(x => [x.id, x.act]), [['L:dash-latency', 'staged']]);
+  const q = calls.find(a => a[0] === 'run'), b = calls.find(a => a[0] === 'merge-brief');
+  assert.equal(flag(q, '--stage'), 'MERGE'); assert.equal(flag(q, '--priority'), 'P1'); assert.equal(flag(b, '--sha'), f.g(w, 'rev-parse', 'HEAD'));
+  assert.deepEqual(tickPaths(state, { project, now: T0 + 3 * H, cli: fakeCli(state, calls) }), [], 'the queued MERGE run is the record: not queued twice');
+  const rows = lanesView(loadState(state), { all: true, now: T0 + 3 * H, ...laneHooks(state) });
+  assert.match(rows.find(x => x.name === 'dash-latency').path.text, /^done: merge step queued \(RUN-\d+\)$/);
+  assert.equal(rows.find(x => x.name === 'design').path, null, 'no commits, no path');
+});
+
+test('unpushed at the end: a DONE lane\'s unpushed commits are pushed, then staged; a dirty worktree is work at risk, red, and its lane cannot be archived', () => {
+  const t = mkTmp('lc-push-'), state = path.join(t, 'state', 'p'), f = originFixture(t); fs.mkdirSync(state, { recursive: true });
+  const w = f.wt('rm9', 1, { push: false }); doneLane(state, f, 'rm9', w, T0);
+  const d = f.wt('rm26', 2, { push: false }); fs.writeFileSync(path.join(d, 'wip.txt'), 'half'); doneLane(state, f, 'rm26', d, T0);
+  const calls = [], project = { name: 'p', file: path.join(t, 'project.json'), root: f.repo, briefs_dir: path.join(t, 'briefs') };
+  const out = tickPaths(state, { project, now: T0 + 4 * H, cli: fakeCli(state, calls) });
+  assert.deepEqual(out.map(x => [x.id, x.act]).sort(), [['L:rm26', 'at_risk'], ['L:rm9', 'pushed'], ['L:rm9', 'staged']]);
+  assert.equal(f.g(f.origin, 'rev-parse', 'lane/rm9'), f.g(w, 'rev-parse', 'HEAD'), 'a plain push: origin has the lane head');
+  assert.equal(calls.filter(a => a[0] === 'run').length, 1, 'the dirty lane is not staged');
+  const row = lanesView(loadState(state), { all: true, now: T0 + 4 * H, ...laneHooks(state) }).find(x => x.name === 'rm26');
+  assert.match(row.path.text, /^work at risk: 2 commit\(s\) on lane\/rm26 not pushed: 1 uncommitted file\(s\)/); assert.equal(row.path.red, true);
+  assert.throws(() => rec(state, { kind: 'lane', ev: 'archive', id: 'L:rm26', by: 'tick', data: { why: 'x' } }), /L:rm26 cannot be archived: its work is not on main/);
+  assert.throws(() => rec(state, { kind: 'lane', ev: 'archive', id: 'L:rm26', by: 'dashboard', data: {} }), /override/);
+  rec(state, { kind: 'lane', ev: 'archive', id: 'L:rm26', by: 'owner', data: { override: 'the owner dropped this work' } });
+  assert.equal(loadState(state).items['L:rm26'].state, 'archived', 'the owner\'s explicit override archives it');
+});
+
+test('work not on main past 2 h with no merge step is a red finding on the Lanes page and in the digest', () => {
+  const t = mkTmp('lc-stuck-'), state = path.join(t, 'state', 'p'), f = originFixture(t); fs.mkdirSync(state, { recursive: true });
+  doneLane(state, f, 'rm28', f.wt('rm28', 2), T0);
+  const project = { name: 'p', root: f.repo };   // no project file: nothing can queue a merge step
+  assert.deepEqual(tickPaths(state, { project, now: T0 + 4 * H }).map(x => x.act), ['stuck']);
+  const row = lanesView(loadState(state), { all: true, now: T0 + 4 * H, ...laneHooks(state) }).find(x => x.name === 'rm28');
+  assert.match(row.path.text, /^work not on main for 3 h: no merge step/); assert.equal(row.path.red, true);
+  const dg = digest(state, project, { now: T0 + 4 * H });
+  assert.ok(dg.sections.lanes?.some(x => x.lane === 'rm28' && x.rule === 'off-main'), JSON.stringify(dg.sections.lanes));
 });

@@ -676,7 +676,14 @@ const isoSec = d => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
 
 // DELIVERABLES-SPEC 5: a lane is not archived while one of its deliverables is DONE but not merged, unless it is parked with a
 // reason. Git is asked only here (a lane with an open deliverable), on the branch's current tip (else the tip recorded at DONE).
-function archiveGuard(stateDir, lane) {
+function archiveGuard(stateDir, lane, ev = {}) {
+  // item 9 (MAIL-20): finished work not on main (lifecycle.mjs tickPaths: lane-paths.json) - only the owner's explicit override drops it
+  const pth = (() => { try { return JSON.parse(readText(path.join(stateDir, 'lane-paths.json'))); } catch { return null; } })()?.paths?.[lane];
+  if (pth && pth.state !== 'merged' && !(['owner', 'dashboard'].includes(ev.by) && String(ev.data?.override ?? '').trim())) {
+    const dir = fold(readEvents(recordsFile(stateDir, 'run'))).items[pth.run]?.data?.worktree;
+    if (!(pth.tip && dir && fs.existsSync(dir) && isAncestor(dir, pth.tip, 'main')))
+      fail(`L:${lane} cannot be archived: its work is not on main (${pth.branch} ${String(pth.tip).slice(0, 7)}, ${pth.state}${pth.why ? ': ' + pth.why : ''}) - merge it first, or archive it as the owner with an override (data.override: the why)`);
+  }
   const open = Object.values(fold(readEvents(recordsFile(stateDir, 'deliverable'))).items).filter(i => i.kind === 'deliverable' && i.state === 'open' && i.data.lane === lane);
   for (const d of open) {
     const tip = refTip(d.data.repo, d.data.branch) || [...d.history].reverse().find(h => h.ev === 'done')?.data?.tip || d.data.tip;
@@ -872,7 +879,7 @@ function recordCtx(stateDir, evIn, opts) {
       for (const k of ['parent', 'after']) if (k in d) d[k] = ref$(d[k]);
       ev = { ...ev, id: ref$(ev.id), data: d };
     }
-    if (kind === 'lane' && ev.ev === 'archive' && ev.by !== 'migration') archiveGuard(stateDir, String(ev.id || '').slice(2));
+    if (kind === 'lane' && ev.ev === 'archive' && ev.by !== 'migration') archiveGuard(stateDir, String(ev.id || '').slice(2), ev);
     if (kind === 'waiver' && ev.ev === 'create' && ev.by === 'checkin') waiverGuard(stateDir, ev.data || {});
     if (kind === 'deliverable' && ev.ev === 'park' && ev.by !== 'migration') inputGuard(stateDir, ev.id);
     if (kind === 'mail') mailGuard(stateDir, ev, run, st);
