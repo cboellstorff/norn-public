@@ -12,6 +12,7 @@ import { record, readEvents, recordsFile, fold, RecordError } from './records.mj
 import { queueRun, fillQueue, renameRetry } from './runs.mjs';
 import { sendMail } from './mail.mjs';
 import { isMergeStage } from './usageguard.mjs';
+import { POLICY_DEFAULTS } from './policy.mjs';
 
 export class PauseError extends Error { constructor(msg, code = 2) { super(msg); this.code = code; } }
 const fwd = p => String(p).replace(/\\/g, '/');
@@ -67,8 +68,8 @@ export function clearPause(state) {
 export const heldPriority = o => (isMergeStage(o.stage) || o.priority === 'P0' ? 'P0' : 'P1');
 
 // ---------- (2) the safe pause of one running run ----------
-export const CLEAN_MIN = 20;      // policy.pause.clean_min: a run that has not ended this long after its pause order is reported
-export const NEAR_END_MIN = 10;   // policy.pause.near_end_min: pause half leaves a run this close to its end estimate alone
+// policy.pause.clean_min: a run that has not ended this long after its pause order is reported; near_end_min: pause half leaves a run this close to its end estimate alone
+const { clean_min: CLEAN_MIN, near_end_min: NEAR_END_MIN } = POLICY_DEFAULTS.pause;
 const pol = (p, k, d) => { const n = Number(p?.pause?.[k]); return Number.isFinite(n) && n >= 0 ? n : d; };
 export const cleanMin = p => pol(p, 'clean_min', CLEAN_MIN);
 export const nearEndMin = p => pol(p, 'near_end_min', NEAR_END_MIN);
