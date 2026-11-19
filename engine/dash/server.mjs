@@ -827,12 +827,12 @@ export function createDashboard(o) {
         return { run: r.id, name: runName(r), project: p.name, lane: d.lane ?? null, kind: d.kind ?? null, role: d.role ?? null, executor: d.executor ?? null,
           model: end.model ?? d.model ?? null, effort: end.effort ?? d.effort ?? null, state: r.state, outcome: end.outcome ?? null, started: r.created,
           elapsed_min: Math.max(0, Math.round((t1 - Date.parse(r.created)) / 60000)), budget_min: d.budget_min ?? null, ctx, ctx_peak: peak ?? null,
-          ...(d.kind === 'interactive' ? { ctx_limit: null, ctx_hard: null } : (({ ctx_limit, ctx_hard }) => ({ ctx_limit, ctx_hard }))(ctxView(d, policy()))), ctx_window: window ?? null, commit: lastCommit(d.worktree), marker, handoff: await hoOfA(p, r), worktree: d.worktree ?? null, ...(await planOf(d)) };
+          ...(d.kind === 'interactive' ? { ctx_limit: null, ctx_hard: null } : (({ ctx_limit, ctx_hard }) => ({ ctx_limit, ctx_hard }))(ctxView(d, policy()))), ctx_window: window ?? null, commit: lastCommit(d.worktree), marker, handoff: await hoOfA(p, r), worktree: d.worktree ?? null, ...(await briefPlanOf(d)) };
       }),
     };
   }
   // RM-36: the activity view's plan without a todo list - the brief's numbered items, and the ones the run's NOTES name as done
-  async function planOf(d) {
+  async function briefPlanOf(d) {
     const [brief, notes] = await Promise.all([d.brief ? readA(d.brief) : '', d.notes ? readA(d.notes) : '']), items = briefItems(brief);
     return { brief_items: items, notes_done: items.length ? namedDone(items, notes, { doneWord: true }) : [] };
   }
