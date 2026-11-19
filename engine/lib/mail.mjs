@@ -6,11 +6,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { record, readEvents, recordsFile, fold, RecordError, mailboxOf, homeOf, roleAddr } from './records.mjs';
+import { record, readEvents, recordsFile, fold, RecordError, mailboxOf, homeOf, roleAddr, idNum as num } from './records.mjs';
 
 export const META_BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'norn.mjs');
 const fwd = p => String(p).replace(/\\/g, '/');
-const num = id => Number(String(id).match(/-(\d+)$/)?.[1]);   // the trailing number: MAIL-12, MAIL-b2-12
 const drop = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== ''));
 
 export const loadMail = state => fold(readEvents(recordsFile(state, 'mail'))).items;

@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { record, recordAsync, readEvents, recordsFile, fold, loadState, withLock, withLockAsync, idPrefix } from './records.mjs';
+import { record, readEvents, recordsFile, fold, loadState, withLock, withLockAsync, idPrefix } from './records.mjs';
 import { loadRoadmap, world, goneLinks, planEvents, checkLinks, buildTree, writeRoadmapView, writeRoadmapViewAsync, roadmapViewPath } from './roadmap.mjs';
 import { laneSteps, LANE_IO } from './lanenew.mjs';
 import { runSteps, runStepsAsync } from './steps.mjs';

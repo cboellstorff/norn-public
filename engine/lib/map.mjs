@@ -4,7 +4,7 @@
 // check-in band ("controller"), then lanes running > parked > idle. Pure; the browser only draws it (inline SVG, ui.mjs).
 import { runName } from './names.mjs';
 import { critiqueOfNode } from './critique.mjs';
-import { laneIdIn, laneNameIn } from './records.mjs';
+import { laneIdIn, laneNameIn, idNum as num } from './records.mjs';
 
 export const RECENT_RUNS = 3;   // Q-B2 (controller 2026-11-08): last 3 runs per lane, the rest behind "more"
 export const MORE_CAP = 30;     // an expanded lane shows its latest 30 runs (the check-in band has ~1000)
@@ -12,7 +12,6 @@ const COL = [16, 296, 620, 900], W = [200, 260, 240, 240], WIDTH = 1160;
 const H = { lane: 50, big: 58, small: 40, child: 38, question: 44 }, GAP = 8, BAND_PAD = 12, BAND_GAP = 14;
 const CHECKIN = 'checkin', ADHOC_MS = 24 * 3600000;
 export const DLV_ROOM = 42;   // under the lane node: the "+n more" line, then the 20 px deliverable pill
-const num = id => Number(String(id).match(/-(\d+)$/)?.[1]);   // RUN-12 / RUN-a-12
 
 const EDGE_WORD = { owns: 'owns (lane -> run)', resumes: 'resumes (HANDOFF -> next run)', delegates: 'delegates (run -> helper / subagent)',
   dispatched: 'dispatched (check-in started it)', reviewed: 'reviewed (check-in reviewed it)', asks: 'asks (open question parks the lane)' };

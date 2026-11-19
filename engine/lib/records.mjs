@@ -206,7 +206,7 @@ export const kindOfId = id => {
   for (const [k, d] of Object.entries(KINDS)) if (k !== 'lane' && new RegExp('^' + d.prefix + '(?:[a-z][a-z0-9]{0,15}-)?\\d+$').test(id)) return k;
   return null;
 };
-const idNum = id => Number(String(id).match(/-(\d+)$/)?.[1]);   // F8: the trailing number (a home id may hold digits: Q-b2-12)
+export const idNum = id => Number(String(id).match(/-(\d+)$/)?.[1]);   // F8: the trailing number (a home id may hold digits: Q-b2-12)
 const idHome = id => String(id).match(/^[A-Z]+-([a-z][a-z0-9]{0,15})-\d+$/)?.[1] ?? null;
 
 export const recordsFile = (stateDir, kind = 'question') => path.join(stateDir, (KINDS[kind]?.file || 'records') + '.jsonl');
